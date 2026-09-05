@@ -85,11 +85,11 @@
 
 	<!-- Friend links -->
 	<section class="flex flex-col gap-4">
-		<div class="flex items-center justify-between">
+		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 			<h2 class="font-heading text-xl font-medium">友情链接</h2>
-			<div class="relative">
+			<div class="relative w-full sm:w-48">
 				<Search class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-				<Input placeholder="搜索友链" class="w-48 pl-9" />
+				<Input placeholder="搜索友链" class="w-full pl-9" />
 			</div>
 		</div>
 		<div class="grid gap-3 sm:grid-cols-2">

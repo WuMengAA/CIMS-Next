@@ -345,3 +345,11 @@
 .parallax-mid { animation: pmid linear both; animation-timeline: view(); animation-range: entry 0% entry 55%; }
 @keyframes pmid { from { transform: translateY(18px); } to { transform: translateY(-22px); } }
 @media (prefers-reduced-motion: reduce) { .parallax-slow, .parallax-mid { animation: none !important; } }
+
+/* --- 移动端触控区增强 --- */
+@media (max-width: 767px) {
+	/* 侧边栏抽屉内菜单按钮触控区 ≥44px（覆盖 shadcn 默认 h-8） */
+	[data-slot="sidebar-menu-button"] {
+		min-height: 2.75rem;
+	}
+}

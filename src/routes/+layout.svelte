@@ -91,7 +91,7 @@
 		<header
 			class="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-3 md:px-4"
 		>
-			<Sidebar.Trigger class="size-8">
+			<Sidebar.Trigger class="size-11 md:size-9">
 				<PanelLeft class="size-4" />
 				<span class="sr-only">Toggle Sidebar</span>
 			</Sidebar.Trigger>

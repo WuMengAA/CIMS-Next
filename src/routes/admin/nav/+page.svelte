@@ -98,7 +98,7 @@
 	<p class="mb-4 rounded-md border border-border/60 bg-card p-3 text-sm">已保存，刷新前台即可看到新导航</p>
 {/if}
 
-<div class="mb-6 flex items-end gap-2 rounded-xl border border-border/60 bg-card p-4">
+<div class="mb-6 flex flex-col gap-2 rounded-xl border border-border/60 bg-card p-4 sm:flex-row sm:items-end">
 	<Select.Root type="single" bind:value={newGroupKey}>
 		<Select.Trigger class="w-32" aria-label="分组">{({ workspace: "工作区", more: "更多", bottom: "底部" })[newGroupKey] ?? newGroupKey}</Select.Trigger>
 		<Select.Content>
@@ -107,9 +107,9 @@
 			<Select.Item value="bottom" label="底部" />
 		</Select.Content>
 	</Select.Root>
-	<Input bind:value={newTitle} placeholder="名称（必填）" class="max-w-[200px]" />
-	<Input bind:value={newUrl} placeholder="/路径" class="max-w-[200px]" />
-	<Input bind:value={newIcon} placeholder="图标键(home/blog/…)" class="max-w-[180px]" />
+	<Input bind:value={newTitle} placeholder="名称（必填）" class="w-full max-w-none sm:max-w-[200px]" />
+	<Input bind:value={newUrl} placeholder="/路径" class="w-full max-w-none sm:max-w-[200px]" />
+	<Input bind:value={newIcon} placeholder="图标键(home/blog/…)" class="w-full max-w-none sm:max-w-[180px]" />
 	<Button onclick={addItem} disabled={!newTitle.trim() || !newUrl.trim()}>
 		<Plus class="h-4 w-4 mr-1" /> 添加
 	</Button>

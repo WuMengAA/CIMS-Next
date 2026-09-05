@@ -190,7 +190,7 @@
 			<Input bind:value={globalFilter} placeholder="搜索用户…" class="pl-9" />
 		</div>
 
-		<div class="rounded-xl border border-border/60">
+		<div class="overflow-x-auto rounded-xl border border-border/60">
 			<Table>
 				<TableHeader>
 					{#each table.getHeaderGroups() as hg (hg.id)}
