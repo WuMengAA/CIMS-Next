@@ -4,6 +4,9 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
+	import { Select } from "$lib/components/ui/select/index.js";
+	import { Switch } from "$lib/components/ui/switch/index.js";
+	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { Save, Plus, Trash2, Download, Wand2, LayoutGrid } from "@lucide/svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
 	import { FEATURE_ICON_OPTIONS } from "$lib/feature-icons.js";
@@ -23,6 +26,10 @@
 	let bgSpeed = $state(1);
 	let bgParticles = $state(true);
 	let backupMsg = $state("");
+	let intensityArr = $state<number[]>([bgIntensity]);
+	let speedArr = $state<number[]>([bgSpeed]);
+	$effect(() => { bgIntensity = intensityArr[0] ?? bgIntensity; });
+	$effect(() => { bgSpeed = speedArr[0] ?? bgSpeed; });
 
 	async function load() {
 		try {
@@ -40,6 +47,7 @@
 				const bg = s.background || {};
 				bgStyle = bg.style || "aurora"; bgColor1 = bg.color1 || "#cc785c"; bgColor2 = bg.color2 || "#8b5cf6"; bgColor3 = bg.color3 || "#0ea5e9";
 				bgIntensity = bg.intensity ?? 0.5; bgSpeed = bg.speed ?? 1; bgParticles = bg.particles ?? true;
+			intensityArr = [bg.intensity ?? 0.5]; speedArr = [bg.speed ?? 1];
 			}
 		} catch (e) { console.error(e); }
 	}
@@ -67,7 +75,7 @@
 			await fetch("/api/settings", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title, description, socials, features, background: { style: bgStyle, color1: bgColor1, color2: bgColor2, color3: bgColor3, intensity: bgIntensity, speed: bgSpeed, particles: bgParticles } })
+				body: JSON.stringify({ title, description, socials, features, background: { style: bgStyle, color1: bgColor1, color2: bgColor2, color3: bgColor3, intensity: intensityArr[0], speed: speedArr[0], particles: bgParticles } })
 			});
 			saved = true;
 			setTimeout(() => { saved = false; }, 3000);
@@ -151,14 +159,16 @@
 			<div class="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
 				<div class="flex items-center gap-2">
 					<Input bind:value={feature.title} placeholder="标题（如：静态导出）" class="flex-1" />
-					<select
-						bind:value={feature.icon}
-						class="h-9 w-28 rounded-md border border-border/60 bg-background px-2 text-sm"
-					>
-						{#each FEATURE_ICON_OPTIONS as opt (opt.value)}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
+					<Select.Root type="single" bind:value={feature.icon}>
+						<Select.Trigger class="w-32" aria-label="图标">
+							{FEATURE_ICON_OPTIONS.find((o) => o.value === feature.icon)?.label ?? "图标"}
+						</Select.Trigger>
+						<Select.Content>
+							{#each FEATURE_ICON_OPTIONS as opt (opt.value)}
+								<Select.Item value={opt.value} label={opt.label} />
+							{/each}
+						</Select.Content>
+					</Select.Root>
 					<Button
 						variant="ghost"
 						size="icon"
@@ -180,23 +190,28 @@
 		<p class="text-sm text-muted-foreground">页面背景动画（极光/网格光/粒子/彩虹），实时预览，保存后全局生效。</p>
 		<!-- Live preview -->
 		<div class="relative h-36 overflow-hidden rounded-lg border border-border/60">
-			<BgEffects config={{ style: bgStyle, color1: bgColor1, color2: bgColor2, color3: bgColor3, intensity: bgIntensity, speed: bgSpeed, particles: bgParticles }} />
+			<BgEffects config={{ style: bgStyle, color1: bgColor1, color2: bgColor2, color3: bgColor3, intensity: intensityArr[0], speed: speedArr[0], particles: bgParticles }} />
 			<span class="absolute bottom-2 left-2 rounded bg-black/50 px-2 py-0.5 text-[10px] text-white/80">预览</span>
 		</div>
 		<div class="grid gap-3 sm:grid-cols-2">
 			<div class="grid gap-1.5">
 				<Label>风格</Label>
-				<select bind:value={bgStyle} class="h-9 rounded-md border bg-background px-3 text-sm">
-					<option value="aurora">极光流动（默认）</option>
-					<option value="grid">网格光</option>
-					<option value="particles">粒子星空</option>
-					<option value="rainbow">彩虹渐变</option>
-					<option value="none">无背景动画</option>
-				</select>
+				<Select.Root type="single" bind:value={bgStyle}>
+					<Select.Trigger class="w-full">
+						{({ aurora: "极光流动（默认）", grid: "网格光", particles: "粒子星空", rainbow: "彩虹渐变", none: "无背景动画" })[bgStyle] ?? bgStyle}
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="aurora" label="极光流动（默认）" />
+						<Select.Item value="grid" label="网格光" />
+						<Select.Item value="particles" label="粒子星空" />
+						<Select.Item value="rainbow" label="彩虹渐变" />
+						<Select.Item value="none" label="无背景动画" />
+					</Select.Content>
+				</Select.Root>
 			</div>
 			<div class="grid gap-1.5">
 				<Label>粒子层（极光时可用）</Label>
-				<label class="flex items-center gap-2 pt-2 text-sm"><input type="checkbox" bind:checked={bgParticles} class="size-4 accent-primary" /> 显示粒子</label>
+				<div class="flex items-center gap-2 pt-2 text-sm"><Switch bind:checked={bgParticles} /> 显示粒子</div>
 			</div>
 		</div>
 		<div class="grid grid-cols-3 gap-3">
@@ -205,8 +220,8 @@
 			<div class="grid gap-1.5"><Label>强调色</Label><input type="color" bind:value={bgColor3} class="h-9 w-full cursor-pointer rounded-md border border-border/60 bg-transparent" /></div>
 		</div>
 		<div class="grid grid-cols-2 gap-3">
-			<div class="grid gap-1.5"><Label>浓度（{Math.round(bgIntensity * 100)}%）</Label><input type="range" min="0.05" max="0.9" step="0.05" bind:value={bgIntensity} class="accent-primary" /></div>
-			<div class="grid gap-1.5"><Label>速度（{bgSpeed.toFixed(1)}x）</Label><input type="range" min="0.2" max="3" step="0.1" bind:value={bgSpeed} class="accent-primary" /></div>
+			<div class="grid gap-1.5"><Label>浓度（{Math.round(intensityArr[0] * 100)}%）</Label><Slider bind:value={intensityArr} min={0.05} max={0.9} step={0.05} class="mt-3" /></div>
+			<div class="grid gap-1.5"><Label>速度（{speedArr[0].toFixed(1)}x）</Label><Slider bind:value={speedArr} min={0.2} max={3} step={0.1} class="mt-3" /></div>
 		</div>
 	</div>
 
