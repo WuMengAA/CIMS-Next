@@ -130,10 +130,10 @@
 			</Button>
 		</div>
 		{#each socials as social, i (i)}
-			<div class="flex items-center gap-2">
-				<Input bind:value={social.name} placeholder="名称（GitHub）" class="w-32" />
-				<Input bind:value={social.url} placeholder="https://..." class="flex-1" />
-				<Button variant="ghost" size="icon" class="h-9 w-9 text-destructive hover:text-destructive" onclick={() => removeSocial(i)}>
+			<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+				<Input bind:value={social.name} placeholder="名称（GitHub）" class="w-full sm:w-32" />
+				<Input bind:value={social.url} placeholder="https://..." class="w-full sm:flex-1" />
+				<Button variant="ghost" size="icon" class="h-9 w-9 shrink-0 text-destructive hover:text-destructive sm:ml-auto" onclick={() => removeSocial(i)}>
 					<Trash2 class="h-4 w-4" />
 				</Button>
 			</div>
@@ -157,10 +157,10 @@
 		<p class="text-sm text-muted-foreground">展示在首页「特性」区，建议 3 条，每条含标题、描述与图标。</p>
 		{#each features as feature, i (i)}
 			<div class="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
-				<div class="flex items-center gap-2">
-					<Input bind:value={feature.title} placeholder="标题（如：静态导出）" class="flex-1" />
-					<Select.Root type="single" bind:value={feature.icon}>
-						<Select.Trigger class="w-32" aria-label="图标">
+			<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+				<Input bind:value={feature.title} placeholder="标题（如：静态导出）" class="w-full sm:flex-1" />
+				<Select.Root type="single" bind:value={feature.icon}>
+					<Select.Trigger class="w-full sm:w-32" aria-label="图标">
 							{FEATURE_ICON_OPTIONS.find((o) => o.value === feature.icon)?.label ?? "图标"}
 						</Select.Trigger>
 						<Select.Content>
@@ -172,7 +172,7 @@
 					<Button
 						variant="ghost"
 						size="icon"
-						class="h-9 w-9 text-destructive hover:text-destructive"
+						class="h-9 w-9 shrink-0 text-destructive hover:text-destructive sm:ml-auto"
 						onclick={() => removeFeature(i)}
 					>
 						<Trash2 class="h-4 w-4" />
