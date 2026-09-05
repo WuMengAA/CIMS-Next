@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { BookMarked, FileText } from "@lucide/svelte";
+	import Container from "$lib/components/container.svelte";
+	import PageHeader from "$lib/components/page-header.svelte";
 
 	let { data }: { data: { docs: any[] } } = $props();
 
@@ -20,11 +22,8 @@
 	<title>文档 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-10 md:px-8">
-	<header class="reveal flex flex-col gap-2" style="--reveal-delay:0">
-		<h1 class="font-heading text-3xl font-semibold tracking-tight">文档</h1>
-		<p class="text-sm text-muted-foreground">Wiki 模式的文档资料库，用于记录知识、指南与笔记。</p>
-	</header>
+<Container>
+	<PageHeader title="文档" description="Wiki 模式的文档资料库，用于记录知识、指南与笔记。" />
 
 	{#if data.docs.length === 0}
 		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
@@ -39,7 +38,7 @@
 				<h2 class="font-heading text-xl font-semibold">{category}</h2>
 				<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
 					{#each docs as doc (doc.slug)}
-						<a href="/docs/{doc.slug}" class="group flex items-center gap-3 p-4 transition-colors hover:bg-accent/40">
+						<a href="/docs/{doc.slug}" class="group flex items-center gap-3 p-4 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
 							<FileText class="size-4 shrink-0 text-muted-foreground" />
 							<div class="flex-1">
 								<h3 class="font-medium group-hover:text-primary">{doc.title}</h3>
@@ -55,4 +54,4 @@
 		{/each}
 	</div>
 {/if}
-</div>
+</Container>
