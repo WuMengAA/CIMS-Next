@@ -27,7 +27,7 @@
 	
 	import { page } from "$app/state";
 
-	let { data }: { data?: { settings?: { socials?: { name: string; url: string }[]; siteName?: string; slogan?: string }; nav?: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] } } } = $props();
+	let { data }: { data?: { settings?: { socials?: { name: string; url: string }[]; siteName?: string; slogan?: string }; nav?: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] }; user?: { username?: string; role?: string } | null } } = $props();
 
 	// Fallback socials and dynamic mapping
 	const fallbackSocials = [
@@ -95,12 +95,9 @@
 	);
 
 	let moreOpen = $state(false);
-	// 管理类入口（后台/钱包/账号）仅登录用户可见：SSR 默认隐藏，
-	// 客户端校验通过后才渲染，游客全程看不到后台入口。
-	let authed = $state(false);
-	$effect(() => {
-		fetch("/api/auth").then((r) => { if (r.ok) authed = true; }).catch(() => {});
-	});
+	// 管理类入口（后台/钱包/账号）仅登录用户可见：登录态由根 layout 的 load 同步下发
+	// （data.user），服务端已判定，无需客户端再发请求，侧边栏零闪烁、彻底常驻。
+	const authed = $derived(!!(data?.user));
 
 	const path = $derived(page.url.pathname);
 
