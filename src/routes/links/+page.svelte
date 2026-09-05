@@ -2,6 +2,8 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Search, Heart, GitFork, FileJson2, Send, CheckCircle2, ExternalLink } from "@lucide/svelte";
+	import Container from "$lib/components/container.svelte";
+	import PageHeader from "$lib/components/page-header.svelte";
 
 	let { data }: { data: { links: { name: string; url: string; description?: string; avatar?: string }[] } } = $props();
 
@@ -44,11 +46,8 @@
 	<title>连接 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-4xl flex-col gap-10 px-4 py-10 md:px-8">
-	<header class="flex flex-col gap-2">
-		<h1 class="font-heading text-3xl font-semibold tracking-tight">连接</h1>
-		<p class="text-sm text-muted-foreground">支持 Stelarith，联系我，交换友情链接。</p>
-	</header>
+<Container class="gap-10">
+	<PageHeader title="连接" description="支持 Stelarith，联系我，交换友情链接。" />
 
 	<!-- Support / Contact -->
 	<section class="grid gap-4 md:grid-cols-2">
@@ -193,4 +192,4 @@
 			</div>
 		{/each}
 	</section>
-</div>
+</Container>

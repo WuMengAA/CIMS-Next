@@ -2,6 +2,8 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Search, Pin, FileText } from "@lucide/svelte";
+	import Container from "$lib/components/container.svelte";
+	import PageHeader from "$lib/components/page-header.svelte";
 
 	let { data }: { data: { posts: any[]; categories: string[] } } = $props();
 
@@ -28,11 +30,8 @@
 	<title>博客 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-4xl flex-col gap-8 px-4 py-10 md:px-8">
-	<header class="reveal flex flex-col gap-2" style="--reveal-delay:0">
-		<h1 class="font-heading text-3xl font-semibold tracking-tight">博客</h1>
-		<p class="text-sm text-muted-foreground">记录开发、追番、工具与生活的随笔。</p>
-	</header>
+<Container>
+	<PageHeader title="博客" description="记录开发、追番、工具与生活的随笔。" />
 
 	<div class="relative">
 		<Search class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -57,7 +56,7 @@
 		{#each filtered as post (post.slug)}
 			<a
 				href="/posts/{post.slug}"
-				class="group flex flex-col gap-2 p-5 transition-colors hover:bg-accent/40"
+				class="group flex flex-col gap-2 p-5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
 			>
 				<div class="flex flex-wrap items-center gap-2">
 					{#if post.pinned}
@@ -82,4 +81,4 @@
 			</div>
 		{/if}
 	</div>
-</div>
+</Container>

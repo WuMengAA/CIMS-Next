@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Archive, ChevronRight } from "@lucide/svelte";
+	import Container from "$lib/components/container.svelte";
+	import PageHeader from "$lib/components/page-header.svelte";
 
 	const versions = [
 		{ tag: "v19", title: "Astro 一体化主站", tech: "Astro + React", year: "2026" },
@@ -16,7 +18,7 @@
 	<title>旧站归档 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 md:px-8">
+<Container>
 	<header class="flex flex-col gap-2">
 		<div class="flex items-center gap-2">
 			<Archive class="size-6 text-primary" />
@@ -29,7 +31,7 @@
 
 	<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
 		{#each versions as v (v.tag)}
-			<a href="/archives/" class="group flex items-center gap-4 p-5 transition-colors hover:bg-accent/40">
+			<a href="/archives/" class="group flex items-center gap-4 p-5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
 				<Badge variant="secondary" class="shrink-0 font-mono">{v.tag}</Badge>
 				<div class="min-w-0 flex-1">
 					<p class="truncate font-heading text-base font-medium group-hover:text-primary">
@@ -41,4 +43,4 @@
 			</a>
 		{/each}
 	</div>
-</div>
+</Container>
