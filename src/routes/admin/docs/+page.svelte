@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
+	import { Select } from "$lib/components/ui/select/index.js";
 	import { Plus, Trash2, BookMarked } from "@lucide/svelte";
 	import SortableList from "$lib/components/admin/sortable-list.svelte";
 	import { toast } from "svelte-sonner";
@@ -63,10 +64,13 @@
 		<p class="text-sm text-muted-foreground">Wiki 模式文档库 · 拖动或按钮调整排序</p>
 	</div>
 	<div class="flex items-center gap-2">
-		<select bind:value={folderFilter} class="h-9 rounded-md border bg-background px-3 text-sm">
-			<option value="">全部文件夹</option>
-			{#each folders as f (f)}<option value={f}>{f}</option>{/each}
-		</select>
+		<Select.Root type="single" bind:value={folderFilter}>
+			<Select.Trigger class="w-44" aria-label="文件夹筛选">{folderFilter || "全部文件夹"}</Select.Trigger>
+			<Select.Content>
+				<Select.Item value="" label="全部文件夹" />
+				{#each folders as f (f)}<Select.Item value={f} label={f} />{/each}
+			</Select.Content>
+		</Select.Root>
 		<Button href="/admin/docs/new?folder=新建文件夹"><Plus class="h-4 w-4 mr-2" /> 新建文件夹</Button>
 		<Button href="/admin/docs/new"><Plus class="h-4 w-4 mr-2" /> 新建文档</Button>
 	</div>

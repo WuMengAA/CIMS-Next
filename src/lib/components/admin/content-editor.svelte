@@ -4,6 +4,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
+	import { Select } from "$lib/components/ui/select/index.js";
 	import { Save, ArrowLeft, Bold, Italic, Strikethrough, Heading2, Quote, List, ListOrdered, ListTodo, Table, Minus, Code, SquareCode, Link as LinkIcon, Image as ImageIcon, CornerDownLeft, ChevronRight, MonitorPlay } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 
@@ -313,7 +314,13 @@
 		{#if section === "docs"}<div class="grid gap-2"><Label>文件夹</Label><Input placeholder="例如：AI 入门" bind:value={folder} /></div>{/if}
 		<div class="grid gap-2"><Label>分类</Label><Input placeholder="开发、追番..." bind:value={category} /></div>
 		<div class="grid gap-2"><Label>标签（逗号分隔）</Label><Input placeholder="AI, Svelte" bind:value={tags} /></div>
-		<div class="grid gap-2"><Label>状态</Label><select bind:value={status} class="h-9 w-full rounded-md border bg-background px-3 text-sm"><option value="published">已发布</option><option value="draft">草稿</option></select></div>
+		<div class="grid gap-2"><Label>状态</Label><Select.Root type="single" bind:value={status}>
+			<Select.Trigger class="w-full">{({ published: "已发布", draft: "草稿" })[status] ?? status}</Select.Trigger>
+			<Select.Content>
+				<Select.Item value="published" label="已发布" />
+				<Select.Item value="draft" label="草稿" />
+			</Select.Content>
+		</Select.Root></div>
 	</div>
 {#if isProject}
 	<div class="grid grid-cols-2 gap-4">

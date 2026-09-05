@@ -3,6 +3,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
+	import { Select } from "$lib/components/ui/select/index.js";
 	import { Plus, Trash2, ArrowUp, ArrowDown, GripVertical, Save, LayoutList } from "@lucide/svelte";
 
 	interface NavItem { title: string; url: string; icon?: string; }
@@ -98,11 +99,14 @@
 {/if}
 
 <div class="mb-6 flex items-end gap-2 rounded-xl border border-border/60 bg-card p-4">
-	<select bind:value={newGroupKey} class="h-9 rounded-md border bg-background px-3 text-sm">
-		<option value="workspace">工作区</option>
-		<option value="more">更多</option>
-		<option value="bottom">底部</option>
-	</select>
+	<Select.Root type="single" bind:value={newGroupKey}>
+		<Select.Trigger class="w-32" aria-label="分组">{({ workspace: "工作区", more: "更多", bottom: "底部" })[newGroupKey] ?? newGroupKey}</Select.Trigger>
+		<Select.Content>
+			<Select.Item value="workspace" label="工作区" />
+			<Select.Item value="more" label="更多" />
+			<Select.Item value="bottom" label="底部" />
+		</Select.Content>
+	</Select.Root>
 	<Input bind:value={newTitle} placeholder="名称（必填）" class="max-w-[200px]" />
 	<Input bind:value={newUrl} placeholder="/路径" class="max-w-[200px]" />
 	<Input bind:value={newIcon} placeholder="图标键(home/blog/…)" class="max-w-[180px]" />

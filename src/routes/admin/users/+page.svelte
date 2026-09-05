@@ -5,6 +5,7 @@
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "$lib/components/ui/table/index.js";
 	import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+	import { Select } from "$lib/components/ui/select/index.js";
 	import { createTable, tableFeatures, rowSortingFeature, createSortedRowModel, sortFn_alphanumeric } from "@tanstack/svelte-table";
 	import type { SortingState } from "@tanstack/svelte-table";
 	import { ArrowUpDown, Plus, Trash2, KeyRound, Users, Search } from "@lucide/svelte";
@@ -147,10 +148,13 @@
 			<div class="grid gap-2"><Label>用户名</Label><Input bind:value={newUsername} placeholder="登录用户名" /></div>
 			<div class="grid gap-2"><Label>显示名称</Label><Input bind:value={newDisplay} placeholder="昵称（可选）" /></div>
 			<div class="grid gap-2"><Label>密码（至少 6 位）</Label><Input type="password" bind:value={newPassword} placeholder="密码" /></div>
-			<div class="grid gap-2"><Label>角色</Label><select bind:value={newRole} class="h-9 w-full rounded-md border bg-background px-3 text-sm">
-				<option value="editor">编辑（editor）</option>
-				<option value="admin">管理员（admin）</option>
-			</select></div>
+			<div class="grid gap-2"><Label>角色</Label><Select.Root type="single" bind:value={newRole}>
+				<Select.Trigger class="w-full">{({ editor: "编辑（editor）", admin: "管理员（admin）" })[newRole] ?? newRole}</Select.Trigger>
+				<Select.Content>
+					<Select.Item value="editor" label="编辑（editor）" />
+					<Select.Item value="admin" label="管理员（admin）" />
+				</Select.Content>
+			</Select.Root></div>
 		</div>
 		<div class="mt-4"><Button onclick={addUser} disabled={!newUsername || !newPassword}>创建用户</Button></div>
 	</div>
