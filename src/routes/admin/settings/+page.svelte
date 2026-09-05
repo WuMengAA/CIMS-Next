@@ -4,12 +4,14 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Save, Plus, Trash2, Download, Wand2 } from "@lucide/svelte";
+	import { Save, Plus, Trash2, Download, Wand2, LayoutGrid } from "@lucide/svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
+	import { FEATURE_ICON_OPTIONS } from "$lib/feature-icons.js";
 
 	let title = $state("");
 	let description = $state("");
 	let socials = $state<{ name: string; url: string }[]>([]);
+	let features = $state<{ title: string; description: string; icon: string }[]>([]);
 	let saving = $state(false);
 	let saved = $state(false);
 	let backupPass = $state("");
@@ -30,6 +32,11 @@
 				title = s.title || "";
 				description = s.description || "";
 				socials = s.socials || [];
+				features = (s.features || []).map((f: { title?: string; description?: string; icon?: string }) => ({
+					title: f.title || "",
+					description: f.description || "",
+					icon: f.icon || "sparkles"
+				}));
 				const bg = s.background || {};
 				bgStyle = bg.style || "aurora"; bgColor1 = bg.color1 || "#cc785c"; bgColor2 = bg.color2 || "#8b5cf6"; bgColor3 = bg.color3 || "#0ea5e9";
 				bgIntensity = bg.intensity ?? 0.5; bgSpeed = bg.speed ?? 1; bgParticles = bg.particles ?? true;
@@ -45,6 +52,14 @@
 		socials = socials.filter((_, i) => i !== index);
 	}
 
+	function addFeature() {
+		features = [...features, { title: "", description: "", icon: "sparkles" }];
+	}
+
+	function removeFeature(index: number) {
+		features = features.filter((_, i) => i !== index);
+	}
+
 	async function save() {
 		saving = true;
 		saved = false;
@@ -52,12 +67,31 @@
 			await fetch("/api/settings", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ title, description, socials, background: { style: bgStyle, color1: bgColor1, color2: bgColor2, color3: bgColor3, intensity: bgIntensity, speed: bgSpeed, particles: bgParticles } })
+				body: JSON.stringify({ title, description, socials, features, background: { style: bgStyle, color1: bgColor1, color2: bgColor2, color3: bgColor3, intensity: bgIntensity, speed: bgSpeed, particles: bgParticles } })
 			});
 			saved = true;
 			setTimeout(() => { saved = false; }, 3000);
 		} catch (e) { console.error(e); }
 		saving = false;
+	}
+
+	async function exportBackup() {
+		try {
+			const headers = {};
+			if (backupPass.trim()) headers["x-encrypt-pass"] = backupPass.trim();
+			const res = await fetch("/api/backup", { headers });
+			if (!res.ok) { backupMsg = "导出失败，请重试"; return; }
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = "stelarith-backup.json";
+			a.click();
+			URL.revokeObjectURL(url);
+			backupMsg = backupPass.trim() ? "已加密导出" : "备份已导出";
+		} catch {
+			backupMsg = "导出失败，请重试";
+		}
 	}
 
 	onMount(load);
@@ -101,6 +135,43 @@
 
 	<hr class="my-2 border-border/40" />
 
+	<div class="flex flex-col gap-3">
+		<div class="flex items-center justify-between">
+			<div class="flex items-center gap-2">
+				<LayoutGrid class="size-4 text-primary" />
+				<Label>首页特性卡</Label>
+			</div>
+			<Button variant="outline" size="sm" onclick={addFeature}>
+				<Plus class="h-4 w-4 mr-1" />
+				添加
+			</Button>
+		</div>
+		<p class="text-sm text-muted-foreground">展示在首页「特性」区，建议 3 条，每条含标题、描述与图标。</p>
+		{#each features as feature, i (i)}
+			<div class="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
+				<div class="flex items-center gap-2">
+					<Input bind:value={feature.title} placeholder="标题（如：静态导出）" class="flex-1" />
+					<select
+						bind:value={feature.icon}
+						class="h-9 w-28 rounded-md border border-border/60 bg-background px-2 text-sm"
+					>
+						{#each FEATURE_ICON_OPTIONS as opt (opt.value)}
+							<option value={opt.value}>{opt.label}</option>
+						{/each}
+					</select>
+					<Button
+						variant="ghost"
+						size="icon"
+						class="h-9 w-9 text-destructive hover:text-destructive"
+						onclick={() => removeFeature(i)}
+					>
+						<Trash2 class="h-4 w-4" />
+					</Button>
+				</div>
+				<Input bind:value={feature.description} placeholder="描述文案" />
+			</div>
+		{/each}
+	</div>
 
 	<hr class="my-2 border-border/40" />
 

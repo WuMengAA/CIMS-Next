@@ -45,7 +45,7 @@
 	<ConfirmHost />
 	<Sidebar.Header>
 		<a href="/" class="flex items-center gap-3">
-			<div class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-bold text-primary-foreground">AF</div>
+			<div class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-bold text-primary-foreground">S</div>
 			<div class="flex flex-col gap-0.5 leading-none">
 				<span class="font-heading text-base font-semibold">Stelarith CMS</span>
 				<span class="text-xs text-muted-foreground">内容管理</span>
