@@ -1,0 +1,52 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# CMS data (sensitive / runtime-generated)
+/content/users.json
+/content/comments.json
+/content/link-applications.json
+/content/nav.json
+/content/settings.json
+/uploads/*
+!/uploads/.gitkeep
+
+# Keep content example structure (optional)
+!/content/posts/*.md
+!/content/docs/*.md
+!/content/projects/*.md
+
+# Build logs & temp scripts
+/build-*.txt
+/build-*.log
+/build_*.log
+/stelarith.out.log
+/uicheck.log
+/*.mjs
+/*.tmp
+/_tmp_*
+
+# Local deploy artifacts (rebuilt on demand)
+/deploy-stelarith/
+/*.tar.gz
+/*.zip

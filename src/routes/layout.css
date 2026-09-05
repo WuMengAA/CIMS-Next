@@ -1,0 +1,347 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@plugin '@tailwindcss/typography';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+	/* Claude/Stelarith design tokens (dark-only site) */
+	--radius: 0.5rem;
+	--background: #1b1b19;
+	--foreground: #faf9f5;
+	--card: oklch(28% 0.004 106.6);
+	--card-nested: oklch(34% 0.004 106.6);
+	--card-foreground: #faf9f5;
+	--popover: oklch(28% 0.004 106.6);
+	--popover-foreground: #faf9f5;
+	--primary: #cc785c;
+	--primary-foreground: #141413;
+	--secondary: oklch(48% 0.004 106.6);
+	--secondary-foreground: #faf9f5;
+	--muted: oklch(32% 0.004 106.6);
+	--muted-foreground: #b0aea5;
+	--accent: oklch(30% 0.004 106.6);
+	--accent-foreground: #faf9f5;
+	--destructive: #f75d59;
+	--destructive-solid: #db2b33;
+	--destructive-foreground: #faf9f5;
+	--success: #788c5d;
+	--success-foreground: #141413;
+	--warning: #d8b25c;
+	--warning-foreground: #141413;
+	--border: oklch(100% 0 0 / 0.24);
+	--input: oklch(100% 0 0 / 0.16);
+	--ring: #cc785c;
+
+	--sidebar: #141413;
+	--sidebar-foreground: #faf9f5;
+	--sidebar-primary: #cc785c;
+	--sidebar-primary-foreground: #141413;
+	--sidebar-accent: oklch(30% 0.004 106.6);
+	--sidebar-accent-foreground: #faf9f5;
+	--sidebar-border: oklch(100% 0 0 / 0.24);
+	--sidebar-ring: #cc785c;
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-nested: var(--card-nested);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-solid: var(--destructive-solid);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-success: var(--success);
+	--color-success-foreground: var(--success-foreground);
+	--color-warning: var(--warning);
+	--color-warning-foreground: var(--warning-foreground);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+
+	--color-sidebar: var(--sidebar);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+
+	--font-sans: "Inter Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
+	--font-heading: "Lora Variable", "Tiempos Headline", Georgia, "Songti SC", serif;
+	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	html {
+		color-scheme: dark;
+	}
+	body {
+		@apply bg-background text-foreground font-sans antialiased;
+	}
+	h1,
+	h2,
+	h3,
+	h4 {
+		@apply font-heading;
+	}
+}
+
+
+/* --- Scrollbar utilities --- */
+
+/* Hide scrollbar while keeping scroll (used by sidebar) */
+.no-scrollbar {
+	-ms-overflow-style: none;
+	scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+	display: none;
+}
+
+/* Slim styled scrollbar for main content (optional polish) */
+*::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+	background: oklch(100% 0 0 / 0.15);
+	border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: oklch(100% 0 0 / 0.25);
+}
+@media (max-width: 768px) {
+	*::-webkit-scrollbar {
+		width: 0;
+		height: 0;
+	}
+}
+
+
+/* --- Page-level entrance animations (克制优雅) --- */
+/* Usage: add .anim-fade-up to sections; .anim-delay-1/2/3 for stagger */
+
+.anim-fade-up {
+	opacity: 0;
+	transform: translateY(12px);
+	animation: stelarith-fade-up 0.5s ease-out forwards;
+}
+
+.anim-fade-in {
+	opacity: 0;
+	animation: stelarith-fade-in 0.6s ease-out forwards;
+}
+
+.anim-delay-1 { animation-delay: 0.08s; }
+.anim-delay-2 { animation-delay: 0.16s; }
+.anim-delay-3 { animation-delay: 0.24s; }
+.anim-delay-4 { animation-delay: 0.32s; }
+
+@keyframes stelarith-fade-up {
+	from { opacity: 0; transform: translateY(12px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes stelarith-fade-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+/* Respect reduced-motion preference: disable all entrance animations */
+@media (prefers-reduced-motion: reduce) {
+	.anim-fade-up, .anim-fade-in {
+		opacity: 1 !important;
+		transform: none !important;
+		animation: none !important;
+	}
+}
+
+
+/* --- Prose (Markdown rendered content) theme adjustments --- */
+.prose {
+	--tw-prose-body: oklch(0.95 0.01 90);
+	--tw-prose-headings: var(--foreground);
+	--tw-prose-links: var(--primary);
+	--tw-prose-bold: var(--foreground);
+	--tw-prose-code: var(--primary);
+	--tw-prose-quotes: var(--foreground);
+	--tw-prose-bullets: var(--primary);
+	--tw-prose-hr: oklch(100% 0 0 / 0.15);
+	--tw-prose-th-borders: oklch(100% 0 0 / 0.2);
+	--tw-prose-td-borders: oklch(100% 0 0 / 0.12);
+}
+.prose h1, .prose h2, .prose h3, .prose h4 {
+	font-family: var(--font-heading);
+}
+.prose pre {
+	background: oklch(20% 0.004 106.6);
+	border: 1px solid oklch(100% 0 0 / 0.1);
+}
+.prose code:not(pre code) {
+	background: oklch(100% 0 0 / 0.08);
+	border-radius: 0.25rem;
+	padding: 0.1em 0.35em;
+}
+.prose table {
+	font-size: 0.875rem;
+}
+
+
+/* --- 页面跳转动画（View Transitions） --- */
+::view-transition-old(root) {
+	animation: vtr-out 0.18s ease-in both;
+}
+::view-transition-new(root) {
+	animation: vtr-in 0.25s ease-out both;
+}
+@keyframes vtr-out { to { opacity: 0; transform: translateY(6px); } }
+@keyframes vtr-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) {
+	::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}
+
+
+/* --- 全局分段式加载动画（spring 阻尼 / 缓冲 / 曲线运动） --- */
+:root {
+	--spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);  /* 弹簧回弹曲线 */
+	--ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);      /* 舒缓缓冲曲线 */
+}
+
+.reveal {
+	opacity: 0;
+	transform: translateY(24px) scale(0.985);
+	transition:
+		opacity 0.65s var(--spring-curve),
+		transform 0.7s var(--spring-curve);
+	transition-delay: calc(var(--reveal-delay, 0) * 80ms);
+	will-change: opacity, transform;
+}
+
+.reveal.revealed {
+	opacity: 1;
+	transform: translateY(0) scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.reveal {
+		opacity: 1 !important;
+		transform: none !important;
+		transition: none !important;
+	}
+}
+
+
+/* --- 高级感效果（React Bits 风格、纯 CSS，克制） --- */
+
+/* 渐变文字流光（Hero 标题） */
+.text-shimmer {
+	background: linear-gradient(110deg, var(--foreground) 20%, var(--primary) 40%, var(--foreground) 60%);
+	background-size: 220% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	color: transparent;
+	animation: shimmer-text 5s ease-in-out infinite;
+}
+@keyframes shimmer-text {
+	0% { background-position: 0% 50%; }
+	50% { background-position: 100% 50%; }
+	100% { background-position: 0% 50%; }
+}
+
+/* 主按钮流光扫描线 + 辉光 */
+.btn-shine {
+	position: relative;
+	overflow: hidden;
+}
+.btn-shine::after {
+	content: "";
+	position: absolute;
+	top: 0; left: -80%;
+	width: 50%; height: 100%;
+	background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+	transform: skewX(-20deg);
+	transition: left 0.5s ease;
+	pointer-events: none;
+}
+.btn-shine:hover::after { left: 130%; }
+.btn-glow {
+	box-shadow: 0 0 0 rgba(204,120,92,0);
+	transition: box-shadow 0.35s ease, transform 0.2s ease;
+}
+.btn-glow:hover {
+	box-shadow: 0 4px 24px -4px rgba(204,120,92,0.55);
+	transform: translateY(-1px);
+}
+
+/* 卡片悬浮微互动：抬升 + 阴影 + 边框光变 */
+.card-hover {
+	transition: transform 0.3s var(--spring-curve), box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.card-hover:hover {
+	transform: translateY(-4px);
+	box-shadow: 0 12px 34px -12px rgba(0,0,0,0.5), 0 0 0 1px rgba(204,120,92,0.18);
+	border-color: rgba(204,120,92,0.45) !important;
+}
+
+/* 链接下划线动画 */
+.link-underline {
+	background-image: linear-gradient(var(--primary), var(--primary));
+	background-size: 0% 1px;
+	background-position: 0 100%;
+	background-repeat: no-repeat;
+	transition: background-size 0.3s ease;
+}
+.link-underline:hover { background-size: 100% 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+	.text-shimmer, .btn-shine::after, .card-hover, .link-underline { animation: none !important; transition: none !important; }
+}
+
+
+/* Hero 视差：滚动时内容轻微上移（CSS 滚动驱动，不阻塞主线程） */
+.parallax-hero {
+	animation: parallax-up linear both;
+	animation-timeline: view();
+	animation-range: entry 0% entry 90%;
+}
+@keyframes parallax-up {
+	from { transform: translateY(10px); opacity: 1; }
+	to { transform: translateY(-24px); opacity: 0.75; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.parallax-hero { animation: none !important; }
+}
+
+
+/* 多速视差层：不同区块以不同速度随滚动漂移 */
+.parallax-slow { animation: pslow linear both; animation-timeline: view(); animation-range: entry 0% entry 70%; }
+@keyframes pslow { from { transform: translateY(26px); } to { transform: translateY(-10px); } }
+.parallax-mid { animation: pmid linear both; animation-timeline: view(); animation-range: entry 0% entry 55%; }
+@keyframes pmid { from { transform: translateY(18px); } to { transform: translateY(-22px); } }
+@media (prefers-reduced-motion: reduce) { .parallax-slow, .parallax-mid { animation: none !important; } }
