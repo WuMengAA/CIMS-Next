@@ -1,0 +1,25 @@
+{
+  "links": [
+    {
+      "name": "Fonstage",
+      "url": "https://fonstage.space/",
+      "description": "Fonscape 主题官方示例站",
+      "avatar": "F"
+    },
+    {
+      "name": "二叉树树",
+      "url": "https://example.com/",
+      "description": "一只爱折腾的二叉树",
+      "avatar": "🌳"
+    },
+    {
+      "name": "测试友链站",
+      "url": "https://example.com",
+      "description": "测试申请"
+    },
+    {
+      "name": "E2E 测试站",
+      "url": "https://e2e.example.com"
+    }
+  ]
+}
