@@ -33,7 +33,7 @@
 <div class="flex min-h-screen items-center justify-center bg-background px-4">
 	<div class="w-full max-w-sm space-y-6">
 		<div class="flex flex-col items-center gap-2 text-center">
-			<div class="flex size-12 items-center justify-center rounded-xl bg-primary font-heading text-lg font-bold text-primary-foreground">AF</div>
+			<div class="flex size-12 items-center justify-center rounded-xl bg-primary font-heading text-lg font-bold text-primary-foreground">S</div>
 			<h1 class="font-heading text-2xl font-semibold">Stelarith CMS</h1>
 			<p class="text-sm text-muted-foreground">登录管理后台</p>
 		</div>

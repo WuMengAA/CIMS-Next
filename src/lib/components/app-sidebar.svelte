@@ -118,7 +118,7 @@
 					<div
 						class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-bold text-primary-foreground"
 					>
-						AF
+						S
 					</div>
 					<div class="flex flex-col gap-0.5 leading-none">
 						<span class="font-heading text-base font-semibold tracking-tight">{data?.settings?.siteName || "Stelarith 工作台"}</span>

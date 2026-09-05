@@ -232,7 +232,7 @@ export interface SiteSettings {
 	heroTitle: string;
 	heroSubtitle: string;
 	heroBadge: string;
-	features: { title: string; description: string }[];
+	features: { title: string; description: string; icon?: string }[];
 	socialTitle: string;
 	footer: string;
 	socials: { name: string; url: string }[];
@@ -250,9 +250,9 @@ function getDefaultSettings(): SiteSettings {
 		heroSubtitle: "您的浏览体验永远是第一位的。一个好的网站应当有统一的主题、良好的交互和极高的性能。",
 		heroBadge: "小而清晰，先把每一次打开做好",
 		features: [
-			{ title: "静态导出", description: "全站 HTML 直出，人类可读，搜索引擎易读，AI 能读。" },
-			{ title: "统一设计", description: "采用 Shadcn 设计语言，我能专注开发，您能专注浏览。" },
-			{ title: "严格把关", description: "每一次提交，每一次发版，都经过严谨的冒烟测试。" }
+			{ title: "静态导出", description: "全站 HTML 直出，人类可读，搜索引擎易读，AI 能读。", icon: "file-code" },
+			{ title: "统一设计", description: "采用 Shadcn 设计语言，我能专注开发，您能专注浏览。", icon: "palette" },
+			{ title: "严格把关", description: "每一次提交，每一次发版，都经过严谨的冒烟测试。", icon: "shield-check" }
 		],
 		socialTitle: "社交链接",
 		footer: "Designed by Claude · Logo by WalkerKiller",
@@ -277,7 +277,10 @@ export function getSettings(): SiteSettings {
 	return {
 		...defaults, ...data,
 		socials: data.socials || defaults.socials,
-		features: data.features || defaults.features,
+		features: (data.features || defaults.features).map((f: { title: string; description: string; icon?: string }, i: number) => ({
+			...f,
+			icon: f.icon || defaults.features[i]?.icon || "sparkles"
+		})),
 		outboundWhitelist: data.outboundWhitelist || defaults.outboundWhitelist,
 		background: { ...defaults.background, ...((data as any).background || {}) }
 	};

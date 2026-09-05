@@ -1,18 +1,10 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import {
-		Heart,
-		Send,
-		MessageCircle,
-		Rocket,
-		FileCode2,
-		Palette,
-		ShieldCheck,
-		Globe
-	} from "@lucide/svelte";
+	import { Heart, Send, MessageCircle, Rocket, Globe } from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import CountUp from "$lib/components/count-up.svelte";
+	import { resolveFeatureIcon } from "$lib/feature-icons.js";
 	import { page } from "$app/state";
 
 	let { data }: { data: { settings: { title: string; description: string; siteName: string; slogan: string; heroTitle: string; heroSubtitle: string; heroBadge: string; features: { title: string; description: string }[]; socialTitle: string; footer: string; socials: { name: string; url: string }[] }; posts: any[]; projects: any[]; docs: any[] } } = $props();
@@ -65,7 +57,7 @@
 		<div
 			class="flex size-16 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-bold text-primary-foreground"
 		>
-			AF
+			S
 		</div>
 		<p class="font-heading text-xl md:text-2xl">{data.settings.slogan}</p>
 	</section>
@@ -73,13 +65,14 @@
 	<!-- Features -->
 	<section class="reveal parallax-slow grid gap-4 md:grid-cols-3" style="--reveal-delay:2">
 		{#each features as f (f.title)}
+			{@const FeatureIcon = resolveFeatureIcon(f.icon)}
 			<div
 				class="card-hover group flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6"
 			>
 				<div
 					class="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary"
 				>
-					<f.icon class="size-5" />
+					<FeatureIcon class="size-5" />
 				</div>
 				<h2 class="font-heading text-lg font-medium">{f.title}</h2>
 				<p class="text-sm leading-relaxed text-muted-foreground">{f.description}</p>
@@ -89,7 +82,7 @@
 
 
 	<!-- 统计栏：滚动计数动画（React Bits 风格） -->
-	<section class="reveal flex flex-wrap items-stretch justify-center gap-4" style="--reveal-delay:4">
+	<section class="reveal flex flex-wrap items-stretch justify-center gap-4" style="--reveal-delay:3">
 		<div class="min-w-28 flex-1 rounded-xl border border-border/60 bg-card/60 p-5 text-center">
 			<div class="font-heading text-3xl font-semibold text-primary"><CountUp value={(data.posts || []).length} duration={1000} /></div>
 			<div class="mt-1 text-xs text-muted-foreground">篇文章</div>
@@ -104,7 +97,7 @@
 		</div>
 	</section>
 	<!-- Recent content -->
-	<section class="reveal parallax-mid flex flex-col gap-8" style="--reveal-delay:3">
+	<section class="reveal parallax-mid flex flex-col gap-8" style="--reveal-delay:4">
 		<div class="flex items-center justify-between">
 			<h2 class="font-heading text-xl">最新内容</h2>
 			<a href="/posts" class="text-sm text-muted-foreground hover:text-primary">查看全部 →</a>
@@ -154,7 +147,7 @@
 		{/if}
 	</section>
 	<!-- Social -->
-	<section id="social" class="reveal flex flex-col items-center gap-4 text-center" style="--reveal-delay:4">
+	<section id="social" class="reveal flex flex-col items-center gap-4 text-center" style="--reveal-delay:5">
 		<h2 class="font-heading text-xl">{data.settings.socialTitle}</h2>
 		<div class="flex flex-wrap items-center justify-center gap-2">
 			{#each socials as s (s.name)}
