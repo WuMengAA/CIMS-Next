@@ -2,7 +2,7 @@
 // 角色从低到高：user < moderator < editor < admin。
 // 所有“能否做某事”的判断都走 can(role, action)，避免散落各处写死角色名。
 
-export type Role = "admin" | "editor" | "moderator" | "user";
+export type Role = "admin" | "editor" | "moderator" | "user" | "techrep" | "viewer";
 
 export type Action =
 	| "comment" // 发表评论
@@ -17,24 +17,39 @@ export type Action =
 	| "manageUsers" // 用户与角色管理
 	| "manageSettings" // 站点设置
 	| "manageFiles" // 文件/媒体管理
-	| "viewAdmin"; // 进入后台管理台
+	| "viewAdmin" // 进入后台管理台
+	// ---- 集控新增 ----
+	| "viewConsole" // 进入集控面板（/admin/console）
+	| "controlDevice" // 本班/本年级设备控制（锁屏/重启/截图）
+	| "remoteControl" // 远程屏幕控制（更高敏感）
+	| "submitIssue" // 提交故障工单 / Bug
+	| "manageDevices"; // 全量设备管理（管理员）
 
 const MATRIX: Record<Role, Action[]> = {
 	admin: [
 		"comment", "postForum", "createChannel", "submitFeedback", "submitProject", "submitLink", "suggestDoc",
-		"moderate", "manageContent", "manageUsers", "manageSettings", "manageFiles", "viewAdmin"
+		"moderate", "manageContent", "manageUsers", "manageSettings", "manageFiles", "viewAdmin",
+		"viewConsole", "controlDevice", "remoteControl", "submitIssue", "manageDevices"
 	],
 	editor: [
 		"comment", "postForum", "createChannel", "submitFeedback", "submitProject", "submitLink", "suggestDoc",
-		"moderate", "manageContent", "manageFiles", "viewAdmin"
+		"moderate", "manageContent", "manageFiles", "viewAdmin",
+		"viewConsole", "controlDevice", "submitIssue"
 	],
 	moderator: [
 		"comment", "postForum", "createChannel", "submitFeedback", "submitLink", "suggestDoc",
-		"moderate"
+		"moderate", "viewConsole", "submitIssue"
 	],
 	user: [
-		"comment", "postForum", "submitFeedback", "submitLink", "suggestDoc"
-	]
+		"comment", "postForum", "submitFeedback", "submitLink", "suggestDoc", "submitIssue"
+	],
+	// 电教委员：本班设备控制 + 远程控制 + 上报，无用户/站点管理
+	techrep: [
+		"comment", "postForum", "submitFeedback", "submitLink", "suggestDoc",
+		"viewConsole", "controlDevice", "remoteControl", "submitIssue"
+	],
+	// 只读：仅查看集控面板，无任何写操作
+	viewer: [ "viewConsole" ]
 };
 
 /** 判断某角色是否拥有某项权限。未登录（role 为空）一律 false。 */
@@ -47,5 +62,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 	admin: "管理员",
 	editor: "编辑",
 	moderator: "审核员",
-	user: "注册用户"
+	user: "注册用户",
+	techrep: "电教委员",
+	viewer: "只读"
 };
