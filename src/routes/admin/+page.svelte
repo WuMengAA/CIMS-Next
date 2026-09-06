@@ -7,21 +7,36 @@
 	let projectsCount = $state(0);
 	let docsCount = $state(0);
 	let mediaCount = $state(0);
+	let commentsCount = $state(0);
+	let announcementsCount = $state(0);
+	let feedbackCount = $state(0);
+	let pvToday = $state(0);
+	let pvTotal = $state(0);
 	let loading = $state(false);
 
 	async function loadStats() {
 		loading = true;
 		try {
-			const [p, pr, d, m] = await Promise.all([
+			const [p, pr, d, m, c, a, f, s] = await Promise.all([
 				fetch("/api/posts"),
 				fetch("/api/projects"),
 				fetch("/api/docs"),
-				fetch("/api/media")
+				fetch("/api/media"),
+				fetch("/api/comments?all=1"),
+				fetch("/api/announcements?all=1"),
+				fetch("/api/feedback"),
+				fetch("/api/stats?days=7")
 			]);
 			postsCount = (await p.json()).length;
 			projectsCount = (await pr.json()).length;
 			docsCount = (await d.json()).length;
 			mediaCount = (await m.json()).length;
+			commentsCount = (await c.json()).length;
+			announcementsCount = (await a.json()).length;
+			feedbackCount = (await f.json()).length;
+			const stats = await s.json();
+			pvToday = stats.today || 0;
+			pvTotal = stats.total || 0;
 		} catch (e) {
 			console.error(e);
 		}
@@ -53,6 +68,22 @@
 		<div class="text-2xl font-semibold">{mediaCount}</div>
 		<div class="text-sm text-muted-foreground">媒体文件</div>
 	</a>
+	<a href="/admin/comments" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
+		<div class="text-2xl font-semibold">{commentsCount}</div>
+		<div class="text-sm text-muted-foreground">评论</div>
+	</a>
+	<a href="/admin/announcements" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
+		<div class="text-2xl font-semibold">{announcementsCount}</div>
+		<div class="text-sm text-muted-foreground">公告</div>
+	</a>
+	<a href="/admin/feedback" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
+		<div class="text-2xl font-semibold">{feedbackCount}</div>
+		<div class="text-sm text-muted-foreground">反馈</div>
+	</a>
+	<div class="block rounded-lg border bg-card p-4">
+		<div class="text-2xl font-semibold">{pvToday}</div>
+		<div class="text-sm text-muted-foreground">今日 PV（累计 {pvTotal}）</div>
+	</div>
 </div>
 
 <div class="grid grid-cols-2 gap-4">

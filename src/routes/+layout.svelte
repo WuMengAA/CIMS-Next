@@ -10,6 +10,7 @@
 	import { PanelLeft } from "@lucide/svelte";
 	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
+	import AnnouncementBanner from "$lib/components/announcement-banner.svelte";
 	import favicon from "$lib/assets/favicon.svg";
 	import { onNavigate } from "$app/navigation";
 	import { navigating } from "$app/stores";
@@ -98,6 +99,7 @@
 			<Separator orientation="vertical" class="h-4" />
 			<span class="text-sm text-muted-foreground">{data.settings.title}</span>
 		</header>
+		<AnnouncementBanner />
 		{#if showSkeleton}
 			<Container><ContentSkeleton /></Container>
 		{:else}

@@ -3,14 +3,21 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { ArrowLeft, Rocket, Globe, Pencil } from "@lucide/svelte";
 	import { Github } from "$lib/components/icons/index.js";
+	import Comments from "$lib/components/comments.svelte";
+	import ViewTracker from "$lib/components/view-tracker.svelte";
 
-	let { data }: { data: { project: any; html: string; canEdit?: boolean } } = $props();
+	let { data }: { data: { project: any; html: string; canEdit?: boolean; user?: { username: string; role: string } | null } } = $props();
 </script>
 
 <svelte:head>
 	<title>{data.project.title} | Stelarith</title>
 	<meta name="description" content={data.project.excerpt || data.project.title} />
+	<meta property="og:title" content={data.project.title} />
+	<meta property="og:description" content={data.project.excerpt || data.project.title} />
+	<meta property="og:type" content="article" />
 </svelte:head>
+
+<ViewTracker target={"projects:" + data.project.slug} />
 
 <div class="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 md:px-8">
 	<div class="flex items-center justify-between">
@@ -61,6 +68,8 @@
 	<article class="prose prose-invert max-w-none">
 		{@html data.html}
 	</article>
+
+	<Comments target={"projects:" + data.project.slug} user={data.user} />
 
 	<footer class="border-t border-border/40 pt-6">
 		{#if data.canEdit}

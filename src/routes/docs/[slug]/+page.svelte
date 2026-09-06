@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { BookMarked, FileText, ListTree, Pencil } from "@lucide/svelte";
+	import { BookMarked, FileText, ListTree, Pencil, MessageSquareWarning } from "@lucide/svelte";
+	import Comments from "$lib/components/comments.svelte";
+	import ViewTracker from "$lib/components/view-tracker.svelte";
 
 	let { data }: {
 		data: {
@@ -10,6 +12,7 @@
 			words: number;
 			allDocs: any[];
 			canEdit?: boolean;
+			user?: { username: string; role: string } | null;
 		}
 	} = $props();
 
@@ -23,12 +26,46 @@
 		}
 		return [...map.entries()];
 	})();
+
+	// 文档纠错（用户贡献）
+	let showCorrect = $state(false);
+	let correctionSection = $state("");
+	let correctionSuggestion = $state("");
+	let correctionNote = $state("");
+	let correctionMsg = $state("");
+	let correctionErr = $state("");
+
+	async function submitCorrection() {
+		correctionErr = ""; correctionMsg = "";
+		if (!correctionSuggestion.trim()) { correctionErr = "请填写纠错建议"; return; }
+		try {
+			const res = await fetch("/api/doc-corrections", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ docSlug: data.doc.slug, section: correctionSection, suggestion: correctionSuggestion, note: correctionNote })
+			});
+			if (res.ok) {
+				correctionSuggestion = ""; correctionSection = ""; correctionNote = "";
+				showCorrect = false;
+				correctionMsg = "已提交，等待审核后采纳";
+				setTimeout(() => (correctionMsg = ""), 3000);
+			} else {
+				const d = await res.json();
+				correctionErr = d.error || "提交失败";
+			}
+		} catch { correctionErr = "网络错误"; }
+	}
 </script>
 
 <svelte:head>
 	<title>{data.doc.title} | Stelarith</title>
 	<meta name="description" content={data.doc.excerpt || data.doc.title} />
+	<meta property="og:title" content={data.doc.title} />
+	<meta property="og:description" content={data.doc.excerpt || data.doc.title} />
+	<meta property="og:type" content="article" />
 </svelte:head>
+
+<ViewTracker target={"docs:" + data.doc.slug} />
 
 <div class="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
 	<!-- Left: docs nav grouped by folder -->
@@ -77,6 +114,32 @@
 		<div class="prose prose-invert max-w-none">
 			{@html data.html}
 		</div>
+
+		<Comments target={"docs:" + data.doc.slug} user={data.user} />
+
+		<!-- 文档纠错（用户贡献） -->
+		<section class="mt-8 rounded-xl border border-border/60 bg-card p-4">
+			{#if data.user}
+				{#if !showCorrect}
+					<Button variant="outline" size="sm" onclick={() => (showCorrect = true)} class="gap-1.5">
+						<MessageSquareWarning class="size-4" /> 发现错误？纠错
+					</Button>
+				{:else}
+					<h3 class="mb-3 text-sm font-medium">提交纠错</h3>
+					<input bind:value={correctionSection} placeholder="相关章节（可选）" maxlength="120" class="mb-2 h-9 w-full max-w-xs rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
+					<textarea bind:value={correctionSuggestion} rows={3} maxlength="2000" placeholder="正确的写法或表述…" class="mb-2 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"></textarea>
+					<input bind:value={correctionNote} placeholder="补充说明（可选）" maxlength="500" class="mb-2 h-9 w-full max-w-md rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
+					{#if correctionErr}<p class="mb-2 text-xs text-destructive">{correctionErr}</p>{/if}
+					<div class="flex justify-end gap-2">
+						<Button variant="ghost" size="sm" onclick={() => (showCorrect = false)}>取消</Button>
+						<Button size="sm" onclick={submitCorrection}>提交</Button>
+					</div>
+				{/if}
+			{:else}
+				<a href="/admin/login" class="text-xs text-muted-foreground hover:text-primary">登录后可纠错文档</a>
+			{/if}
+			{#if correctionMsg}<p class="mt-2 text-xs text-primary">{correctionMsg}</p>{/if}
+		</section>
 
 		<footer class="mt-8 border-t border-border/40 pt-6">
 			<a href="/docs" class="text-xs text-muted-foreground hover:text-primary">← 返回文档库</a>

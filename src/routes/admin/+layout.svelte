@@ -3,7 +3,7 @@
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
 	import { page } from "$app/state";
 	import ConfirmHost from "$lib/components/admin/confirm-host.svelte";
-	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList } from "@lucide/svelte";
+	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow } from "@lucide/svelte";
 
 	let { children }: { children?: Snippet } = $props();
 
@@ -15,6 +15,11 @@
 		{ title: "媒体库", url: "/admin/media", icon: Image },
 		{ title: "友情链接", url: "/admin/links", icon: Link },
 		{ title: "友链申请", url: "/admin/link-applications", icon: Inbox },
+		{ title: "评论审核", url: "/admin/comments", icon: MessageSquare },
+		{ title: "公告管理", url: "/admin/announcements", icon: Megaphone },
+		{ title: "反馈管理", url: "/admin/feedback", icon: Flag },
+		{ title: "项目专页申请", url: "/admin/project-applications", icon: GitPullRequestArrow },
+		{ title: "文档纠错", url: "/admin/doc-corrections", icon: FileCheck2 },
 		{ title: "导航管理", url: "/admin/nav", icon: LayoutList },
 		{ title: "用户管理", url: "/admin/users", icon: UsersRound },
 		{ title: "站点设置", url: "/admin/settings", icon: Settings }

@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import type { Role } from "$lib/permissions.js";
 
 export interface User {
 	username: string;
 	passwordHash: string;
 	salt: string;
 	displayName: string;
-	role: "admin" | "editor";
+	role: Role;
 	createdAt: string;
 }
 
@@ -68,7 +69,7 @@ export function verifyLogin(username: string, password: string): User | null {
 	return user;
 }
 
-export function createUser(username: string, password: string, displayName: string, role: "admin" | "editor" = "editor"): { ok: boolean; error?: string } {
+export function createUser(username: string, password: string, displayName: string, role: Role = "editor"): { ok: boolean; error?: string } {
 	if (!username.trim() || !password || password.length < 6) {
 		return { ok: false, error: "用户名不能为空，密码至少 6 位" };
 	}

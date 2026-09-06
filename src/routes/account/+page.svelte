@@ -4,6 +4,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
+	import { ROLE_LABELS } from "$lib/permissions.js";
 	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays } from "@lucide/svelte";
 
 	interface Me { username: string; displayName: string; role: string; createdAt: string; }
@@ -102,7 +103,7 @@
 			<div class="flex min-w-0 flex-1 flex-col gap-1">
 				<div class="flex items-center gap-2">
 					<span class="truncate font-heading text-lg font-medium">{me.displayName || me.username}</span>
-					{#if me.role === "admin"}<Badge>管理员</Badge>{:else}<Badge variant="outline">编辑</Badge>{/if}
+					<Badge variant={me.role === "admin" ? "default" : "outline"}>{ROLE_LABELS[me.role] || me.role}</Badge>
 				</div>
 				<p class="inline-flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground"><ShieldCheck class="size-3 shrink-0" /> <span class="truncate">@{me.username}</span> · <CalendarDays class="size-3 shrink-0" /> 注册于 {me.createdAt?.slice(0, 10)}</p>
 			</div>
