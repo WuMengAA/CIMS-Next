@@ -9,6 +9,33 @@ import taskLists from "markdown-it-task-lists";
 import footnote from "markdown-it-footnote";
 import { applyMarkdownExtensions } from "./markdown-extensions.js";
 
+// ── 运行时 .env 加载 ──────────────────────────────────────────────────────────
+// adapter-node 的 `node build/index.js` 不会自动读取 .env（vite 只在构建期注入）。
+// 部署端 start.sh 会 source .env 再启动，本函数作为兜底：若进程环境里没有对应变量，
+// 则从 cwd 的 .env 解析并填入 process.env（不覆盖已存在的变量，避免与部署脚本冲突）。
+let __envLoaded = false;
+function ensureRuntimeEnv() {
+	if (__envLoaded) return;
+	__envLoaded = true;
+	try {
+		const envPath = path.join(process.cwd(), ".env");
+		if (!fs.existsSync(envPath)) return;
+		const text = fs.readFileSync(envPath, "utf-8");
+		for (const raw of text.split("\n")) {
+			const line = raw.trim();
+			if (!line || line.startsWith("#")) continue;
+			const eq = line.indexOf("=");
+			if (eq === -1) continue;
+			const key = line.slice(0, eq).trim();
+			let val = line.slice(eq + 1).trim();
+			if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+				val = val.slice(1, -1);
+			}
+			if (key && process.env[key] === undefined) process.env[key] = val;
+		}
+	} catch { /* ignore */ }
+}
+
 export interface ContentItem {
 	slug: string;
 	title: string;
@@ -363,6 +390,15 @@ function getDefaultSettings(): SiteSettings {
 		outboundWhitelist: ["stelarith.com", "localhost"],
 		background: { style: "aurora", color1: "#cc785c", color2: "#8b5cf6", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true }
 	};
+}
+
+// 站点公开域名：优先读 .env 的 PUBLIC_SITE_URL / ORIGIN，否则退回请求来源。
+// 用于 RSS <link>/<guid>、ClassIsland detailsUri、OG 等绝对 URL，确保指向真实公网域名而非 localhost。
+export function getSiteUrl(fallback?: string): string {
+	ensureRuntimeEnv();
+	const env = process.env.PUBLIC_SITE_URL || process.env.ORIGIN;
+	const pick = env || fallback || "";
+	return pick.replace(/\/+$/, "");
 }
 
 export function getSettings(): SiteSettings {

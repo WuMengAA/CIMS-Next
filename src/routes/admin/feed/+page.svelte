@@ -85,7 +85,7 @@
 	}
 
 	async function copyEndpoint() {
-		const url = location.origin + "/api/classisland/announcements";
+		const url = (data.siteUrl || location.origin) + "/api/classisland/announcements";
 		try {
 			await navigator.clipboard.writeText(url);
 			endpointCopied = true;
@@ -122,7 +122,7 @@
 		在 ClassIsland → 设置 → 通知 → Web 公告源，填入下方地址即可让大屏自动拉取「站点公告 + 最新文章 + 聚合新闻」进行播报。
 	</p>
 	<div class="flex items-center gap-2">
-		<code class="flex-1 overflow-x-auto rounded-md border border-border/60 bg-muted px-3 py-2 text-xs">{location.origin}/api/classisland/announcements</code>
+		<code class="flex-1 overflow-x-auto rounded-md border border-border/60 bg-muted px-3 py-2 text-xs">{(data.siteUrl || location.origin)}/api/classisland/announcements</code>
 		<Button variant="outline" size="sm" onclick={copyEndpoint}>
 			{#if endpointCopied}<Check class="size-3.5" />{:else}<Copy class="size-3.5" />{/if}
 			复制
