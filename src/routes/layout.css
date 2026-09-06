@@ -238,6 +238,69 @@
 }
 
 
+/* --- markdown 扩展语法（上标 / 下标 / 高亮 / callout 提示块） --- */
+.prose sup,
+.prose sub {
+	position: relative;
+	font-size: 0.75em;
+	line-height: 0;
+	vertical-align: baseline;
+	padding: 0 0.1em;
+}
+.prose sup { top: -0.4em; }
+.prose sub { bottom: -0.25em; }
+
+.prose mark {
+	background: oklch(85% 0.14 90 / 0.28);
+	color: var(--foreground);
+	border-radius: 0.2rem;
+	padding: 0.05em 0.25em;
+}
+
+.prose blockquote.md-callout {
+	border-inline-start: 3px solid var(--primary);
+	background: oklch(100% 0 0 / 0.04);
+	border-radius: 0.5rem;
+	padding: 0.85rem 1rem;
+	margin: 1.25rem 0;
+	font-style: normal;
+}
+.prose blockquote.md-callout > :last-child { margin-bottom: 0; }
+.prose .md-callout-title {
+	display: block;
+	font-weight: 600;
+	font-size: 0.9rem;
+	letter-spacing: 0.01em;
+	margin-bottom: 0.35rem;
+}
+.prose .md-callout-title + * { margin-top: 0; }
+
+.prose blockquote.md-callout-tip { border-inline-start-color: oklch(78% 0.15 165); }
+.prose blockquote.md-callout-note,
+.prose blockquote.md-callout-info { border-inline-start-color: oklch(78% 0.13 245); }
+.prose blockquote.md-callout-success { border-inline-start-color: oklch(80% 0.16 150); }
+.prose blockquote.md-callout-warning,
+.prose blockquote.md-callout-caution { border-inline-start-color: oklch(83% 0.15 80); }
+.prose blockquote.md-callout-danger,
+.prose blockquote.md-callout-important { border-inline-start-color: oklch(70% 0.19 22); }
+.prose blockquote.md-callout-question { border-inline-start-color: oklch(80% 0.14 55); }
+.prose blockquote.md-callout-example,
+.prose blockquote.md-callout-quote,
+.prose blockquote.md-callout-abstract,
+.prose blockquote.md-callout-summary,
+.prose blockquote.md-callout-todo { border-inline-start-color: oklch(72% 0.11 305); }
+
+.prose .md-callout-tip .md-callout-title { color: oklch(80% 0.14 165); }
+.prose .md-callout-note .md-callout-title,
+.prose .md-callout-info .md-callout-title { color: oklch(80% 0.12 245); }
+.prose .md-callout-success .md-callout-title { color: oklch(82% 0.15 150); }
+.prose .md-callout-warning .md-callout-title,
+.prose .md-callout-caution .md-callout-title { color: oklch(85% 0.14 80); }
+.prose .md-callout-danger .md-callout-title,
+.prose .md-callout-important .md-callout-title { color: oklch(74% 0.18 22); }
+.prose .md-callout-question .md-callout-title { color: oklch(82% 0.13 55); }
+
+
 /* --- 页面跳转动画（View Transitions） --- */
 ::view-transition-old(root) {
 	animation: vtr-out 0.18s ease-in both;
