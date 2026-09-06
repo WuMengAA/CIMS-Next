@@ -9,6 +9,7 @@
 			toc: { id: string; text: string; level: number }[];
 			words: number;
 			allDocs: any[];
+			canEdit?: boolean;
 		}
 	} = $props();
 
@@ -37,10 +38,12 @@
 				<BookMarked class="size-4" />
 				文档库
 			</a>
-			<a href="/admin/docs/{data.doc.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
-				<Pencil class="size-3" />
-				编辑
-			</a>
+			{#if data.canEdit}
+				<a href="/admin/docs/{data.doc.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+					<Pencil class="size-3" />
+					编辑
+				</a>
+			{/if}
 		</div>
 		<div class="flex flex-col gap-0.5">
 			{#each groupedDocs as [folder, list] (folder)}

@@ -12,6 +12,7 @@
 			words: number;
 			prev: any;
 			next: any;
+			canEdit?: boolean;
 		}
 	} = $props();
 
@@ -71,10 +72,12 @@
 				<ArrowLeft class="size-4" />
 				返回博客
 			</a>
+		{#if data.canEdit}
 			<a href="/admin/posts/{data.post.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
 				<Pencil class="size-3" />
 				编辑
 			</a>
+		{/if}
 		</div>
 		{#if data.toc.length > 0}
 			<details class="mb-4 rounded-lg border border-border/60 bg-card lg:hidden">
