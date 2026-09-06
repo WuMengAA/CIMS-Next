@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Rocket, Globe } from "@lucide/svelte";
+	import { Rocket, Globe, GitPullRequestArrow } from "@lucide/svelte";
 	import { Github } from "$lib/components/icons/index.js";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 
-	let { data }: { data: { projects: any[]; canEdit?: boolean } } = $props();
+	let { data }: { data: { projects: any[]; canEdit?: boolean; user?: { username: string; role: string } | null } } = $props();
 </script>
 
 <svelte:head>
@@ -15,6 +15,14 @@
 <Container>
 	<PageHeader title="项目" description="我的个人项目与作品。" />
 
+	{#if data.user}
+		<div class="mb-4 flex justify-end">
+			<a href="/apply/project" class="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+				<GitPullRequestArrow class="size-4" /> 申请软件专页
+			</a>
+		</div>
+	{/if}
+
 	{#if data.projects.length === 0}
 		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
 			<Rocket class="size-8" />
@@ -23,7 +31,7 @@
 			<a href="/admin/projects/new" class="text-primary hover:underline">创建项目</a>
 		{/if}
 		</div>
-{:else}
+	{:else}
 	<div class="grid gap-4 sm:grid-cols-2">
 		{#each data.projects as project (project.slug)}
 			<a href="/projects/{project.slug}" class="group flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-5 transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">

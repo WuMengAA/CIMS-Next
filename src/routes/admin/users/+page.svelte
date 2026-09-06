@@ -11,6 +11,7 @@
 	import { ArrowUpDown, Plus, Trash2, KeyRound, Users, Search } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { confirmDelete } from "$lib/components/admin/confirm.svelte";
+	import { ROLE_LABELS } from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -149,10 +150,12 @@
 			<div class="grid gap-2"><Label>显示名称</Label><Input bind:value={newDisplay} placeholder="昵称（可选）" /></div>
 			<div class="grid gap-2"><Label>密码（至少 6 位）</Label><Input type="password" bind:value={newPassword} placeholder="密码" /></div>
 			<div class="grid gap-2"><Label>角色</Label><Select.Root type="single" bind:value={newRole}>
-				<Select.Trigger class="w-full">{({ editor: "编辑（editor）", admin: "管理员（admin）" })[newRole] ?? newRole}</Select.Trigger>
+				<Select.Trigger class="w-full">{ROLE_LABELS[newRole] || newRole}</Select.Trigger>
 				<Select.Content>
-					<Select.Item value="editor" label="编辑（editor）" />
-					<Select.Item value="admin" label="管理员（admin）" />
+					<Select.Item value="user" label={ROLE_LABELS.user} />
+					<Select.Item value="moderator" label={ROLE_LABELS.moderator} />
+					<Select.Item value="editor" label={ROLE_LABELS.editor} />
+					<Select.Item value="admin" label={ROLE_LABELS.admin} />
 				</Select.Content>
 			</Select.Root></div>
 		</div>
@@ -217,11 +220,7 @@
 							<TableCell>
 								<div class="flex items-center gap-2">
 									<span class="font-medium">{row.original.displayName || row.original.username}</span>
-									{#if row.original.role === "admin"}
-										<Badge>管理员</Badge>
-									{:else}
-										<Badge variant="outline">编辑</Badge>
-									{/if}
+									<Badge variant={row.original.role === "admin" ? "default" : "outline"}>{ROLE_LABELS[row.original.role] || row.original.role}</Badge>
 									{#if row.original.username === current}
 										<Badge variant="secondary">当前</Badge>
 									{/if}

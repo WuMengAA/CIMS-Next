@@ -348,11 +348,11 @@ export function saveLinks(links: FriendLink[]): void {
 	fs.writeFileSync(path.join(CONTENT_DIR, "links.json"), JSON.stringify({ links }, null, 2), "utf-8");
 }
 
-export interface Comment { id: string; postSlug: string; name: string; content: string; createdAt: string; approved: boolean; parentId?: string; }
+export interface Comment { id: string; target: string; name: string; content: string; createdAt: string; approved: boolean; parentId?: string; author?: string; }
 
 const COMMENTS_FILE = path.join(CONTENT_DIR, "comments.json");
 
-export function getComments(postSlug?: string): Comment[] {
+export function getComments(target?: string): Comment[] {
 	ensureDirs();
 	if (!fs.existsSync(COMMENTS_FILE)) return [];
 	let comments: Comment[] = [];
@@ -360,7 +360,7 @@ export function getComments(postSlug?: string): Comment[] {
 		const data = JSON.parse(fs.readFileSync(COMMENTS_FILE, "utf-8"));
 		comments = Array.isArray(data) ? data : data.comments || [];
 	} catch { return []; }
-	return postSlug ? comments.filter(c => c.postSlug === postSlug) : comments;
+	return target ? comments.filter(c => c.target === target) : comments;
 }
 
 export function addComment(comment: Omit<Comment, "id" | "createdAt">): Comment {
@@ -429,6 +429,158 @@ export function setLinkApplicationStatus(id: string, status: "approved" | "rejec
 export interface NavItem { title: string; url: string; icon?: string; external?: boolean; }
 export interface NavConfig { workspace: NavItem[]; more: NavItem[]; bottom: NavItem[]; }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 通用：把“一个 JSON 数组文件”当作一张小表读写（UGC 类实体共用此模式）
+// ───────────────────────────────────────────────────────────────────────────
+function readJsonArray<T>(filePath: string): T[] {
+	ensureDirs();
+	if (!fs.existsSync(filePath)) return [];
+	try {
+		const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+		return Array.isArray(data) ? data : data.items || [];
+	} catch {
+		return [];
+	}
+}
+function writeJsonArray<T>(filePath: string, items: T[]): void {
+	ensureDirs();
+	fs.writeFileSync(filePath, JSON.stringify({ items: items }, null, 2), "utf-8");
+}
+function genId(prefix: string): string {
+	return prefix + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+// ── 公告 ────────────────────────────────────────────────────────────────────
+export type AnnouncementLevel = "info" | "success" | "warning" | "danger";
+export interface Announcement {
+	id: string;
+	title: string;
+	content: string;
+	level: AnnouncementLevel;
+	status: "published" | "draft" | "archived";
+	pinned?: boolean;
+	createdAt: string;
+	updatedAt: string;
+	startsAt?: string;
+	endsAt?: string;
+}
+const ANNOUNCEMENTS_FILE = path.join(CONTENT_DIR, "announcements.json");
+
+export function getAnnouncements(opts?: { activeOnly?: boolean }): Announcement[] {
+	const all = readJsonArray<Announcement>(ANNOUNCEMENTS_FILE).sort((a, b) => {
+		if (a.pinned && !b.pinned) return -1;
+		if (!a.pinned && b.pinned) return 1;
+		return b.createdAt.localeCompare(a.createdAt);
+	});
+	if (!opts?.activeOnly) return all;
+	const now = new Date().toISOString();
+	return all.filter(a => {
+		if (a.status !== "published") return false;
+		if (a.startsAt && a.startsAt > now) return false;
+		if (a.endsAt && a.endsAt < now) return false;
+		return true;
+	});
+}
+export function addAnnouncement(input: Omit<Announcement, "id" | "createdAt" | "updatedAt">): Announcement {
+	const items = readJsonArray<Announcement>(ANNOUNCEMENTS_FILE);
+	const now = new Date().toISOString();
+	const item: Announcement = { ...input, id: genId("ann"), createdAt: now, updatedAt: now };
+	items.push(item);
+	writeJsonArray(ANNOUNCEMENTS_FILE, items);
+	return item;
+}
+export function updateAnnouncement(id: string, patch: Partial<Announcement>): Announcement | null {
+	const items = readJsonArray<Announcement>(ANNOUNCEMENTS_FILE);
+	const idx = items.findIndex(a => a.id === id);
+	if (idx < 0) return null;
+	items[idx] = { ...items[idx], ...patch, id, updatedAt: new Date().toISOString() };
+	writeJsonArray(ANNOUNCEMENTS_FILE, items);
+	return items[idx];
+}
+export function deleteAnnouncement(id: string): boolean {
+	const items = readJsonArray<Announcement>(ANNOUNCEMENTS_FILE);
+	const rest = items.filter(a => a.id !== id);
+	if (rest.length === items.length) return false;
+	writeJsonArray(ANNOUNCEMENTS_FILE, rest);
+	return true;
+}
+
+// ── 反馈 / Issue（类 GitHub） ────────────────────────────────────────────────
+export type FeedbackStatus = "open" | "planned" | "in_progress" | "closed";
+export interface FeedbackReply {
+	id: string;
+	author: string;
+	authorRole?: string;
+	content: string;
+	createdAt: string;
+}
+export interface Feedback {
+	id: string;
+	title: string;
+	content: string;
+	author: string;
+	authorRole?: string;
+	status: FeedbackStatus;
+	labels: string[];
+	replies: FeedbackReply[];
+	createdAt: string;
+	updatedAt: string;
+}
+const FEEDBACK_FILE = path.join(CONTENT_DIR, "feedback.json");
+
+export function getFeedback(opts?: { status?: FeedbackStatus }): Feedback[] {
+	let items = readJsonArray<Feedback>(FEEDBACK_FILE).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	if (opts?.status) items = items.filter(f => f.status === opts.status);
+	return items;
+}
+export function getFeedbackById(id: string): Feedback | null {
+	return readJsonArray<Feedback>(FEEDBACK_FILE).find(f => f.id === id) || null;
+}
+export function addFeedback(input: { title: string; content: string; author: string; authorRole?: string; labels?: string[] }): Feedback {
+	const items = readJsonArray<Feedback>(FEEDBACK_FILE);
+	const now = new Date().toISOString();
+	const item: Feedback = {
+		id: genId("fb"),
+		title: input.title,
+		content: input.content,
+		author: input.author,
+		authorRole: input.authorRole,
+		status: "open",
+		labels: input.labels || [],
+		replies: [],
+		createdAt: now,
+		updatedAt: now
+	};
+	items.push(item);
+	writeJsonArray(FEEDBACK_FILE, items);
+	return item;
+}
+export function setFeedbackStatus(id: string, status: FeedbackStatus): Feedback | null {
+	const items = readJsonArray<Feedback>(FEEDBACK_FILE);
+	const f = items.find(x => x.id === id);
+	if (!f) return null;
+	f.status = status;
+	f.updatedAt = new Date().toISOString();
+	writeJsonArray(FEEDBACK_FILE, items);
+	return f;
+}
+export function addFeedbackReply(id: string, reply: { author: string; authorRole?: string; content: string }): Feedback | null {
+	const items = readJsonArray<Feedback>(FEEDBACK_FILE);
+	const f = items.find(x => x.id === id);
+	if (!f) return null;
+	f.replies.push({ id: genId("r"), author: reply.author, authorRole: reply.authorRole, content: reply.content, createdAt: new Date().toISOString() });
+	f.updatedAt = new Date().toISOString();
+	writeJsonArray(FEEDBACK_FILE, items);
+	return f;
+}
+export function deleteFeedback(id: string): boolean {
+	const items = readJsonArray<Feedback>(FEEDBACK_FILE);
+	const rest = items.filter(f => f.id !== id);
+	if (rest.length === items.length) return false;
+	writeJsonArray(FEEDBACK_FILE, rest);
+	return true;
+}
+
 const NAV_FILE = path.join(CONTENT_DIR, "nav.json");
 
 export function getNav(): NavConfig {
@@ -450,4 +602,156 @@ export function getNav(): NavConfig {
 export function saveNav(nav: NavConfig): void {
 	ensureDirs();
 	fs.writeFileSync(NAV_FILE, JSON.stringify(nav, null, 2), "utf-8");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 批次一：流量统计 / 作者 / 项目申请 / 文档纠错
+// ───────────────────────────────────────────────────────────────────────────
+
+// ── 流量统计 ────────────────────────────────────────────────────────────────
+const STATS_FILE = path.join(CONTENT_DIR, "stats.json");
+export interface StatsEntry { total: number; daily: Record<string, number>; }
+export type StatsData = Record<string, StatsEntry>;
+
+export function getStats(): StatsData {
+	ensureDirs();
+	if (!fs.existsSync(STATS_FILE)) return {};
+	try { return JSON.parse(fs.readFileSync(STATS_FILE, "utf-8")); } catch { return {}; }
+}
+
+/** 记录一次 PV。客户端用 sessionStorage 做“同 tab 同日只发一次”，服务端只负责累加。 */
+export function recordView(target: string): number {
+	ensureDirs();
+	const stats = getStats();
+	const today = new Date().toISOString().slice(0, 10);
+	const entry: StatsEntry = stats[target] || { total: 0, daily: {} };
+	entry.total += 1;
+	entry.daily[today] = (entry.daily[today] || 0) + 1;
+	stats[target] = entry;
+	fs.writeFileSync(STATS_FILE, JSON.stringify(stats), "utf-8");
+	return entry.total;
+}
+
+/** 近 N 日全站 PV 汇总（含每日序列），供后台仪表盘。 */
+export function getStatsSummary(days = 7): { total: number; today: number; daily: { date: string; pv: number }[] } {
+	const stats = getStats();
+	let total = 0;
+	for (const key of Object.keys(stats)) total += stats[key].total || 0;
+	const daily: { date: string; pv: number }[] = [];
+	const now = new Date();
+	for (let i = days - 1; i >= 0; i--) {
+		const d = new Date(now);
+		d.setDate(d.getDate() - i);
+		const ds = d.toISOString().slice(0, 10);
+		let pv = 0;
+		for (const key of Object.keys(stats)) pv += stats[key].daily?.[ds] || 0;
+		daily.push({ date: ds, pv });
+	}
+	const todayStr = now.toISOString().slice(0, 10);
+	let todayPv = 0;
+	for (const key of Object.keys(stats)) todayPv += stats[key].daily?.[todayStr] || 0;
+	return { total, today: todayPv, daily };
+}
+
+// ── 作者公开资料 + 其内容 ──────────────────────────────────────────────────
+const USERS_FILE = path.join(CONTENT_DIR, "users.json");
+export interface PublicUserProfile { username: string; displayName: string; role: string; bio?: string; createdAt: string; }
+
+export function getUserPublic(username: string): PublicUserProfile | null {
+	ensureDirs();
+	if (!fs.existsSync(USERS_FILE)) return null;
+	try {
+		const users: any[] = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8")).users || [];
+		const u = users.find(x => x.username === username);
+		if (!u) return null;
+		return { username: u.username, displayName: u.displayName, role: u.role, bio: u.bio, createdAt: u.createdAt };
+	} catch { return null; }
+}
+
+/** 按 owner/author 聚合某用户发布的已发布内容。 */
+export function getAuthorContent(username: string): { posts: any[]; projects: any[]; docs: any[] } {
+	const match = (it: ContentItem) => it.status === "published" && (it.owner === username || (it as any).author === username);
+	const posts = listItems("posts").filter(match).map(toSummary);
+	const projects = listItems("projects").filter(match).map(toSummary);
+	const docs = listItems("docs").filter(match).map(toSummary);
+	return { posts, projects, docs };
+}
+
+// ── 项目专页申请 ─────────────────────────────────────────────────────────────
+export interface ProjectApplication {
+	id: string;
+	name: string;
+	summary: string;
+	repo?: string;
+	website?: string;
+	category?: string;
+	owner: string;
+	status: "pending" | "approved" | "rejected";
+	createdAt: string;
+}
+const PROJECT_APPS_FILE = path.join(CONTENT_DIR, "project-applications.json");
+
+export function getProjectApplications(status?: string): ProjectApplication[] {
+	const all = readJsonArray<ProjectApplication>(PROJECT_APPS_FILE).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	return status ? all.filter(a => a.status === status) : all;
+}
+export function addProjectApplication(input: { name: string; summary: string; repo?: string; website?: string; category?: string; owner: string }): ProjectApplication {
+	const items = readJsonArray<ProjectApplication>(PROJECT_APPS_FILE);
+	const item: ProjectApplication = { ...input, id: genId("pa"), status: "pending", createdAt: new Date().toISOString() };
+	items.push(item);
+	writeJsonArray(PROJECT_APPS_FILE, items);
+	return item;
+}
+export function setProjectApplicationStatus(id: string, status: "approved" | "rejected", makePage = false): ProjectApplication | null {
+	const items = readJsonArray<ProjectApplication>(PROJECT_APPS_FILE);
+	const app = items.find(a => a.id === id);
+	if (!app) return null;
+	app.status = status;
+	writeJsonArray(PROJECT_APPS_FILE, items);
+	// 通过后 optionally 生成软件专页（草稿态，管理员再丰富）
+	if (status === "approved" && makePage) {
+		saveItem("projects", {
+			title: app.name,
+			body: app.summary,
+			status: "published",
+			category: app.category,
+			owner: app.owner,
+			excerpt: app.summary.slice(0, 120)
+		});
+	}
+	return app;
+}
+
+// ── 文档纠错（用户贡献） ─────────────────────────────────────────────────────
+export interface DocCorrection {
+	id: string;
+	docSlug: string;
+	author: string;
+	section?: string;
+	original?: string;
+	suggestion: string;
+	note?: string;
+	status: "pending" | "approved" | "rejected";
+	createdAt: string;
+}
+const DOC_CORRECTIONS_FILE = path.join(CONTENT_DIR, "doc-corrections.json");
+
+export function getDocCorrections(status?: string): DocCorrection[] {
+	const all = readJsonArray<DocCorrection>(DOC_CORRECTIONS_FILE).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	return status ? all.filter(c => c.status === status) : all;
+}
+export function addDocCorrection(input: { docSlug: string; author: string; section?: string; original?: string; suggestion: string; note?: string }): DocCorrection {
+	const items = readJsonArray<DocCorrection>(DOC_CORRECTIONS_FILE);
+	const item: DocCorrection = { ...input, id: genId("dc"), status: "pending", createdAt: new Date().toISOString() };
+	items.push(item);
+	writeJsonArray(DOC_CORRECTIONS_FILE, items);
+	return item;
+}
+export function setDocCorrectionStatus(id: string, status: "approved" | "rejected"): DocCorrection | null {
+	const items = readJsonArray<DocCorrection>(DOC_CORRECTIONS_FILE);
+	const c = items.find(x => x.id === id);
+	if (!c) return null;
+	c.status = status;
+	writeJsonArray(DOC_CORRECTIONS_FILE, items);
+	return c;
 }
