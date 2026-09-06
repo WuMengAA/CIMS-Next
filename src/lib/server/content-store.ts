@@ -7,6 +7,7 @@ import hljs from "highlight.js";
 import katexPlugin from "markdown-it-katex";
 import taskLists from "markdown-it-task-lists";
 import footnote from "markdown-it-footnote";
+import { applyMarkdownExtensions } from "./markdown-extensions.js";
 
 export interface ContentItem {
 	slug: string;
@@ -54,6 +55,8 @@ const md = markdownIt({
 (md as any).use(katexPlugin, { throwOnError: false });
 (md as any).use(taskLists, { enabled: true, label: true });
 (md as any).use(footnote);
+// 补齐原生 markdown-it 不支持的常用写法：上标/下标/高亮/callout 提示块
+applyMarkdownExtensions(md as any);
 
 function ensureDirs() {
 	for (const dir of Object.values(sections)) {
@@ -96,6 +99,25 @@ export function listItems(section: "posts" | "projects" | "docs"): ContentItem[]
 		if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
 		return b.date.localeCompare(a.date);
 	});
+}
+
+/**
+ * 列表 / 导航用的轻量摘要。
+ *
+ * 剥离 body，避免 SSR 把整站正文内联进 HTML——此前列表页与详情页都直接
+ * 返回完整 ContentItem，导致每个页面都序列化了全部文档正文（单页 60KB+，
+ * 且同一份正文在 7 个页面里重复出现）。只有详情页的当前文章才需要 body。
+ */
+export function toSummary(item: ContentItem): Omit<ContentItem, "body"> & { excerpt: string } {
+	const { body, ...rest } = item;
+	const excerpt =
+		rest.excerpt ||
+		body
+			.replace(/[#*`>\[\]()!|-]/g, "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 120);
+	return { ...rest, excerpt };
 }
 
 export function getItem(section: "posts" | "projects" | "docs", slug: string): ContentItem | null {

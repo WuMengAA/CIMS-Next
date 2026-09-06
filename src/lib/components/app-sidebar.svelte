@@ -139,20 +139,22 @@
 						</Sidebar.MenuItem>
 					{/each}
 					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (moreOpen = !moreOpen)}>
+						<Sidebar.MenuButton onclick={() => (moreOpen = !moreOpen)} aria-expanded={moreOpen}>
 							<MorphIcon icon={moreOpen ? ChevronUp : ChevronDown} spring="snappy" reducedMotion="user" size={16} aria-hidden="true" />
 							<span>更多</span>
 						</Sidebar.MenuButton>
-						<Sidebar.MenuSub>
-							{#each more as item (item.url)}
-								<Sidebar.MenuSubItem>
-									<Sidebar.MenuSubButton href={item.url} isActive={isActive(item.url)}>
-										<item.icon />
-										<span>{item.title}</span>
-									</Sidebar.MenuSubButton>
-								</Sidebar.MenuSubItem>
-							{/each}
-						</Sidebar.MenuSub>
+						{#if moreOpen}
+							<Sidebar.MenuSub>
+								{#each more as item (item.url)}
+									<Sidebar.MenuSubItem>
+										<Sidebar.MenuSubButton href={item.url} isActive={isActive(item.url)}>
+											<item.icon />
+											<span>{item.title}</span>
+										</Sidebar.MenuSubButton>
+									</Sidebar.MenuSubItem>
+								{/each}
+							</Sidebar.MenuSub>
+						{/if}
 					</Sidebar.MenuItem>
 				</Sidebar.Menu>
 			</Sidebar.GroupContent>

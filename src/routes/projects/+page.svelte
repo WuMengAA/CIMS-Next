@@ -34,7 +34,7 @@
 					{/if}
 				</div>
 				<h2 class="font-heading text-lg font-medium group-hover:text-primary">{project.title}</h2>
-				<p class="line-clamp-3 text-sm text-muted-foreground">{project.excerpt || project.body.slice(0, 120)}</p>
+				<p class="line-clamp-3 text-sm text-muted-foreground">{project.excerpt}</p>
 				<div class="mt-auto flex items-center gap-3 text-xs text-muted-foreground">
 					<span>{project.date}</span>
 					{#if project.repoUrl}
