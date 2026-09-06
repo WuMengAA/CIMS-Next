@@ -113,7 +113,7 @@
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton href="/" size="lg">
 					<div
-						class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-bold text-primary-foreground"
+						class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-semibold text-primary-foreground"
 					>
 						S
 					</div>

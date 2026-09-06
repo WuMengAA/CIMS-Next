@@ -63,7 +63,7 @@
 	{#if data.post.cover}<meta property="og:image" content={data.post.cover} />{/if}
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
+<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
 	<!-- Main article -->
 	<article class="min-w-0 flex-1">
 		<div class="mb-6 flex items-center justify-between">
