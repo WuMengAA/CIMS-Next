@@ -19,7 +19,7 @@
 	import Container from "$lib/components/container.svelte";
 	import ContentSkeleton from "$lib/components/content-skeleton.svelte";
 
-	let { children, data }: { children: Snippet; data: { settings: { title: string; description: string; siteName: string; slogan: string; socials: { name: string; url: string }[] }; nav: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] } } } = $props();
+	let { children, data }: { children: Snippet; data: { settings: { title: string; description: string; siteName: string; slogan: string; socials: { name: string; url: string }[] }; nav: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] }; siteUrl: string } } = $props();
 	// 路由切换：仅重放内容区 reveal 分段动画。
 	// 不用全局 view-transition：它对整页 root 拍照过渡，侧边栏也跟着淡入，
 	// 观感是"每切一页整个界面重新加载一遍"。
@@ -66,7 +66,8 @@
 	<meta property="og:site_name" content={data.settings.title} />
 	<meta property="og:title" content={data.settings.title} />
 	<meta property="og:description" content={data.settings.description} />
-	<meta property="og:url" content={data.settings.title === "Stelarith" ? "https://www.stelarith.com/" : "/"} />
+	<meta property="og:url" content={data.siteUrl || "/"} />
+	<link rel="canonical" href={data.siteUrl || "/"} />
 	<meta name="twitter:card" content="summary_large_image" />
 	<link rel="alternate" type="application/rss+xml" title={data.settings.title + " · 博客 RSS"} href="/rss.xml" />
 </svelte:head>

@@ -1,10 +1,10 @@
 import type { RequestHandler } from "./$types";
 import { getBlogRssItems, buildRss } from "$lib/server/rss.js";
-import { getSettings } from "$lib/server/content-store.js";
+import { getSettings, getSiteUrl } from "$lib/server/content-store.js";
 
 // 站点博客 RSS 2.0 订阅源。支持 ?author=username 生成单作者订阅源。
 export const GET: RequestHandler = ({ url }) => {
-	const origin = url.origin;
+	const origin = getSiteUrl(url.origin);
 	const author = url.searchParams.get("author") || undefined;
 	const settings = getSettings();
 	const title = settings.title + (author ? " · " + author : "") + " · 博客";
