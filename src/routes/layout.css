@@ -209,7 +209,32 @@
 	padding: 0.1em 0.35em;
 }
 .prose table {
+	display: block;
+	width: 100%;
+	max-width: 100%;
+	overflow-x: auto;
+	border-collapse: collapse;
 	font-size: 0.875rem;
+	margin: 1.25rem 0;
+	border: 1px solid oklch(100% 0 0 / 0.12);
+	border-radius: 0.5rem;
+}
+.prose th,
+.prose td {
+	border: 1px solid oklch(100% 0 0 / 0.12);
+	padding: 0.5rem 0.75rem;
+	text-align: left;
+	vertical-align: top;
+}
+.prose thead th {
+	background: oklch(100% 0 0 / 0.06);
+	font-weight: 600;
+}
+.prose tbody tr:nth-child(even) {
+	background: oklch(100% 0 0 / 0.03);
+}
+.prose tbody tr:hover {
+	background: oklch(100% 0 0 / 0.06);
 }
 
 
