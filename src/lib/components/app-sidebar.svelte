@@ -27,7 +27,7 @@
 	
 	import { page } from "$app/state";
 
-	let { data }: { data?: { settings?: { socials?: { name: string; url: string }[]; siteName?: string; slogan?: string }; nav?: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] }; user?: { username?: string; role?: string } | null } } = $props();
+	let { data }: { data?: { settings?: { socials?: { name: string; url: string }[]; siteName?: string; slogan?: string }; nav?: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] }; user?: { username?: string; role?: string } | null; canEdit?: boolean } } = $props();
 
 	// Fallback socials and dynamic mapping
 	const fallbackSocials = [
@@ -164,7 +164,7 @@
 		<Sidebar.Group>
 			<Sidebar.GroupContent>
 				<Sidebar.Menu>
-					{#each bottom as item (item.url)}
+					{#each bottom.filter((b) => b.url !== "/admin" || data?.canEdit) as item (item.url)}
 						<Sidebar.MenuItem>
 							<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)}>
 								<item.icon />

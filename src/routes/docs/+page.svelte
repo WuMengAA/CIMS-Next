@@ -4,7 +4,7 @@
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 
-	let { data }: { data: { docs: any[] } } = $props();
+	let { data }: { data: { docs: any[]; canEdit?: boolean } } = $props();
 
 	// Group docs by category for wiki-style listing
 	const groups = (() => {
@@ -28,8 +28,10 @@
 	{#if data.docs.length === 0}
 		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
 			<BookMarked class="size-8" />
-			<p class="text-sm">还没有文档，去后台创建第一篇吧。</p>
+		<p class="text-sm">还没有文档，去后台创建第一篇吧。</p>
+		{#if data.canEdit}
 			<a href="/admin/docs/new" class="text-primary hover:underline">创建文档</a>
+		{/if}
 		</div>
 {:else}
 	<div class="flex flex-col gap-8">

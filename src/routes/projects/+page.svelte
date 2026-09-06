@@ -5,7 +5,7 @@
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 
-	let { data }: { data: { projects: any[] } } = $props();
+	let { data }: { data: { projects: any[]; canEdit?: boolean } } = $props();
 </script>
 
 <svelte:head>
@@ -18,8 +18,10 @@
 	{#if data.projects.length === 0}
 		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
 			<Rocket class="size-8" />
-			<p class="text-sm">还没有项目，去后台创建第一个吧。</p>
+		<p class="text-sm">还没有项目，去后台创建第一个吧。</p>
+		{#if data.canEdit}
 			<a href="/admin/projects/new" class="text-primary hover:underline">创建项目</a>
+		{/if}
 		</div>
 {:else}
 	<div class="grid gap-4 sm:grid-cols-2">

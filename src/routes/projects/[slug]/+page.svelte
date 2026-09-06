@@ -4,7 +4,7 @@
 	import { ArrowLeft, Rocket, Globe, Pencil } from "@lucide/svelte";
 	import { Github } from "$lib/components/icons/index.js";
 
-	let { data }: { data: { project: any; html: string } } = $props();
+	let { data }: { data: { project: any; html: string; canEdit?: boolean } } = $props();
 </script>
 
 <svelte:head>
@@ -18,10 +18,12 @@
 			<ArrowLeft class="size-4" />
 			返回项目
 		</a>
-		<a href="/admin/projects/{data.project.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
-			<Pencil class="size-3" />
-			编辑
-		</a>
+		{#if data.canEdit}
+			<a href="/admin/projects/{data.project.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+				<Pencil class="size-3" />
+				编辑
+			</a>
+		{/if}
 	</div>
 
 	<header class="flex flex-col gap-4">
@@ -61,6 +63,8 @@
 	</article>
 
 	<footer class="border-t border-border/40 pt-6">
-		<a href="/admin/projects/{data.project.slug}" class="text-xs text-muted-foreground hover:text-primary">编辑此项目</a>
+		{#if data.canEdit}
+			<a href="/admin/projects/{data.project.slug}" class="text-xs text-muted-foreground hover:text-primary">编辑此项目</a>
+		{/if}
 	</footer>
 </div>
