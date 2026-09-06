@@ -30,6 +30,7 @@
   const K_VHUB_KEY = "cims_vhub_key";
   const K_SITE = "cims_site_host";
   const K_NOVNC = "cims_novnc_url";
+  const K_TASK_SECRET = "cims_task_secret";
 
   const state = {
     mgmtHost: localStorage.getItem(K_MGMT) || "",
@@ -43,6 +44,7 @@
     voicehubKey: localStorage.getItem(K_VHUB_KEY) || "",
     siteHost: localStorage.getItem(K_SITE) || "",
     noVncUrl: localStorage.getItem(K_NOVNC) || "",
+    taskSecret: localStorage.getItem(K_TASK_SECRET) || "",
     embedded: false,
     timeout: 8000,
   };
@@ -54,6 +56,7 @@
   function setVoicehubKey(v) { state.voicehubKey = v || ""; localStorage.setItem(K_VHUB_KEY, state.voicehubKey); }
   function setSiteHost(v) { state.siteHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_SITE, state.siteHost); }
   function setNoVncUrl(v) { state.noVncUrl = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_NOVNC, state.noVncUrl); }
+  function setTaskSecret(v) { state.taskSecret = v || ""; localStorage.setItem(K_TASK_SECRET, state.taskSecret); }
   function setEmbedded(on) { state.embedded = !!on; }
   function setHost(v) { setMgmtHost(v); } // 兼容旧调用：host 视作 management 端口
   function setToken(v) { state.token = v || ""; localStorage.setItem(K_TOKEN, state.token); }
@@ -245,8 +248,23 @@
     });
   }
 
+  // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
+  // 与 ext/stelarith-agent 的 verify() 对齐：token = hex(HMAC_SHA256(action + "|" + ts, secret))。
+  // 生产环境：secret 为「网站—设备」共享密钥；更高安全用网站私钥 Ed25519 签名（见 sync/sign-task.mjs），
+  // 代理侧持网站公钥验签。未配置 secret 时退回时间戳占位（仅联调用，不可用于生产）。
+  async function signTask(action, ts) {
+    if (!state.taskSecret) return String(Date.now());
+    const data = action + "|" + ts;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(state.taskSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
   const API = {
-    state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
+    state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
     voicehubList, voicehubRequest,
 
     // ---- 认证（CIMS 原生）----
@@ -338,19 +356,34 @@
     // ---- 远程屏幕控制（经 CIMS 通知下发 stelarith_task，触发设备侧代理按需启 VNC）----
     // 真实：POST /account/{acct}/client/{uid}/command/send-notification
     //   NotificationPayload.MessageContent = JSON({ stelarith_task:{action,token,scope,ts} })
-    // 说明：token 生产环境应由网站私钥签名（短时效）；此处先用「时间戳」占位以便联调，
-    //       代理侧验签 + VNC 端口回报通道见 ext/stelarith-agent（§1.2 / §2.2）。
+    // token 由 signTask() 用共享密钥 HMAC 签名（未配密钥则时间戳占位）；代理侧验签后启 VNC，
+    // 并把 {ip,port,token} 回报到扩展网关 /vnc-session（见 ext/stelarith-ext-gateway）。面板用
+    // deviceRemoteStatus(uid) 轮询该回执，拿到后内嵌 noVNC。
     deviceRemoteStart: async (uid, scope) => {
       if (state.demo || !state.mgmtHost) return { status: "demo", message: "（演示）已模拟请求远程控制" };
-      const task = { action: "remote_control_start", token: String(Date.now()), scope: scope || "class", ts: Math.floor(Date.now() / 1000) };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("remote_control_start", ts);
+      const task = { action: "remote_control_start", token, scope: scope || "class", ts };
       const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
       return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
     },
     deviceRemoteStop: async (uid, scope) => {
       if (state.demo || !state.mgmtHost) return { status: "demo", message: "（演示）已模拟结束会话" };
-      const task = { action: "remote_control_stop", token: String(Date.now()), scope: scope || "class", ts: Math.floor(Date.now() / 1000) };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("remote_control_stop", ts);
+      const task = { action: "remote_control_stop", token, scope: scope || "class", ts };
       const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
-      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
+      const out = await reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
+      // 控制结束：顺手清掉扩展网关里的 VNC 会话回执
+      try { await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`, { method: "DELETE" }); } catch (_) {}
+      return out;
+    },
+    // 轮询扩展网关，取设备最新 VNC 会话回执：{ip, port, token} 或 null
+    deviceRemoteStatus: async (uid) => {
+      try {
+        const r = await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`);
+        return r && r.session ? r.session : null;
+      } catch (_) { return null; }
     },
 
     // ---- 通知广播 ----
