@@ -97,16 +97,16 @@
 {:else}
 	<!-- Logged in -->
 	<div class="flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6">
-		<div class="flex items-center gap-4">
+		<div class="flex flex-wrap items-center gap-3">
 			<div class="flex size-12 items-center justify-center rounded-full bg-primary/15 font-heading text-lg font-semibold text-primary">{me.displayName?.slice(0, 1) || me.username?.slice(0, 1)}</div>
-			<div class="flex flex-col gap-1">
+			<div class="flex min-w-0 flex-1 flex-col gap-1">
 				<div class="flex items-center gap-2">
-					<span class="font-heading text-lg font-medium">{me.displayName || me.username}</span>
+					<span class="truncate font-heading text-lg font-medium">{me.displayName || me.username}</span>
 					{#if me.role === "admin"}<Badge>管理员</Badge>{:else}<Badge variant="outline">编辑</Badge>{/if}
 				</div>
-				<p class="inline-flex items-center gap-1 text-xs text-muted-foreground"><ShieldCheck class="size-3" /> @{me.username} · <CalendarDays class="size-3" /> 注册于 {me.createdAt?.slice(0, 10)}</p>
+				<p class="inline-flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground"><ShieldCheck class="size-3 shrink-0" /> <span class="truncate">@{me.username}</span> · <CalendarDays class="size-3 shrink-0" /> 注册于 {me.createdAt?.slice(0, 10)}</p>
 			</div>
-			<Button variant="ghost" size="sm" class="ml-auto text-muted-foreground hover:text-destructive" onclick={logout}><LogOut class="h-4 w-4 mr-1" /> 退出</Button>
+			<Button variant="ghost" size="sm" class="ml-auto shrink-0 text-muted-foreground hover:text-destructive" onclick={logout}><LogOut class="h-4 w-4 mr-1" /> 退出</Button>
 		</div>
 	</div>
 

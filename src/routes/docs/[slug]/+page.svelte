@@ -29,7 +29,7 @@
 	<meta name="description" content={data.doc.excerpt || data.doc.title} />
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-6xl flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
+<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
 	<!-- Left: docs nav grouped by folder -->
 	<nav class="shrink-0 md:w-52">
 		<div class="mb-3 flex items-center justify-between">

@@ -26,7 +26,7 @@
 	<title>首页 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-16 px-4 py-12 md:px-8 md:py-16">
+<div class="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-16 px-4 py-12 md:px-8 md:py-16">
 	<!-- Hero -->
 	<section class="reveal parallax-hero flex flex-col items-center gap-8 text-center" style="--reveal-delay:0">
 		<Badge variant="secondary" class="gap-1.5 rounded-full px-3 py-1">
@@ -55,7 +55,7 @@
 	<!-- Brand statement -->
 	<section class="reveal flex flex-col items-center gap-4 text-center" style="--reveal-delay:1">
 		<div
-			class="flex size-16 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-bold text-primary-foreground"
+			class="flex size-16 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-semibold text-primary-foreground"
 		>
 			S
 		</div>

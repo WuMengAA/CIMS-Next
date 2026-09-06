@@ -38,19 +38,19 @@
 
 <div class="grid grid-cols-2 gap-4 mb-6">
 	<a href="/admin/posts" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
-		<div class="text-2xl font-bold">{postsCount}</div>
+		<div class="text-2xl font-semibold">{postsCount}</div>
 		<div class="text-sm text-muted-foreground">博客文章</div>
 	</a>
 	<a href="/admin/projects" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
-		<div class="text-2xl font-bold">{projectsCount}</div>
+		<div class="text-2xl font-semibold">{projectsCount}</div>
 		<div class="text-sm text-muted-foreground">项目</div>
 	</a>
 	<a href="/admin/docs" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
-		<div class="text-2xl font-bold">{docsCount}</div>
+		<div class="text-2xl font-semibold">{docsCount}</div>
 		<div class="text-sm text-muted-foreground">文档</div>
 	</a>
 	<a href="/admin/media" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
-		<div class="text-2xl font-bold">{mediaCount}</div>
+		<div class="text-2xl font-semibold">{mediaCount}</div>
 		<div class="text-sm text-muted-foreground">媒体文件</div>
 	</a>
 </div>
