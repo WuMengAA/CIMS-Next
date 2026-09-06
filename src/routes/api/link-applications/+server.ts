@@ -18,7 +18,7 @@ export async function POST({ request }) {
     const { name, url, description, email } = body;
     if (!name?.trim() || !url?.trim()) return json({ error: "请填写站点名称和网址" }, { status: 400 });
     if (!/^https?:\/\//.test(url.trim())) return json({ error: "网址需以 http(s):// 开头" }, { status: 400 });
-    const app = addLinkApplication({ name: name.trim(), url: url.trim(), description: description?.trim(), email: email?.trim() });
+    const app = addLinkApplication({ name: name.trim(), url: url.trim(), description: description?.trim(), email: email?.trim(), verified: body.verified === true });
     return json(app);
   }
 
@@ -26,8 +26,8 @@ export async function POST({ request }) {
   const user = verifyAuth(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
   if (!user) return json({ error: "未登录" }, { status: 401 });
   if (action === "approve") {
-    const app = setLinkApplicationStatus(body.id, "approved");
-    return app ? json({ ok: true }) : json({ error: "申请不存在" }, { status: 404 });
+    const app = setLinkApplicationStatus(body.id, "approved", body.verified === true);
+    return app ? json({ ok: true, app }) : json({ error: "申请不存在" }, { status: 404 });
   }
   if (action === "reject") {
     const app = setLinkApplicationStatus(body.id, "rejected");

@@ -2,18 +2,24 @@
 	import { onMount } from "svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Check, X, Link2 } from "@lucide/svelte";
+	import { Check, X, Link2, ShieldCheck } from "@lucide/svelte";
 
-	interface App { id: string; name: string; url: string; description?: string; email?: string; status: string; createdAt: string; }
+	interface App { id: string; name: string; url: string; description?: string; email?: string; status: string; createdAt: string; verified?: boolean; }
 	let apps = $state<App[]>([]);
 	let loading = $state(true);
 	let error = $state("");
+	// 每个申请的认证勾选态
+	let verifiedMap = $state<Record<string, boolean>>({});
 
 	async function load() {
 		loading = true;
 		try {
 			const res = await fetch("/api/link-applications");
-			if (res.ok) { apps = await res.json(); }
+			if (res.ok) {
+				apps = await res.json();
+				// 申请人勾选了“申请站长认证”则预勾选，供管理员最终决定
+				for (const a of apps) if (a.verified) verifiedMap[a.id] = true;
+			}
 			else { error = "加载失败"; }
 		} catch (e) { error = "网络错误"; }
 		loading = false;
@@ -23,7 +29,7 @@
 		const res = await fetch("/api/link-applications", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ id, action })
+			body: JSON.stringify({ id, action, verified: verifiedMap[id] === true })
 		});
 		if (res.ok) load();
 	}
@@ -62,9 +68,17 @@
 						<p class="mt-1 text-xs text-muted-foreground">提交于 {new Date(app.createdAt).toLocaleString()}</p>
 					</div>
 					{#if app.status === "pending"}
-					<div class="flex shrink-0 items-center gap-1">
-						<Button size="sm" onclick={() => act(app.id, "approve")}><Check class="h-3.5 w-3.5" /> 通过</Button>
-						<Button size="sm" variant="outline" onclick={() => act(app.id, "reject")}><X class="h-3.5 w-3.5" /> 拒绝</Button>
+					<div class="flex shrink-0 flex-col items-end gap-2">
+						<div class="flex items-center gap-1">
+							<label class="flex cursor-pointer items-center gap-1 text-xs text-muted-foreground" title="标记为站长认证（需已验证站点所有权）">
+								<input type="checkbox" bind:checked={verifiedMap[app.id]} class="size-3.5 accent-primary" />
+								<ShieldCheck class="size-3.5 text-primary" /> 站长认证
+							</label>
+						</div>
+						<div class="flex items-center gap-1">
+							<Button size="sm" onclick={() => act(app.id, "approve")}><Check class="h-3.5 w-3.5" /> 通过</Button>
+							<Button size="sm" variant="outline" onclick={() => act(app.id, "reject")}><X class="h-3.5 w-3.5" /> 拒绝</Button>
+						</div>
 					</div>
 					{/if}
 				</div>
