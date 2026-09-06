@@ -160,10 +160,29 @@ export function reorderItems(section: "posts" | "projects" | "docs", orderedSlug
 
 export interface RenderedContent { html: string; toc: { id: string; text: string; level: number }[]; words: number; }
 
+// GFM 表格块要求表头/分隔行/数据行连续。用户在编辑器或复制内容时，
+// 常在表格行之间插入空行，导致 markdown-it 不识别为表格而原样显示管道符。
+// 渲染前把"夹在表格行之间的空行"剔除，恢复连续表格块。
+function fixTableBlocks(src: string): string {
+	const lines = src.split("\n");
+	const isTableRow = (l: string) => /^\s*\|.*\|\s*$/.test(l);
+	const out: string[] = [];
+	for (let i = 0; i < lines.length; i++) {
+		const prev = out.length ? out[out.length - 1] : null;
+		const cur = lines[i];
+		const next = lines[i + 1];
+		if (cur.trim() === "" && prev !== null && isTableRow(prev) && next !== undefined && isTableRow(next)) {
+			continue;
+		}
+		out.push(cur);
+	}
+	return out.join("\n");
+}
+
 export function renderMarkdown(mdContent: string): RenderedContent {
 	// Images render progressively: off-screen content images load lazily
 	const html = md
-		.render(mdContent)
+		.render(fixTableBlocks(mdContent))
 		.replace(/<img /g, '<img loading="lazy" decoding="async" ');
 	const toc: { id: string; text: string; level: number }[] = [];
 	const headingRe = /<h([23])\s+id="([^"]*)"[^>]*>([\s\S]*?)<\/h\1>/g;

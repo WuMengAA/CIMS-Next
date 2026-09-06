@@ -42,6 +42,10 @@ vite.config.ts.timestamp-*
 /build_*.log
 /stelarith.out.log
 /uicheck.log
+# 本地运行/调试日志（dev / prod 运行时产生）
+*.log
+.rebuild-log.txt
+.prod-run.log
 /*.mjs
 /*.tmp
 /_tmp_*
