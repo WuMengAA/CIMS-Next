@@ -68,6 +68,7 @@
 	<meta property="og:description" content={data.settings.description} />
 	<meta property="og:url" content={data.settings.title === "Stelarith" ? "https://www.stelarith.com/" : "/"} />
 	<meta name="twitter:card" content="summary_large_image" />
+	<link rel="alternate" type="application/rss+xml" title={data.settings.title + " · 博客 RSS"} href="/rss.xml" />
 </svelte:head>
 
 	<!-- 全局动画背景 -->

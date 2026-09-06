@@ -29,6 +29,7 @@ export interface ContentItem {
 
 const CONTENT_DIR = path.resolve("content");
 const UPLOADS_DIR = path.resolve("uploads");
+const ARCHIVE_DIR = path.join(CONTENT_DIR, "archive");
 
 const sections: Record<string, string> = {
 	posts: path.join(CONTENT_DIR, "posts"),
@@ -63,6 +64,7 @@ function ensureDirs() {
 		fs.mkdirSync(dir, { recursive: true });
 	}
 	fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+	fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
 }
 
 export function listItems(section: "posts" | "projects" | "docs"): ContentItem[] {
@@ -162,7 +164,60 @@ export function saveItem(
 	if (item.folder) frontmatter.folder = item.folder;
 	const raw = matter.stringify(item.body, frontmatter);
 	fs.writeFileSync(filePath, raw, "utf-8");
+	// 写版本快照：每次保存都追加一条到 content/archive/[section]/[slug].jsonl
+	appendVersionSnapshot(section, slug, raw, (item.editor as string) || "system");
 	return getItem(section, slug)!;
+}
+
+export interface ContentVersion { id: string; version: number; savedAt: string; editor: string; size: number; }
+
+function archiveFile(section: string, slug: string): string {
+	return path.join(ARCHIVE_DIR, `${section}.${slug}.jsonl`);
+}
+
+function appendVersionSnapshot(section: string, slug: string, raw: string, editor: string): void {
+	try {
+		const file = archiveFile(section, slug);
+		let version = 0;
+		if (fs.existsSync(file)) {
+			const lines = fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean);
+			version = lines.length;
+		}
+		const snap = { id: "v" + (version + 1) + "-" + Date.now().toString(36), version: version + 1, savedAt: new Date().toISOString(), editor, raw, size: Buffer.byteLength(raw) };
+		fs.appendFileSync(file, JSON.stringify(snap) + "\n", "utf-8");
+	} catch (e) {
+		console.error("archive snapshot failed:", e);
+	}
+}
+
+export function getVersions(section: "posts" | "projects" | "docs", slug: string): ContentVersion[] {
+	const file = archiveFile(section, slug);
+	if (!fs.existsSync(file)) return [];
+	const lines = fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean);
+	return lines.map(l => {
+		try {
+			const s = JSON.parse(l);
+			return { id: s.id, version: s.version, savedAt: s.savedAt, editor: s.editor, size: s.size };
+		} catch { return null; }
+	}).filter(Boolean) as ContentVersion[];
+}
+
+export function getVersionRaw(section: "posts" | "projects" | "docs", slug: string, versionId: string): string | null {
+	const file = archiveFile(section, slug);
+	if (!fs.existsSync(file)) return null;
+	const lines = fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean);
+	for (const l of lines) {
+		try { const s = JSON.parse(l); if (s.id === versionId) return s.raw; } catch { /* skip */ }
+	}
+	return null;
+}
+
+export function restoreVersion(section: "posts" | "projects" | "docs", slug: string, versionId: string): boolean {
+	const raw = getVersionRaw(section, slug, versionId);
+	if (!raw) return false;
+	// 写入当前文件（会再次触发快照，形成历史链）
+	fs.writeFileSync(path.join(sections[section], slug + ".md"), raw, "utf-8");
+	return true;
 }
 
 export function deleteItem(section: "posts" | "projects" | "docs", slug: string): boolean {
@@ -332,7 +387,7 @@ export function saveSettings(settings: SiteSettings): void {
 	fs.writeFileSync(path.join(CONTENT_DIR, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
 }
 
-export interface FriendLink { name: string; url: string; description?: string; avatar?: string; }
+export interface FriendLink { name: string; url: string; description?: string; avatar?: string; verified?: boolean; }
 
 export function getLinks(): FriendLink[] {
 	const filePath = path.join(CONTENT_DIR, "links.json");
@@ -389,7 +444,7 @@ export function toggleCommentApproval(id: string): boolean {
 	return true;
 }
 
-export interface LinkApplication { id: string; name: string; url: string; description?: string; email?: string; status: "pending" | "approved" | "rejected"; createdAt: string; }
+export interface LinkApplication { id: string; name: string; url: string; description?: string; email?: string; status: "pending" | "approved" | "rejected"; verified?: boolean; createdAt: string; }
 
 const LINK_APPS_FILE = path.join(CONTENT_DIR, "link-applications.json");
 
@@ -404,24 +459,25 @@ export function getLinkApplications(status?: string): LinkApplication[] {
 	return status ? apps.filter(a => a.status === status) : apps.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export function addLinkApplication(app: { name: string; url: string; description?: string; email?: string }): LinkApplication {
+export function addLinkApplication(app: { name: string; url: string; description?: string; email?: string; verified?: boolean }): LinkApplication {
 	ensureDirs();
 	const apps = getLinkApplications();
-	const na: LinkApplication = { ...app, id: Math.random().toString(36).slice(2, 10) + Date.now().toString(36), status: "pending", createdAt: new Date().toISOString() };
+	const na: LinkApplication = { ...app, id: Math.random().toString(36).slice(2, 10) + Date.now().toString(36), status: "pending", verified: app.verified || false, createdAt: new Date().toISOString() };
 	apps.push(na);
 	fs.writeFileSync(LINK_APPS_FILE, JSON.stringify({ applications: apps }, null, 2), "utf-8");
 	return na;
 }
 
-export function setLinkApplicationStatus(id: string, status: "approved" | "rejected"): LinkApplication | null {
+export function setLinkApplicationStatus(id: string, status: "approved" | "rejected", verified?: boolean): LinkApplication | null {
 	const apps = getLinkApplications();
 	const app = apps.find(a => a.id === id);
 	if (!app) return null;
 	app.status = status;
+	if (verified !== undefined) app.verified = verified;
 	fs.writeFileSync(LINK_APPS_FILE, JSON.stringify({ applications: apps }, null, 2), "utf-8");
 	if (status === "approved") {
 		const links = getLinks();
-		if (!links.some(l => l.url === app.url)) { links.push({ name: app.name, url: app.url, description: app.description }); saveLinks(links); }
+		if (!links.some(l => l.url === app.url)) { links.push({ name: app.name, url: app.url, description: app.description, verified: app.verified }); saveLinks(links); }
 	}
 	return app;
 }
@@ -754,4 +810,244 @@ export function setDocCorrectionStatus(id: string, status: "approved" | "rejecte
 	c.status = status;
 	writeJsonArray(DOC_CORRECTIONS_FILE, items);
 	return c;
+}
+
+// ── 论坛（频道 / 主题帖 / 回复）─────────────────────────────────────────
+export interface ForumChannel {
+	id: string;
+	name: string;
+	slug: string;
+	description?: string;
+	owner: string;
+	createdAt: string;
+	pinned?: boolean;
+	status: "published" | "hidden";
+}
+export interface ForumThread {
+	id: string;
+	channelId: string;
+	title: string;
+	body: string;
+	author: string;
+	authorRole: string;
+	createdAt: string;
+	status: "published" | "pending" | "rejected" | "locked";
+	pinned?: boolean;
+	views: number;
+	lastReplyAt?: string;
+}
+export interface ForumReply {
+	id: string;
+	threadId: string;
+	author: string;
+	authorRole: string;
+	content: string;
+	createdAt: string;
+	status: "published" | "deleted";
+}
+const FORUM_CH_FILE = path.join(CONTENT_DIR, "forum-channels.json");
+const FORUM_TH_FILE = path.join(CONTENT_DIR, "forum-threads.json");
+const FORUM_RP_FILE = path.join(CONTENT_DIR, "forum-replies.json");
+
+function slugifyForum(name: string): string {
+	return name.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || genId("ch");
+}
+
+export function getForumChannels(): ForumChannel[] {
+	const all = readJsonArray<ForumChannel>(FORUM_CH_FILE);
+	return all.filter(c => c.status === "published").sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || b.createdAt.localeCompare(a.createdAt));
+}
+export function getForumChannel(slug: string): ForumChannel | null {
+	return readJsonArray<ForumChannel>(FORUM_CH_FILE).find(c => c.slug === slug) || null;
+}
+export function addForumChannel(input: { name: string; description?: string; owner: string }): ForumChannel {
+	const items = readJsonArray<ForumChannel>(FORUM_CH_FILE);
+	const ch: ForumChannel = {
+		id: genId("fc"),
+		name: input.name,
+		slug: slugifyForum(input.name),
+		description: input.description,
+		owner: input.owner,
+		createdAt: new Date().toISOString(),
+		status: "published"
+	};
+	items.push(ch);
+	writeJsonArray(FORUM_CH_FILE, items);
+	return ch;
+}
+
+/** 公开可见 = published 或 locked；pending/rejected 仅后台可见。 */
+export function getForumThreads(channelId?: string, includeUnpublished = false): ForumThread[] {
+	const all = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	const filtered = channelId ? all.filter(t => t.channelId === channelId) : all;
+	const vis = includeUnpublished ? filtered : filtered.filter(t => t.status === "published" || t.status === "locked");
+	return vis.sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || (b.lastReplyAt || b.createdAt).localeCompare(a.lastReplyAt || a.createdAt));
+}
+export function getForumThread(id: string): { thread: ForumThread | null; replies: ForumReply[] } {
+	const thread = readJsonArray<ForumThread>(FORUM_TH_FILE).find(t => t.id === id) || null;
+	if (!thread) return { thread: null, replies: [] };
+	const replies = readJsonArray<ForumReply>(FORUM_RP_FILE).filter(r => r.threadId === id && r.status === "published").sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+	return { thread, replies };
+}
+export function addForumThread(input: { channelId: string; title: string; body: string; author: string; authorRole: string }): ForumThread {
+	const items = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	const t: ForumThread = {
+		id: genId("ft"),
+		channelId: input.channelId,
+		title: input.title,
+		body: input.body,
+		author: input.author,
+		authorRole: input.authorRole,
+		createdAt: new Date().toISOString(),
+		status: "published",
+		views: 0
+	};
+	items.push(t);
+	writeJsonArray(FORUM_TH_FILE, items);
+	return t;
+}
+export function addForumReply(input: { threadId: string; author: string; authorRole: string; content: string }): ForumReply {
+	const items = readJsonArray<ForumReply>(FORUM_RP_FILE);
+	const r: ForumReply = {
+		id: genId("fr"),
+		threadId: input.threadId,
+		author: input.author,
+		authorRole: input.authorRole,
+		content: input.content,
+		createdAt: new Date().toISOString(),
+		status: "published"
+	};
+	items.push(r);
+	writeJsonArray(FORUM_RP_FILE, items);
+	const threads = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	const t = threads.find(x => x.id === input.threadId);
+	if (t) { t.lastReplyAt = r.createdAt; writeJsonArray(FORUM_TH_FILE, threads); }
+	return r;
+}
+export function setForumThreadStatus(id: string, status: ForumThread["status"]): ForumThread | null {
+	const items = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	const t = items.find(x => x.id === id);
+	if (!t) return null;
+	t.status = status;
+	writeJsonArray(FORUM_TH_FILE, items);
+	return t;
+}
+export function incForumThreadViews(id: string): void {
+	const items = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	const t = items.find(x => x.id === id);
+	if (t) { t.views = (t.views || 0) + 1; writeJsonArray(FORUM_TH_FILE, items); }
+}
+export function deleteForumThread(id: string): void {
+	let items = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	items = items.filter(x => x.id !== id);
+	writeJsonArray(FORUM_TH_FILE, items);
+	let replies = readJsonArray<ForumReply>(FORUM_RP_FILE);
+	replies = replies.filter(r => r.threadId !== id);
+	writeJsonArray(FORUM_RP_FILE, replies);
+}
+export function pinForumThread(id: string, pinned: boolean): ForumThread | null {
+	const items = readJsonArray<ForumThread>(FORUM_TH_FILE);
+	const t = items.find(x => x.id === id);
+	if (!t) return null;
+	t.pinned = pinned;
+	writeJsonArray(FORUM_TH_FILE, items);
+	return t;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// 订阅源 / RSS / ClassIsland 播报配置
+// 后台可管理「要聚合的知名新闻源」与「是否把公告/文章/新闻推送到 ClassIsland」。
+// 源数据落 content/feed-config.json，与既有 items 存储模式保持一致。
+// ───────────────────────────────────────────────────────────────────────────
+export interface FeedSource {
+	id: string;
+	name: string;
+	url: string;
+	category: string;
+	enabled: boolean;
+	maxItems: number;
+}
+
+export interface FeedSettings {
+	includeAnnouncementsInBroadcast: boolean;
+	includePostsInBroadcast: boolean;
+	includeNewsInBroadcast: boolean;
+	maxPostsInBroadcast: number;
+	maxNewsItems: number;
+	newsWindowDays: number;
+	broadcastSeverity: number; // 0=一般 1=重要 2=紧急（ClassIsland Severity 枚举）
+}
+
+export interface FeedConfig {
+	sources: FeedSource[];
+	settings: FeedSettings;
+}
+
+const DEFAULT_FEED_SOURCES: FeedSource[] = [
+	{ id: "sspai", name: "少数派", url: "https://sspai.com/feed", category: "效率/科技", enabled: true, maxItems: 12 },
+	{ id: "ruanyifeng", name: "阮一峰的网络日志", url: "https://www.ruanyifeng.com/blog/atom.xml", category: "开发", enabled: true, maxItems: 10 },
+	{ id: "v2ex", name: "V2EX 最热", url: "https://www.v2ex.com/index.xml", category: "社区", enabled: true, maxItems: 12 },
+	{ id: "hn", name: "Hacker News", url: "https://hnrss.org/frontpage", category: "开发/综合", enabled: true, maxItems: 15 },
+	{ id: "github-blog", name: "GitHub Blog", url: "https://github.blog/feed/", category: "开发", enabled: true, maxItems: 10 },
+	{ id: "meituan", name: "美团技术团队", url: "https://tech.meituan.com/feed/", category: "开发", enabled: false, maxItems: 10 },
+	{ id: "coolshell", name: "酷壳 CoolShell", url: "https://coolshell.cn/feed", category: "开发", enabled: false, maxItems: 10 },
+	{ id: "36kr", name: "36氪", url: "https://36kr.com/feed", category: "创投", enabled: false, maxItems: 12 }
+];
+
+const DEFAULT_FEED_SETTINGS: FeedSettings = {
+	includeAnnouncementsInBroadcast: true,
+	includePostsInBroadcast: true,
+	includeNewsInBroadcast: true,
+	maxPostsInBroadcast: 5,
+	maxNewsItems: 10,
+	newsWindowDays: 7,
+	broadcastSeverity: 0
+};
+
+const FEED_CONFIG_FILE = path.join(CONTENT_DIR, "feed-config.json");
+
+export function getFeedConfig(): FeedConfig {
+	ensureDirs();
+	if (!fs.existsSync(FEED_CONFIG_FILE)) {
+		return { sources: DEFAULT_FEED_SOURCES, settings: { ...DEFAULT_FEED_SETTINGS } };
+	}
+	try {
+		const data = JSON.parse(fs.readFileSync(FEED_CONFIG_FILE, "utf-8"));
+		const sources = Array.isArray(data.sources) && data.sources.length ? data.sources.map(normalizeSource) : DEFAULT_FEED_SOURCES;
+		const settings = { ...DEFAULT_FEED_SETTINGS, ...(data.settings || {}) };
+		settings.broadcastSeverity = clampSeverity(settings.broadcastSeverity);
+		return { sources, settings };
+	} catch {
+		return { sources: DEFAULT_FEED_SOURCES, settings: { ...DEFAULT_FEED_SETTINGS } };
+	}
+}
+
+export function saveFeedConfig(cfg: Partial<FeedConfig>): FeedConfig {
+	ensureDirs();
+	const prev = getFeedConfig();
+	const sources = Array.isArray(cfg.sources) ? cfg.sources.map(normalizeSource) : prev.sources;
+	const settings: FeedSettings = { ...DEFAULT_FEED_SETTINGS, ...(prev.settings || {}), ...(cfg.settings || {}) };
+	settings.broadcastSeverity = clampSeverity(settings.broadcastSeverity);
+	settings.maxNewsItems = Math.max(0, Math.min(50, Math.floor(settings.maxNewsItems) || 0));
+	settings.maxPostsInBroadcast = Math.max(0, Math.min(50, Math.floor(settings.maxPostsInBroadcast) || 0));
+	settings.newsWindowDays = Math.max(1, Math.min(60, Math.floor(settings.newsWindowDays) || 1));
+	const next: FeedConfig = { sources, settings };
+	fs.writeFileSync(FEED_CONFIG_FILE, JSON.stringify(next, null, 2), "utf-8");
+	return next;
+}
+
+function clampSeverity(v: any): number {
+	const n = Number(v);
+	return [0, 1, 2].includes(n) ? n : 0;
+}
+
+function normalizeSource(s: any): FeedSource {
+	return {
+		id: typeof s.id === "string" && s.id ? s.id : "src-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+		name: String(s.name || "未命名源"),
+		url: String(s.url || ""),
+		category: String(s.category || "综合"),
+		enabled: !!s.enabled,
+		maxItems: Math.max(1, Math.min(50, Number(s.maxItems) || 10))
+	};
 }

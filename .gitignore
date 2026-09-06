@@ -28,6 +28,8 @@ vite.config.ts.timestamp-*
 /content/link-applications.json
 /content/nav.json
 /content/settings.json
+/content/stats.json
+/content/cache/
 /uploads/*
 !/uploads/.gitkeep
 

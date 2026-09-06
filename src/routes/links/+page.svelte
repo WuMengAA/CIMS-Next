@@ -5,7 +5,7 @@
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 
-	let { data }: { data: { links: { name: string; url: string; description?: string; avatar?: string }[] } } = $props();
+	let { data }: { data: { links: { name: string; url: string; description?: string; avatar?: string; verified?: boolean }[] } } = $props();
 
 	const steps = [
 		{ title: "Fork 数据仓库", desc: "Fork afoim/af_friends-data" },
@@ -19,6 +19,7 @@
 	let appUrl = $state("");
 	let appDesc = $state("");
 	let appEmail = $state("");
+	let appVerified = $state(false);
 	let appMsg = $state("");
 	let appErr = $state("");
 
@@ -29,7 +30,7 @@
 			const res = await fetch("/api/link-applications", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action: "submit", name: appName, url: appUrl, description: appDesc, email: appEmail })
+				body: JSON.stringify({ action: "submit", name: appName, url: appUrl, description: appDesc, email: appEmail, verified: appVerified })
 			});
 			const data = await res.json();
 			if (res.ok) {
@@ -104,7 +105,7 @@
 						{f.avatar || f.name.charAt(0)}
 					</div>
 					<div class="min-w-0">
-						<p class="truncate text-sm font-medium">{f.name}</p>
+						<p class="flex items-center gap-1 truncate text-sm font-medium">{f.name}{#if f.verified}<span class="inline-flex items-center rounded bg-primary/15 px-1 text-[10px] font-medium text-primary">已认证</span>{/if}</p>
 						<p class="truncate text-xs text-muted-foreground">{f.description || f.name}</p>
 					</div>
 				</a>
@@ -168,6 +169,10 @@
 			<input bind:value={appDesc} placeholder="一句话简介（可选）" maxlength="100" class="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
 			<input bind:value={appEmail} placeholder="联系邮箱（可选）" maxlength="100" class="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
 		</div>
+		<label class="flex items-center gap-2 text-sm text-muted-foreground">
+			<input type="checkbox" bind:checked={appVerified} class="size-4 rounded border-border" />
+			申请站长认证（需验证站点所有权，通过后显示「已认证」徽章）
+		</label>
 		{#if appErr}
 			<p class="text-sm text-destructive">{appErr}</p>
 		{/if}
