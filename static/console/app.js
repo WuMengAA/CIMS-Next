@@ -236,6 +236,8 @@
         <input id="st-host" value="${esc(API.state.mgmtHost)}" style="width:340px"/></div>
       <div class="row"><span class="muted" style="width:80px">令牌</span>
         <input id="st-token" value="${esc(API.state.token)}" style="width:340px"/></div>
+      <div class="row"><span class="muted" style="width:80px">指令密钥</span>
+        <input id="st-tasksecret" value="${esc(API.state.taskSecret)}" style="width:340px" placeholder="与设备代理 STELARITH_AGENT_SECRET 一致"/></div>
       <div class="row"><span class="muted" style="width:80px">演示模式</span>
         <label class="row"><input type="checkbox" id="st-demo" ${API.state.demo?"checked":""}/> 使用内置演示数据</label></div>
       <div class="row" style="margin-top:8px">
@@ -338,6 +340,7 @@
       else if (act === "save-settings") {
         API.setHost($("#st-host").value);
         API.setToken($("#st-token").value);
+        API.setTaskSecret($("#st-tasksecret").value);
         API.setDemo($("#st-demo").checked);
         API.setVoicehubHost($("#st-vhost").value);
         API.setVoicehubKey($("#st-vkey").value);
@@ -353,23 +356,37 @@
         try {
           await API.deviceRemoteStart(uid, "class");
           $("#vnc-name").textContent = uid;
-          const novnc = API.state.noVncUrl;
-          if (novnc) {
-            try {
-              const u = new URL(novnc);
-              u.searchParams.set("autoconnect", "true");
-              u.searchParams.set("token", String(Date.now()));
-              u.searchParams.set("path", "websockify");
-              $("#vnc-frame").src = u.toString();
-            } catch { $("#vnc-frame").src = novnc; }
-          } else {
-            $("#vnc-frame").src = "about:blank";
-          }
-          $("#vnc-note").textContent = "已向设备下发远程控制指令（CIMS 通知 → ClassIsland 插件 → 本地代理按需启动 VNC）。"
-            + (novnc ? " noVNC 已连接。" : " 请在「设置」配置 noVNC 地址。")
-            + " 会话级端口 + 令牌，结束即关，每次控制写审计。";
           $("#vncbox").classList.remove("hidden");
+          $("#vnc-frame").src = "about:blank";
+          $("#vnc-note").textContent = "已下发远程控制指令（CIMS 通知 → ClassIsland 插件 → 本地代理按需启动 VNC）。正在等待设备回报会话地址…";
           toast("已请求远程控制会话：" + uid);
+
+          // 轮询扩展网关的 VNC 会话回执（设备代理启动 VNC 后回报 ip/port/token）
+          const novnc = API.state.noVncUrl;
+          let session = null;
+          for (let i = 0; i < 20; i++) {
+            await new Promise((r) => setTimeout(r, 1500));
+            session = await API.deviceRemoteStatus(uid);
+            if (session && session.ip && session.port) break;
+          }
+          if (!session || !session.ip) {
+            $("#vnc-note").textContent = "指令已下发，但未收到设备会话回执。"
+              + (novnc ? " 可改用固定 noVNC 地址手动连接。" : " 请在「设置」配置 noVNC 地址，并确保扩展网关可达。")
+              + " 会话级令牌，结束即关，每次控制写审计。";
+          } else if (!novnc) {
+            $("#vnc-note").textContent = "已拿到设备会话（" + session.ip + ":" + session.port + "），但未配置 noVNC 地址。请在「设置」填写 noVNC 页面。";
+          } else {
+          try {
+            const u = new URL(novnc);
+            u.searchParams.set("autoconnect", "true");
+            u.searchParams.set("host", session.ip);
+            u.searchParams.set("port", String(session.port));
+            if (session.token) u.searchParams.set("password", session.token);
+            u.searchParams.set("path", "websockify");
+            $("#vnc-frame").src = u.toString();
+            $("#vnc-note").textContent = "已连接设备 " + session.ip + ":" + session.port + "（令牌鉴权，结束即关，写审计）。";
+          } catch { $("#vnc-frame").src = novnc; }
+          }
         } catch (e) { toast("远程控制失败：" + e.message); }
       }
       else if (act === "remote-stop") {
