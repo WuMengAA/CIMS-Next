@@ -3,7 +3,7 @@
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
 	import { page } from "$app/state";
 	import ConfirmHost from "$lib/components/admin/confirm-host.svelte";
-	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss } from "@lucide/svelte";
+	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone } from "@lucide/svelte";
 
 	let { children }: { children?: Snippet } = $props();
 
@@ -24,7 +24,8 @@
 		{ title: "论坛管理", url: "/admin/forum", icon: MessagesSquare },
 		{ title: "导航管理", url: "/admin/nav", icon: LayoutList },
 		{ title: "用户管理", url: "/admin/users", icon: UsersRound },
-		{ title: "站点设置", url: "/admin/settings", icon: Settings }
+		{ title: "站点设置", url: "/admin/settings", icon: Settings },
+		{ title: "集控面板", url: "/admin/console", icon: MonitorSmartphone }
 	];
 
 	const currentPath = $derived(page.url.pathname);
