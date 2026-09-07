@@ -176,3 +176,28 @@
 ### 红线 / 待确认
 - 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；仅应用级文档刷新，端点锚定已核实真实路径。
 - 终验 `c28ee1b2` 未到，不代执行；非阻塞遗留保持：Rust 目标机 `cargo build`（新增 ed25519-dalek/base64 依赖）、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权）。
+
+## 七、第十二轮（自驱巡检，09-08 02:09 触发 · 凌晨轮 · 终验前约 8h）
+
+**本轮定位**：终验前最后一次实跑对账 + 收口 loose end（非代执行终验；终验 `c28ee1b2` 10:00 自行触发）。
+
+### 关键结论（实跑）
+- `node verify.mjs` 重跑 **32/32 PASS**（产物 + 契约 + 网关 `/health` + 聊天房间隔离 + 无 room 降级 + Ed25519 双模静态契约），无回归。
+- **部署链路复核（verify 静态项未覆盖，本轮代码级确认）**：
+  - `deploy/nginx.conf` 已含 `upstream stelarith_ext` + `location /ext/`（rewrite 转 proxy_pass），扩展网关反代就绪。
+  - `deploy/docker-compose.yml` 已含 `ext-gateway` 服务（`EXT_GATEWAY_PORT`/镜像卷挂载/端口映射），一键部署闭环。
+- **嵌入镜像复核（需求 #6）**：父仓库 `admin-console/src/{api,app}.js` 与 inner `stelarith/static/console/{api,app}.js` 经 `diff -q` 字节一致（MIRROR OK），无漂移。
+- **inner stelarith 仓库 loose end 收口**：发现一处未提交改动 `src/lib/components/app-sidebar.svelte`（新增 `Newspaper/Rss/MessagesSquare/LogIn` 图标导入 + `forum/news/rss` 映射；属网站侧边栏图标增强，应用级、非敏感、与集控核心无冲突，但含一个未使用导入 `LogIn`）。已严格仅 `git add` 该文件（排除 `.workbuddy/` 自动化目录）并提交，避免工作树长期脏挂。
+
+### 产物（应用级，无虚构）
+- STATUS.md 本轮记录（第七节）。
+- 交付汇报.md §六「git 工作树干净」修正为准确表述：父仓库无未提交；inner stelarith 仓库一处应用级侧边栏图标改动已于凌晨轮提交，静态镜像始终一致无漂移。
+
+### 提交（仅本地，未 push）
+- inner `stelarith` 仓库：`chore(sidebar): 侧边栏新增 forum/news/rss/LogIn 图标映射（应用级，未使用 LogIn 待后续接入）`。
+- 父仓库 `D:\Stellara\cims-eval\school-multimedia-control`：第十二轮提交 `101b8f5`——凌晨对账 32/32 + 部署/镜像复核 + 收口 stelarith 侧边栏 loose end + 文档修正。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站定位与敏感配置；仅应用级文档刷新 + 网站侧边栏图标映射（非集控敏感）。
+- 终验 `c28ee1b2` 未到，不代执行；非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权；父仓库领先 `origin/solution-pack` 8 commits、inner stelarith 领先 `origin/main` 1 commits，SSH 可达，待授权后 `git push`）。
+
