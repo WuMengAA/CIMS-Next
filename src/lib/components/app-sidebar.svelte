@@ -19,7 +19,8 @@
 		Heart,
 		Send,
 		MessageCircle,
-		Globe
+		Globe,
+		Music2
 	} from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
@@ -78,7 +79,8 @@
 		"game": Gamepad2, "games": Gamepad2, "gamepad2": Gamepad2, "tool": Wrench, "tools": Wrench, "wrench": Wrench,
 		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
 		"archive": Archive, "archives": Archive, "archive": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
-		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User
+		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
+		"music": Music2
 	};
 
 	const workspace = $derived(
