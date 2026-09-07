@@ -220,5 +220,27 @@
 
 ### 红线 / 待确认
 - 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；仅应用级新增文档 + 自检报告刷新。
-- 终验 `c28ee1b2` 10:00 自行触发最终汇报；非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权；父仓库领先 `origin/solution-pack` 9 commits、inner stelarith 领先 `origin/main` 1 commits，SSH 可达，待授权后 `git push`）。
+- 终验 `c28ee1b2` 10:00 自行触发最终汇报；非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权；本地 `main` 与 `origin/main` 历史分叉，普通 push 非快进会被拒、需 force，红线禁止，故继续待授权后处理）。
+
+## 九、第十四轮（自驱巡检，09-08 06:16 触发 · 终验前约 4h）
+
+**本轮定位**：终验前最后一次常态化确认轮（非代执行终验；终验 `c28ee1b2` 10:00 自行触发）。
+
+### 关键结论（实跑）
+- `node verify.mjs` 重跑 **32/32 PASS**，无回归（产物 + 契约 + 网关 `/health` + 聊天房间隔离 + 无 room 降级 + Ed25519 双模静态契约）。
+- **终验自动化确认就位**：经 list 确认 `c28ee1b2-54a4-4424-b758-07c6bf8937ee` 状态 ACTIVE、一次性定时 `2026-09-08T10:00:00+08:00`，届时自行产出最终汇报；本轮不代执行。
+- 七项需求全闭环（#1/#5/#6/#7 已完成，#2/#3/#4 已闭环/打通），无新增缺口。
+- **git 状态精确复核**：本地 `main=2d267ed`；`origin/main` 经 `git ls-remote` 实测 = `8016cbfe…`，与本地历史分叉（非快进），普通 push 会被拒、须 force（红线禁止）；SSH 实测可达 GitHub，但按既定策略「待授权后处理」，不强行 push。
+
+### 产物（应用级，无虚构）
+- STATUS.md 本轮记录（第九节）。
+- 交付汇报.md 抬头刷新：轮次计至第十四轮、时间戳 09-08 06:16、维持「终验就绪 · 32/32 全绿」。
+- `verify-report.md` 随本轮机跑刷新。
+
+### 提交（仅本地，不强行 push）
+- 父仓库 `D:\Stellara\cims-eval\school-multimedia-control`：第十四轮提交——终验前 4h 确认 32/32 + 终验自动化就位复核 + git 分叉澄清 + 文档抬头刷新。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；仅应用级文档刷新 + 自检报告刷新。
+- 终验 `c28ee1b2` 10:00 自行触发最终汇报；非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（本地与 origin/main 分叉，待授权后处理）。
 
