@@ -413,18 +413,9 @@
       }
       else if (act === "vh-push") {
         try {
-          let acct = API.acct();
-          if (!acct) {
-            const list = await API.cims("/account/list");
-            acct = Array.isArray(list) && list[0] && (list[0].id || list[0]);
-          }
-          if (!acct) return toast("无法确定集控账户");
           const { now, queue } = await API.voicehubList();
-          await API.cims(`/account/${acct}/Components/write?name=songboard`, {
-            method: "POST",
-            body: JSON.stringify({ name: "songboard", now: now || null, queue: queue || [], pushedAt: Date.now() }),
-          });
-          toast("点歌看板已推送到本班屏幕（CIMS 资源 songboard 写入）");
+          const r = await API.voicehubPush(now, queue);
+          toast(r && r.demo ? "演示模式：点歌看板已模拟推送" : "点歌看板已推送到本班屏幕（CIMS 资源 songboard 写入）");
         } catch (e) { toast("推送失败：" + e.message); }
       }
       else if (act === "vh-request") {
