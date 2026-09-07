@@ -14,8 +14,8 @@
 
   <!--
     对齐 ClassIsland 真实插件 SDK（公开 NuGet：ClassIsland.PluginSdk）。
-    版本相关：Version 需替换为与「部署目标 ClassIsland 版本」匹配的 PluginSdk 版本号
-    （示例 1.0.0 为占位，请以官方发布页当前版本为准）。
+    版本已绑定到本机验证通过的 PluginSdk 1.4.3.1（对应 ClassIsland 1.4.3.1）。
+    若部署目标 ClassIsland 版本不同，按该版本 PluginSdk 调整下方 Version。
 
     部署步骤：
       1) dotnet build -c Release
@@ -23,13 +23,14 @@
          %APPDATA%\ClassIsland\Plugins\StelarithControlPlugin\
       3) 重启 ClassIsland；带 [PluginEntrance] 的程序集会被自动扫描加载。
 
-    若目标 ClassIsland 版本对以下符号有差异，按该版本源码调整：
-      · INotificationHost / NotificationReceived 事件
-      · Notification.MessageContent 字段
-      · PluginBase.GetService<T>()
+    已知适配点（已编译验证）：
+      · PluginBase.Initialize 为抽象方法 Initialize(HostBuilderContext, IServiceCollection)，无 base 实现；
+      · 服务经构造函数注入 IServiceProvider 获取；INotificationHost 类型不存在（通知服务为
+        INotificationHostService，仅提供 RegisterNotificationProvider，不暴露订阅事件），故指令接收
+        不走通知订阅，改由本地代理 StelarithAgent 推流调用 OnStelarithTaskAsync。
   -->
   <ItemGroup>
-    <PackageReference Include="ClassIsland.PluginSdk" Version="1.0.0" />
+    <PackageReference Include="ClassIsland.PluginSdk" Version="1.4.3.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
   </ItemGroup>
 
