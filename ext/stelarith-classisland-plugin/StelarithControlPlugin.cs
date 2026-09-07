@@ -5,27 +5,26 @@ using System.Threading.Tasks;
 using ClassIsland.Core;
 using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace StelarithControlPlugin;
 
 /// <summary>
-/// 星璃·集控控制插件（对齐 ClassIsland 真实公开插件 SDK 形态）。
+/// 星璃·集控控制插件（对齐 ClassIsland 真实公开插件 SDK 1.4.x 形态，已在本机 dotnet build 验证）。
 ///
 /// 职责：
-///  1) 订阅 ClassIsland 通知服务，捕获 CIMS 经通知通道下发的 stelarith-task 指令；
-///  2) 在本地执行轻量动作（锁屏 / 截图）或转发给本地代理 StelarithAgent 执行 OS 级动作；
-///  3) 提供电教委员快捷操作入口（锁屏 / 截图 / 报修一键发起）。
+///  1) 电教委员快捷操作入口（锁屏 / 截图 / 发起远程控制），这些动作本机即可执行；
+///  2) 需要 OS 级 / 网络级动作（启 VNC、控进程、reboot）时，转发给本机代理 StelarithAgent；
+///  3) 接收 CIMS 经「本地代理」推送的 stelarith-task 指令：由本地代理 StelarithAgent 经
+///     WebSocket/SSE 推流调用 OnStelarithTaskAsync（见 AgentClient）。
 ///
-/// 不直连任何虚构网关——所有"下令"都来自 CIMS 真实通知（经 ClassIsland 通知通道），
-/// 所有"执行"都在本机（插件做轻动作，重动作交给本地代理）。
-///
-/// 版本适配点（本机无 .NET / ClassIsland SDK 环境，未编译验证；需在目标机
-/// `dotnet build` 后部署。若目标 ClassIsland 版本以下符号有差异，按该版本源码调整）：
-///   · using 命名空间：ClassIsland.Core / ClassIsland.Core.Abstractions / ClassIsland.Core.Attributes
-///   · INotificationHost / NotificationReceived 事件
-///   · Notification.MessageContent 字段名与类型
-///   · PluginBase 提供的 GetService&lt;T&gt;() 解析入口
+/// 版本适配点（目标 ClassIsland 1.4.3.1 / PluginSdk 1.4.3.1，已编译验证）：
+///   · PluginBase.Initialize 为抽象方法 Initialize(HostBuilderContext, IServiceCollection)，无 base 实现；
+///   · 服务经构造函数注入 IServiceProvider 获取；本插件未使用 INotificationHost（该类型不存在——
+///     ClassIsland 通知服务为 INotificationHostService，仅提供 RegisterNotificationProvider，不暴露
+///     "订阅全部到达通知"的事件），故指令接收不走通知订阅，改由本地代理推流。
 /// </summary>
 [PluginEntrance]
 public class StelarithControlPlugin : PluginBase
@@ -33,48 +32,21 @@ public class StelarithControlPlugin : PluginBase
     private readonly ILogger<StelarithControlPlugin> _logger;
     private readonly AgentClient _agent = new();
 
-    // 真实 ClassIsland 插件入口：通过构造函数注入 ILogger<T>（来自 PluginBase 基类）。
     public StelarithControlPlugin(ILogger<StelarithControlPlugin> logger)
     {
         _logger = logger;
     }
 
-    public override void Initialize()
+    public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
-        base.Initialize();
-
-        // 真实集成点：通过 PluginBase.GetService<T>() 解析 ClassIsland 通知服务，
-        // 订阅 NotificationReceived，捕获 CIMS 经通知下发的 stelarith-task。
-        // 事件参数类型 / Notification.MessageContent 字段随 ClassIsland 版本，故用 dynamic
-        // 安全提取，避免写死版本相关字段导致编译失败；解析失败仅忽略该条通知。
-        try
-        {
-            var host = GetService<INotificationHost>();
-            if (host is not null)
-            {
-                host.NotificationReceived += (_, e) =>
-                {
-                    try
-                    {
-                        dynamic dyn = e;
-                        string? content = dyn?.Notification?.MessageContent?.ToString();
-                        _ = OnStelarithTaskAsync(content ?? "");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Stelarith: 解析通知内容失败，已忽略该条");
-                    }
-                };
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Stelarith: 订阅 ClassIsland 通知失败（可能 SDK 版本不匹配）");
-        }
+        // 注：PluginBase.Initialize 为抽象方法，无 base 实现，故不可调用 base.Initialize。
+        // 如需注册本插件自有服务，在此向 services 添加即可。
+        _logger.LogInformation("Stelarith: 插件已初始化；指令经本机代理 StelarithAgent 接收。");
+        // TODO(集成): 在 AgentClient 中实现 WebSocket/SSE 接收循环，收到 stelarith-task 即调用 OnStelarithTaskAsync。
     }
 
-    // ---- 通知 → 指令解析 ----
-    /// <summary>由通知钩子调用：解析 stelarith-task 并分发到本地动作或本地代理。</summary>
+    // ---- 指令接收（由本地代理推流调用）----
+    /// <summary>由本地代理推流调用：解析 stelarith-task 并分发到本机动作或本地代理。</summary>
     public async Task OnStelarithTaskAsync(string rawContent)
     {
         if (string.IsNullOrWhiteSpace(rawContent)) return;
@@ -119,8 +91,6 @@ public class StelarithControlPlugin : PluginBase
     }
 
     // ---- 电教委员快捷操作入口（在 ClassIsland 设置页 / 组件面板挂载按钮调用）----
-    // 真实挂载方式随版本：可实现 ISettingsPageProvider / IComponentProvider 或在设置页注册按钮，
-    // 调用下方方法即可；此处仅声明行为，UI 绑定按目标 ClassIsland 版本接入。
     public void QuickLock() => OSActions.LockWorkStation();
     public void QuickScreenshot() => OSActions.CaptureScreen(
         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures) + "\\stelarith_shot.png");
