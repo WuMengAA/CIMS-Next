@@ -13,7 +13,7 @@
 
 	let showPwd = $state(false);
 
-	const form = superForm(data.form, {
+	const { form, message } = superForm(data.form, {
 		validators: zodClient<LoginForm>(),
 		onUpdated: ({ result }) => {
 			if (result.type === "failure" && result.message) {
@@ -70,6 +70,12 @@
 				</Control>
 				<FieldErrors class="mt-1.5 text-sm text-destructive" />
 			</Field>
+
+			{#if $message}
+				<p class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
+					{$message}
+				</p>
+			{/if}
 
 			<Button class="w-full" disabled={submitting}>
 				<LogIn class="h-4 w-4 mr-2" />
