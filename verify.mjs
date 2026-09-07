@@ -43,6 +43,8 @@ const ARTIFACTS = [
   ["ext/stelarith-classisland-plugin/StelarithControlPlugin.csproj", "插件工程"],
   ["ext/stelarith-website-sync/sign-task.mjs", "指令令牌签名（Ed25519 生产模型）"],
   ["ext/voicehub-sync/voicehub-adapter.mjs", "校园点歌推送适配器"],
+  ["ext/voicehub-sync/voicehub-embed.mjs", "校园点歌即插即用模块（浏览器端）"],
+  ["ext/voicehub-sync/voicehub-embed.test.mjs", "模块纯逻辑/契约测试"],
   ["ext/classisland-voicehub-display/bridge/bridge.mjs", "班级大屏桥接"],
 ];
 for (const [f, desc] of ARTIFACTS) {
@@ -59,6 +61,8 @@ const apiPushOk =
   fileHas("admin-console/src/api.js", /voicehubList, voicehubRequest, voicehubPush/);
 rec(apiPushOk ? "PASS" : "FAIL", "契约: voicehubPush 已实现并导出", "真实写 CIMS Components/songboard（替代失效的 API.cims 调用）");
 rec(fileHas("admin-console/src/app.js", /API\.voicehubPush\(/) ? "PASS" : "FAIL", "契约: 校园点歌推送改用 API.voicehubPush", "「推送到本班屏幕」走真实推送链路");
+rec(fileHas("ext/voicehub-sync/voicehub-embed.mjs", /export class VoicehubEmbed/) ? "PASS" : "FAIL", "契约: 集控面板内嵌点歌即插即用模块已交付", "ext/voicehub-sync 提供浏览器端 VoicehubEmbed（list/request/pushToScreen/render）");
+rec(fileHas("ext/voicehub-sync/voicehub-embed.mjs", /Components\/write\?name=songboard/) ? "PASS" : "FAIL", "契约: 推上屏写 CIMS Components/songboard", "与面板 api.js vhubPush 同一已核实资源");
 
 // ---- 2. 聊天房间隔离冒烟（实跑扩展网关）----
 if (!NO_RUN) {

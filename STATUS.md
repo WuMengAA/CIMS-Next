@@ -65,6 +65,34 @@
 4. **镜像同步**：改后 `api.js`/`app.js` 已复制到 `stelarith-website/stelarith/static/console/`，`server.mjs` 同步到 `deploy/ext-gateway/`，保证内嵌面板与部署一致。
 5. **红线遵守**：未改 `CIMS-backend`；端点锚定已核实真实路径；仅应用级新增/修改，无虚构接口。
 
+## 二之六、2026-09-07 第六轮（自驱巡检，13:47 触发）
+
+**本轮重点**：核查中发现「校园点歌 → 推送到本班屏幕」按钮是**失效的**——`app.js` 的 `vh-push` handler 调用了 `API.cims(...)`，而 `cims` 是 `api.js` 的**内部函数、并未导出到 `API` 对象**，运行时会抛 `API.cims is not a function`，从未真正写 CIMS。本轮把它修成真实推送。
+
+### 关键改动（语法校验通过 + verify.mjs 27/27 全绿）
+- `admin-console/src/api.js`：新增并导出 `voicehubPush(now, queue)`——复用已核实真实接口 `POST /account/{acct}/Components/write?name=songboard`（Bearer token，与 `ext/voicehub-sync/voicehub-adapter.mjs` 写同一资源），演示模式或无后端时优雅降级为 `{demo:true}`，`accountId` 缺失自动回落 `/account/list` 首个。
+- `admin-console/src/app.js`：`vh-push` handler 由调用失效的 `API.cims(...)` 改为 `await API.voicehubPush(now, queue)`，演示态明确提示「模拟推送」、真实态提示已写入 `Components/songboard`。
+- `verify.mjs`：新增「关键接口契约静态校验」节，断言 `api.js` 已实现并导出 `voicehubPush`、`app.js` 调用 `API.voicehubPush`，防止此类「调用未导出内部函数」的回归。
+- 镜像已同步至 `stelarith-website/stelarith/static/console/{api,app}.js`（本次修复同时落到内嵌面板副本）。
+
+### 红线遵守
+- 未改 `CIMS-backend`（只读）；写 `Components/songboard` 端点已在 `voicehub-adapter.mjs` 与 `api.js` 既有 `putConfig` 模板核实一致，无虚构接口。
+- 仅应用级新增/修改；对网站仅更新 `static/console/` 镜像副本（与之前一致）。
+
+## 二之七、2026-09-07 第七轮（自驱巡检，15:54 触发）
+
+**本轮重点**：把需求 #7「集控面板内嵌点歌模块（ext/voicehub-sync/ 提供即插即用模块）」里**真正缺失的交付物**补齐——`ext/voicehub-sync/` 此前只有服务端 `voicehub-adapter.mjs`，并无浏览器端即插即用模块；面板内联实现与 README 虽称「已完成」，但「即插即用模块」这一产物名实不符。本轮交付它。
+
+### 关键产物（node --test 5/5 全绿）
+- 新增 `ext/voicehub-sync/voicehub-embed.mjs`：浏览器端零依赖 ESM 模块 `VoicehubEmbed`，封装 `list()`（当前播放+待播队列）/ `request()`（点歌）/ `pushToScreen()`（写 CIMS `Components/songboard`，复用已核实真实接口）/ `render()`（迷你可嵌入 UI）。契约与面板 `api.js` 的 `voicehubXxx` 完全一致，可作「权威参考版」。
+- 新增 `ext/voicehub-sync/voicehub-embed.test.mjs`：`node --test` 实跑 5/5 通过——导出结构、真实端点契约（`/api/open/songs*`、`/api/open/songs/request`、`Components/write?name=songboard`、`x-api-key`）、demo 降级（`list` 返回演示队列、`pushToScreen` 返回 `{demo:true}` 不触网）。
+- `verify.mjs`：新增 2 项产物核对 + 2 条契约校验（即插即用模块导出 `VoicehubEmbed`、推上屏写 `Components/songboard`）。
+- `ext/voicehub-sync/README.md`：文件表补模块两行 + 即插即用说明段（网站侧可直接 `import` 内嵌）。
+
+### 红线遵守
+- 未改 `CIMS-backend`（只读）；模块端点均锚定已核实真实路径（voicehub 公开 API + CIMS `Components/write?name=songboard`），无虚构接口；仅应用级新增/修改。
+- 未改动已验证的面板 `api.js`/`app.js`（避免回归），新模块与面板实现契约对齐但独立存在。
+
 ## 三、仍待推进（不美化）
 
 - **VNC 端口+令牌回报通道**：✅ 本轮已打通（代理→自有扩展网关 `/vnc-session`→面板轮询），不再需要在「设置」预填 noVNC 地址（但仍建议配置作为兜底）。
@@ -73,6 +101,7 @@
 - **本地代理可运行化（Node 参考实现）**：✅ 本轮新增 `ext/stelarith-agent-node/`（逻辑 1:1 对齐 Rust 版），已 `npm test` 端到端跑通「签名↔验签↔VNC 回执↔noVNC」闭环；开发机/CI 可直接回归，不再依赖肉眼读代码。
 - **本地代理 Rust 编译**：Rust 版 `ext/stelarith-agent` 仍为本机无 cargo 的可编译桩，需在目标 Windows 设备 `cargo build --release`（已含 reqwest 依赖，联网编译即可）；Node 参考实现已覆盖「验证」诉求，Rust 版聚焦生产常驻部署。
 - **聊天（班级交流）实时通道 · 跨班互通**：✅ 第五轮已落地房间制——扩展网关 `/chat` 支持 `room` 参数（默认 `techrep-global` 全校电教委员群 + 各班级 `classId` 房间），面板「班级交流」视图加房间切换下拉，消息按房间隔离；实跑验证互相不可见（见 `verify.mjs`）。
+- **voicehub「推送到本班屏幕」回归防护**：✅ 第六轮已修复真实推送（原调用未导出内部函数 `API.cims` 失效）+ `verify.mjs` 新增静态契约校验，防止此类回归。
 
 ## 四、红线遵守
 
