@@ -201,3 +201,24 @@
 - 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站定位与敏感配置；仅应用级文档刷新 + 网站侧边栏图标映射（非集控敏感）。
 - 终验 `c28ee1b2` 未到，不代执行；非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权；父仓库领先 `origin/solution-pack` 8 commits、inner stelarith 领先 `origin/main` 1 commits，SSH 可达，待授权后 `git push`）。
 
+## 八、第十三轮（自驱巡检，09-08 04:12 触发 · 午夜后轮 · 终验前约 6h）
+
+**本轮定位**：终验前收口 + 补全交付物（非代执行终验；终验 `c28ee1b2` 10:00 自行触发）。
+
+### 关键结论（实跑）
+- `node verify.mjs` 重跑 **32/32 PASS**，无回归（产物 + 契约 + 网关 `/health` + 聊天房间隔离 + 无 room 降级 + Ed25519 双模静态契约）。
+- **终验自动化确认就位**：经 list 确认 `c28ee1b2-54a4-4424-b758-07c6bf8937ee` 状态 ACTIVE、一次性定时 `2026-09-08T10:00:00+08:00`，届时自行产出最终汇报；本轮不代执行。
+- 七项需求全闭环（#1/#5/#6/#7 已完成，#2/#3/#4 已闭环/打通），无新增缺口。
+
+### 产物（应用级，无虚构）
+- 新增 `docs/field-deploy.md`：现场部署与编译 runbook，把散落各 README 的部署/编译步骤 consolidated 成一份交接清单（组件落点表、Docker 一键部署、Rust/Node 代理二选一、ClassIsland 插件编译、面板设置项、点歌联动、Ed25519 签名、冒烟清单、已知边界）——全部锚定已有真实命令，无新增接口，直接服务交付汇报里的「交接说明」。
+- STATUS.md 本轮记录（第八节）。
+- `verify-report.md` 随本轮机跑刷新（已提交）。
+
+### 提交（仅本地，未 push）
+- 父仓库 `D:\Stellara\cims-eval\school-multimedia-control`：第十三轮提交——新增现场部署 runbook + 32/32 对账 + 终验自动化就位确认。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；仅应用级新增文档 + 自检报告刷新。
+- 终验 `c28ee1b2` 10:00 自行触发最终汇报；非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权；父仓库领先 `origin/solution-pack` 9 commits、inner stelarith 领先 `origin/main` 1 commits，SSH 可达，待授权后 `git push`）。
+
