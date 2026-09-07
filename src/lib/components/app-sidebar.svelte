@@ -20,7 +20,11 @@
 		Send,
 		MessageCircle,
 		Globe,
-		Music2
+		Music2,
+		Newspaper,
+		Rss,
+		MessagesSquare,
+		LogIn
 	} from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
@@ -80,7 +84,7 @@
 		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
 		"archive": Archive, "archives": Archive, "archive": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
 		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
-		"music": Music2
+		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss
 	};
 
 	const workspace = $derived(
