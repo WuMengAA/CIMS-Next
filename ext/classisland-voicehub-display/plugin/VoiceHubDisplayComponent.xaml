@@ -1,0 +1,32 @@
+<components:ComponentControl
+    x:Class="VoiceHub.Display.VoiceHubDisplayComponent"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:components="clr-namespace:ClassIsland.Core.Controls;assembly=ClassIsland.Core"
+    xmlns:local="clr-namespace:VoiceHub.Display">
+
+    <Border Padding="10,6" Background="#141a2e" CornerRadius="10" BorderBrush="#232a44" BorderThickness="1">
+        <StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="NOW PLAYING" Foreground="#5b8cff" FontSize="10"
+                           LetterSpacing="2" VerticalAlignment="Center"/>
+                <TextBlock Text="· 集控已推送" Foreground="#8a6bff" FontSize="10" Margin="8,0,0,0"
+                           Visibility="{Binding Forced, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            </StackPanel>
+
+            <TextBlock Text="{Binding NowTitle}" FontSize="20" FontWeight="Bold" Foreground="#eaf0ff"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="{Binding NowArtist}" FontSize="13" Foreground="#9aa6cf" Margin="0,2,0,0"/>
+            <TextBlock Text="{Binding NowBy}" FontSize="11" Foreground="#9aa6cf" Margin="0,2,0,6"/>
+
+            <ItemsControl ItemsSource="{Binding Queue}" MaxHeight="120">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" FontSize="12" Foreground="#c4ccea"
+                                   Margin="0,2" TextTrimming="CharacterEllipsis"/>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </Border>
+</components:ComponentControl>

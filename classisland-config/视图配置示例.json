@@ -1,0 +1,36 @@
+{
+  "_comment": "ClassIsland 主视图配置示例（概念结构，导入前请对照所用 ClassIsland 版本的 schema 校验字段）。目标：教室一体机常驻显示课表/倒计时/天气，集控浮窗可自动隐藏。",
+  "Guid": "00000000-0000-0000-0000-000000000001",
+  "Name": "教室主视图-标准",
+  "Components": [
+    {
+      "Type": "ClassIsland.Views.Components.ClassSchedule",
+      "Settings": {
+        "Source": "CimsManifest",
+        "ShowCountdown": true
+      }
+    },
+    {
+      "Type": "ClassIsland.Views.Components.Countdown",
+      "Settings": {
+        "Target": "NextClass"
+      }
+    },
+    {
+      "Type": "ClassIsland.Views.Components.Weather",
+      "Settings": {
+        "CityCode": "101110101"
+      }
+    },
+    {
+      "Type": "ClassIsland.Views.Components.Notification",
+      "Settings": {
+        "Source": "CimsMailbox"
+      }
+    }
+  ],
+  "Visibility": {
+    "DefaultVisible": true,
+    "HideWhenFullscreenApp": true
+  }
+}
