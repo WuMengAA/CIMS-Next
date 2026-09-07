@@ -2,7 +2,7 @@
 title: 星璃知识库
 date: '2026-09-05'
 status: published
-category: 活跃项目
+category: 云端项目
 tags:
   - 文档
   - 知识库
