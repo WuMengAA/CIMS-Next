@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { listItems, getAnnouncements, getSettings, getFeedConfig } from "$lib/server/content-store.js";
+import { listItems, getAnnouncements, getSettings, getFeedConfig, getSiteUrl } from "$lib/server/content-store.js";
 
 // ───────────────────────────────────────────────────────────────────────────
 // RSS / Atom 解析、新闻聚合（带缓存）、RSS 2.0 生成、ClassIsland 播报合成。
@@ -118,7 +118,7 @@ async function fetchFeed(url: string, sourceName?: string, maxItems = 10): Promi
 		const res = await fetch(url, {
 			signal: ctrl.signal,
 			redirect: "follow",
-			headers: { "User-Agent": "StelarithFeedAggregator/1.0 (+https://www.stelarith.com/)", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*" }
+			headers: { "User-Agent": "StelarithFeedAggregator/1.0 (+" + (getSiteUrl("https://www.stelarith.com") || "https://www.stelarith.com") + "/)", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*" }
 		});
 		if (!res.ok) return [];
 		const xml = await res.text();
