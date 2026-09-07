@@ -16,7 +16,7 @@
 //       GET  /v1/client/{uid}/manifest
 //       GET  /v1/client/{type}?name=xxx             -> 资源内容
 //   · 扩展网关（EXT，可选）：CIMS 不存储协作/上报数据，可由部署方自建轻量服务
-//       /notices  /chat  /reports  /bugs  /audit
+//       /notices  /chat(?room=)  /reports  /bugs  /audit   —— /chat 支持房间隔离（跨班互通）
 //
 // 设计原则：单一出口、可换后端、请求失败/无后端/演示模式一律降级为演示数据，面板永不白屏。
 (function (global) {
@@ -411,9 +411,14 @@
       return { status: "success", sent };
     },
 
-    // ---- 班级交流（扩展网关）----
-    listChat: () => ext("/chat", {}, "chat"),
-    sendChat: async (text) => ext("/chat", { method: "POST", body: JSON.stringify({ text }) }, "chat"),
+    // ---- 班级交流（扩展网关，支持房间/班级隔离，跨班互通）----
+    // room 缺省 "techrep-global"（全校电教委员群）；各班级用自身 classId 作房间。
+    listChat: (room) => ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"),
+    sendChat: async (text, from, room) => ext("/chat", {
+      method: "POST",
+      body: JSON.stringify({ text, from: from || (state.classId || "电教委员"), room: room || "techrep-global" }),
+    }, "chat"),
+    CHAT_ROOM_GLOBAL: "techrep-global",
 
     // ---- 故障上报 / Bug（实名站：stelarith-website /api/feedback，复用反馈模型）----
     // 嵌入网站（/admin/console）或配置了 siteHost 时走网站；否则演示降级 / 扩展网关。
