@@ -42,12 +42,41 @@ function ensureUsersFile() {
 
 export function getUsers(): User[] {
 	ensureUsersFile();
+	reconcileAdmin();
 	try {
 		const raw = fs.readFileSync(USERS_FILE, "utf-8");
 		const data = JSON.parse(raw);
 		return Array.isArray(data) ? data : data.users || [];
 	} catch {
 		return [];
+	}
+}
+
+// 内置 admin 的密码以环境变量 ADMIN_PASSWORD 为权威来源：
+// 首次播种时若未设置则生成随机密码；但一旦后续在 .env 中设置了
+// ADMIN_PASSWORD，已存在的 users.json 不会自动回写，导致"设了密码却登不上"。
+// 这里在每次读取用户时（模块级只跑一次）把 admin 哈希对齐到环境变量，
+// 保证文档化的 ADMIN_PASSWORD 始终能登录，避免被首次随机种子锁死。
+let adminReconciled = false;
+function reconcileAdmin() {
+	if (adminReconciled) return;
+	adminReconciled = true;
+	const envPw = process.env.ADMIN_PASSWORD;
+	if (!envPw) return;
+	let users: User[];
+	try {
+		const raw = fs.readFileSync(USERS_FILE, "utf-8");
+		const data = JSON.parse(raw);
+		users = Array.isArray(data) ? data : data.users || [];
+	} catch {
+		return;
+	}
+	const admin = users.find((u) => u.username === "admin");
+	if (!admin) return;
+	const expected = hashPassword(envPw, admin.salt);
+	if (expected !== admin.passwordHash) {
+		admin.passwordHash = expected;
+		saveUsers(users);
 	}
 }
 
