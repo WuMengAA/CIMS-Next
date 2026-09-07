@@ -176,6 +176,25 @@
     });
   }
 
+  // 把当前播放 + 待播队列写入 CIMS Components/songboard（真实接口，已核实）。
+  // 与 ext/voicehub-sync/voicehub-adapter.mjs 写同一资源，由 ClassIsland 点歌看板插件拉取上屏。
+  // 契约：POST /account/{acct}/Components/write?name=songboard   (Bearer token)
+  async function vhubPush(now, queue) {
+    if (state.demo || !state.mgmtHost) return { demo: true };
+    let accountId = state.accountId;
+    if (!accountId) {
+      try {
+        const list = await reqTo(state.mgmtHost, "/account/list");
+        if (Array.isArray(list) && list.length) accountId = list[0].id || list[0];
+      } catch (_) {}
+    }
+    if (!accountId) return { demo: true };
+    return reqTo(state.mgmtHost, `/account/${accountId}/Components/write?name=songboard`, {
+      method: "POST",
+      body: JSON.stringify({ name: "songboard", now: now || null, queue: queue || [], pushedAt: Date.now() }),
+    });
+  }
+
   // ---- 演示数据（无后端或请求失败时兜底，保证面板始终可用/可演示） ----
   const D = {
     classes: () => ([
@@ -265,7 +284,7 @@
 
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
-    voicehubList, voicehubRequest,
+    voicehubList, voicehubRequest, voicehubPush,
 
     // ---- 认证（CIMS 原生）----
     async login(host, email, password) {
