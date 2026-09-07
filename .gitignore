@@ -56,3 +56,8 @@ vite.config.ts.timestamp-*
 /deploy-stelarith/
 /*.tar.gz
 /*.zip
+# Solution-pack (Rust / Python / Tauri / Node 参考实现)
+dist/
+target/
+*.bundle
+__pycache__/

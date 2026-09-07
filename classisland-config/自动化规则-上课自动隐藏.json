@@ -1,0 +1,33 @@
+{
+  "_comment": "自动化规则：上课时段自动隐藏集控主浮窗，下课自动恢复。逻辑：触发器=课程状态(进行中) → 动作=隐藏主视图 / 切换到专注视图。字段名需对照 ClassIsland 实际 Automation schema。",
+  "Guid": "11111111-1111-1111-1111-111111111111",
+  "Name": "上课自动隐藏浮窗",
+  "Enabled": true,
+  "Triggers": [
+    {
+      "Type": "ClassIsland.Core.Automation.Triggers.ClassStateTrigger",
+      "Settings": {
+        "State": "InClass",
+        "Mode": "OnEnter"
+      }
+    }
+  ],
+  "Actions": [
+    {
+      "Type": "ClassIsland.Core.Automation.Actions.SetViewVisibilityAction",
+      "Settings": {
+        "TargetView": "教室主视图-标准",
+        "Visible": false
+      }
+    }
+  ],
+  "ExitActions": [
+    {
+      "Type": "ClassIsland.Core.Automation.Actions.SetViewVisibilityAction",
+      "Settings": {
+        "TargetView": "教室主视图-标准",
+        "Visible": true
+      }
+    }
+  ]
+}

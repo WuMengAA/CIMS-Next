@@ -1,0 +1,10 @@
+{
+  "voicehubBase": "https://voicehub.245959623.xyz",
+  "voicehubKey": "vhub_xxxxxxxxxxxxxxxx",
+  "pollSec": 15,
+  "port": 8787,
+  "out": "songboard.json",
+  "cimsClient": "",
+  "cimsToken": "",
+  "cimsAccount": ""
+}

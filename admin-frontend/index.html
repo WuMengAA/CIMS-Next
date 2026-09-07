@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>学校多媒体统一集控 · 管理面板</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, "Microsoft YaHei", sans-serif; background: #0f1220; color: #e6e8f0; }
+    header { padding: 12px 20px; background: #161a2c; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 16px; margin: 0; }
+    .wrap { max-width: 1100px; margin: 20px auto; padding: 0 16px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tabs button { background: #1d2236; color: #cdd2e6; border: 0; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+    .tabs button.active { background: #3b82f6; color: #fff; }
+    table { width: 100%; border-collapse: collapse; background: #161a2c; border-radius: 10px; overflow: hidden; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #232842; font-size: 13px; }
+    th { background: #1d2236; color: #9aa3c4; }
+    .card { background: #161a2c; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    input { padding: 8px 10px; border-radius: 8px; border: 1px solid #2a3050; background: #0f1220; color: #e6e8f0; width: 240px; }
+    button.primary { background: #3b82f6; color: #fff; border: 0; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+    #login { max-width: 360px; margin: 12vh auto; }
+    .hidden { display: none; }
+    .muted { color: #7e87a8; font-size: 12px; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 6px; background: #243056; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div id="login" class="wrap">
+    <div class="card">
+      <h2>登录集控管理</h2>
+      <p class="muted">对接 CIMS Management API（经 nginx /mgmt/ 反代）</p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+        <input id="email" placeholder="管理员邮箱" value="admin@example.edu" />
+        <input id="password" type="password" placeholder="密码" value="" />
+        <button class="primary" onclick="doLogin()">登录</button>
+        <p id="login-msg" class="muted"></p>
+      </div>
+    </div>
+  </div>
+
+  <div id="app" class="hidden">
+    <header>
+      <h1>学校多媒体统一集控 · 管理面板</h1>
+      <button class="primary" onclick="doLogout()">退出</button>
+    </header>
+    <div class="wrap">
+      <div class="tabs">
+        <button data-tab="accounts" class="active" onclick="switchTab('accounts')">学校/账户</button>
+        <button data-tab="invitations" onclick="switchTab('invitations')">邀请</button>
+        <button data-tab="pairings" onclick="switchTab('pairings')">配对</button>
+        <button data-tab="clients" onclick="switchTab('clients')">客户端</button>
+      </div>
+      <div id="content"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
