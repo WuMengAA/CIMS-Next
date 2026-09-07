@@ -152,9 +152,27 @@
 - 文档同步：`agent-node/README.md`（双模流程/环境变量/契约）、`STATUS.md`（指令令牌签名项由「待升级」升为「已落地」）。
 
 ### 提交（仅本地，领先 origin/solution-pack，无外网未 push）
-- 待提交（本轮改动集中于：ext/stelarith-agent*、ext/stelarith-agent-node/*、verify.mjs、STATUS.md、README.md）。
+- `7d1c3b4` feat(school-multimedia-control): 第十轮落地生产 Ed25519 代理公钥验签(双模)+端到端验证（改动：ext/stelarith-agent*、ext/stelarith-agent-node/*、verify.mjs、STATUS.md、README.md）。
 
 ### 红线 / 待确认
 - 未改 `CIMS-backend`（只读）；端点锚定已核实真实路径；仅应用级新增/修改，无虚构接口。
 - 终验时点 2026-09-08 10:00 未到；一次性终验自动化 `c28ee1b2` 届时自行触发最终汇报，本轮不代执行。
 - 仍遗留（非阻塞）：Rust 版 `cargo build` 目标机回归（新增 ed25519-dalek/base64 依赖）、bidi gRPC（grpcio 1.78 已知）、GitHub 推送（待授权）。
+
+## 六、第十一轮（自驱巡检，09-08 00:05 触发 · 午夜轮）
+
+**本轮定位**：终验前最后一次常态化巡检（距终验 09-08 10:00 约 10 小时）。无新增缺失项，做确认性对账 + 终验底稿刷新（非代执行终验）。
+
+### 关键结论
+- `node verify.mjs` 重跑 **32/32 PASS**（产物 + 契约 + 网关 `/health` + 聊天房间隔离 + 无 room 降级 + Ed25519 双模静态契约），无回归。
+- 七项需求对账：#1/#5/#6/#7 已完成，#2/#3/#4 已闭环/打通，无新增缺口。
+- 终验自动化 `c28ee1b2-54a4-4424-b758-07c6bf8937ee` 经 `automation_update list` 确认存在、状态 ACTIVE、定时 2026-09-08 10:00 一次性触发，届时自行产出最终汇报，本轮不代执行。
+- 第十轮提交状态纠正：本节原写「待提交」，与 git log 对齐实为已提交 `7d1c3b4`（父仓库领先 `origin/solution-pack` 5 commits，无外网未 push）。
+
+### 产物（文档刷新，仅应用级，无虚构）
+- 刷新 `交付汇报.md`：31/31 → **32/32**；补第九轮（常态化巡检 + 代码级复核）、第十轮（Ed25519 双模落地）时间线；§六 终验就绪判定同步 32/32；§四 指令令牌生产安全段更新为「HMAC + Ed25519 双模已落地」；§七 交接 verify 项数同步。供 `c28ee1b2` 终验自动化定稿使用。
+- STATUS.md 第十轮「提交」段由「待提交」纠正为已提交 `7d1c3b4`；本节补本轮（午夜）巡检记录。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；仅应用级文档刷新，端点锚定已核实真实路径。
+- 终验 `c28ee1b2` 未到，不代执行；非阻塞遗留保持：Rust 目标机 `cargo build`（新增 ed25519-dalek/base64 依赖）、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（待授权）。
