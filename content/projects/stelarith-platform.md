@@ -2,7 +2,7 @@
 title: Stelarith 内容平台
 date: '2026-09-06'
 status: published
-category: 活跃项目
+category: 云端项目
 tags:
   - SvelteKit
   - 多用户

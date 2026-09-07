@@ -2,7 +2,7 @@
 title: 星璃·无限音乐画布
 date: '2026-09-07'
 status: published
-category: 活跃项目
+category: 本地项目
 tags:
   - Flutter
   - 音乐
