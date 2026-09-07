@@ -16,6 +16,7 @@
 	import { navigating } from "$app/stores";
 	import { fade } from "svelte/transition";
 	import { replayReveals } from "$lib/actions/reveal.js";
+	import { onMount } from "svelte";
 	import Container from "$lib/components/container.svelte";
 	import ContentSkeleton from "$lib/components/content-skeleton.svelte";
 
@@ -24,6 +25,14 @@
 	// 不用全局 view-transition：它对整页 root 拍照过渡，侧边栏也跟着淡入，
 	// 观感是"每切一页整个界面重新加载一遍"。
 	onNavigate(() => {
+		try { replayReveals(); } catch { /* noop */ }
+	});
+
+	// 首屏兜底：SSR 直访时 reveal 元素初始 opacity:0（CSS 写死，仅 JS 解锁），
+	// 但 hydration 后 use:reveal 的 setTimeout 在后台标签页/时序问题下常未及时跑，
+	// 导致首屏内容卡在隐藏态，需用户点一次导航触发 replayReveals 才显形。
+	// 这里在 hydration 完成后立即重放一次，确保首屏无需点击即自动浮现。
+	onMount(() => {
 		try { replayReveals(); } catch { /* noop */ }
 	});
 
