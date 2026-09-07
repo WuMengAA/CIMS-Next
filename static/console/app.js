@@ -172,19 +172,33 @@
         </tbody></table></div>`;
   };
 
+  let chatRoom = API.CHAT_ROOM_GLOBAL || "techrep-global";
   views.chat = async () => {
-    const ms = await API.listChat();
+    const ms = await API.listChat(chatRoom);
+    const classId = API.state.classId || "";
+    const roomOpts = [
+      { id: API.CHAT_ROOM_GLOBAL || "techrep-global", name: "全校电教委员群" },
+      classId ? { id: classId, name: "本班（" + classId + "）" } : null,
+    ].filter(Boolean);
+    const curName = (roomOpts.find((r) => r.id === chatRoom) || {}).name || chatRoom;
     return `
-      <div class="card"><h3>班级交流</h3>
-        <div class="log" style="min-height:180px">
-          ${ms.map(m=>`<div style="margin:4px 0;${m.mine?"color:var(--accent)":""}">
-            <b>${esc(m.from)}</b> <span class="muted">${esc(m.at)}</span><br/>${esc(m.text)}</div>`).join("")}
+      <div class="card"><h3>班级交流 · 跨班互通</h3>
+        <div class="row">
+          <select id="chat-room">
+            ${roomOpts.map((r) => `<option value="${esc(r.id)}" ${r.id === chatRoom ? "selected" : ""}>${esc(r.name)}</option>`).join("")}
+          </select>
+          <span class="muted">切换房间，不同班级/群组消息隔离</span>
+        </div>
+        <div class="log" style="min-height:180px;margin-top:8px">
+          ${ms.length ? ms.map((m) => `<div style="margin:4px 0">
+            <b>${esc(m.from)}</b> <span class="muted">${esc(m.room || "")} · ${esc(m.at)}</span><br/>${esc(m.text)}</div>`).join("")
+            : `<p class="muted">「${esc(curName)}」暂无消息，发一条试试。</p>`}
         </div>
         <div class="row" style="margin-top:8px">
-          <input id="chat-text" placeholder="输入消息，回车发送" style="flex:1"/>
+          <input id="chat-text" placeholder="在「${esc(curName)}」输入消息，回车发送" style="flex:1"/>
           <button class="primary" data-act="send-chat">发送</button>
         </div>
-        <p class="muted">快捷对象：同年级各班电教委员。消息经集控网关中转，支持广播。</p>
+        <p class="muted">全校电教委员群用于跨班互助；本班房间仅本班可见。消息经集控网关中转并按房间隔离。</p>
       </div>`;
   };
 
@@ -325,7 +339,7 @@
       }
       else if (act === "send-chat") {
         const t = $("#chat-text").value.trim(); if (!t) return;
-        await API.sendChat(t); toast("已发送"); go("chat");
+        await API.sendChat(t, API.state.classId || "电教委员", chatRoom); toast("已发送"); go("chat");
       }
       else if (act === "submit-report") {
         const t = $("#rp-title").value.trim(); if (!t) return toast("请输入标题");
@@ -426,7 +440,12 @@
     } catch (err) { toast("操作失败：" + err.message); }
   });
 
-  $("#chat-text") && $("#chat-text").addEventListener("keydown", () => {});
+  $("#chat-text") && $("#chat-text").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); const btn = document.querySelector('[data-act="send-chat"]'); btn && btn.click(); }
+  });
+  document.addEventListener("change", (e) => {
+    if (e.target && e.target.id === "chat-room") { chatRoom = e.target.value; go("chat"); }
+  });
 
   // ============ 登录 ============
   async function doLogin() {
