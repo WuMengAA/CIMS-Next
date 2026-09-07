@@ -50,6 +50,16 @@ for (const [f, desc] of ARTIFACTS) {
   rec(ok ? "PASS" : "FAIL", "产物: " + f, ok ? desc + " ✓ 存在" : "缺失（需补）");
 }
 
+// ---- 1.5 关键接口契约静态校验（防止 API 导出/调用回归）----
+function fileHas(f, re) {
+  try { return re.test(fs.readFileSync(path.join(__dirname, f), "utf8")); } catch { return false; }
+}
+const apiPushOk =
+  fileHas("admin-console/src/api.js", /async function vhubPush\s*\(/) &&
+  fileHas("admin-console/src/api.js", /voicehubList, voicehubRequest, voicehubPush/);
+rec(apiPushOk ? "PASS" : "FAIL", "契约: voicehubPush 已实现并导出", "真实写 CIMS Components/songboard（替代失效的 API.cims 调用）");
+rec(fileHas("admin-console/src/app.js", /API\.voicehubPush\(/) ? "PASS" : "FAIL", "契约: 校园点歌推送改用 API.voicehubPush", "「推送到本班屏幕」走真实推送链路");
+
 // ---- 2. 聊天房间隔离冒烟（实跑扩展网关）----
 if (!NO_RUN) {
   const PORT = 18123;
