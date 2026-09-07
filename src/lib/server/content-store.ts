@@ -169,7 +169,9 @@ export function getItem(section: "posts" | "projects" | "docs", slug: string): C
 		...(data.order !== undefined ? { order: data.order } : {}),
 		...(data.pinned !== undefined ? { pinned: data.pinned } : {}),
 		...(data.owner ? { owner: data.owner } : {}),
-		...(data.folder ? { folder: data.folder } : {})
+		...(data.folder ? { folder: data.folder } : {}),
+		...(data.repoUrl ? { repoUrl: data.repoUrl } : {}),
+		...(data.siteUrl ? { siteUrl: data.siteUrl } : {})
 	};
 }
 
