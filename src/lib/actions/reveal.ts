@@ -4,7 +4,9 @@
 import type { Action } from "svelte/action";
 
 export const reveal: Action<HTMLElement, { delay?: number }> = (node, opts = {}) => {
-	const delay = opts.delay ?? Number(node.dataset.revealDelay ?? 0);
+	// 优先参数 > data-reveal-delay 属性 > 内联 style --reveal-delay（首页区块用此写法）
+	const inlineDelay = node.style.getPropertyValue("--reveal-delay");
+	const delay = opts.delay ?? Number(node.dataset.revealDelay ?? (inlineDelay || 0));
 	const start = Date.now();
 	let raf = 0;
 	const unlock = () => {
