@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>Library</OutputType>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>StelarithControlPlugin</RootNamespace>
+    <AssemblyName>StelarithControlPlugin</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    对齐 ClassIsland 真实插件 SDK（公开 NuGet：ClassIsland.PluginSdk）。
+    版本相关：Version 需替换为与「部署目标 ClassIsland 版本」匹配的 PluginSdk 版本号
+    （示例 1.0.0 为占位，请以官方发布页当前版本为准）。
+
+    部署步骤：
+      1) dotnet build -c Release
+      2) 把生成的 StelarithControlPlugin.dll（及依赖）放进：
+         %APPDATA%\ClassIsland\Plugins\StelarithControlPlugin\
+      3) 重启 ClassIsland；带 [PluginEntrance] 的程序集会被自动扫描加载。
+
+    若目标 ClassIsland 版本对以下符号有差异，按该版本源码调整：
+      · INotificationHost / NotificationReceived 事件
+      · Notification.MessageContent 字段
+      · PluginBase.GetService<T>()
+  -->
+  <ItemGroup>
+    <PackageReference Include="ClassIsland.PluginSdk" Version="1.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>

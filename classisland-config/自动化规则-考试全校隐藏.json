@@ -1,0 +1,32 @@
+{
+  "_comment": "自动化规则：考试时段（由 CIMS 下发的时间窗口或标签触发）全校/全班隐藏娱乐与公告组件，仅保留倒计时与打铃。可由 CIMS 通过配置下发统一启用。字段名需对照 ClassIsland 实际 Automation schema。",
+  "Guid": "22222222-2222-2222-2222-222222222222",
+  "Name": "考试时段全校专注",
+  "Enabled": true,
+  "Priority": 100,
+  "Triggers": [
+    {
+      "Type": "ClassIsland.Core.Automation.Triggers.TimeTrigger",
+      "Settings": {
+        "Start": "09:00",
+        "End": "11:00",
+        "Days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+      }
+    }
+  ],
+  "Actions": [
+    {
+      "Type": "ClassIsland.Core.Automation.Actions.SetComponentVisibilityAction",
+      "Settings": {
+        "Component": "Notification",
+        "Visible": false
+      }
+    },
+    {
+      "Type": "ClassIsland.Core.Automation.Actions.SwitchProfileAction",
+      "Settings": {
+        "Profile": "考试专注"
+      }
+    }
+  ]
+}

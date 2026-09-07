@@ -1,0 +1,23 @@
+[package]
+name = "stelarith-agent"
+version = "0.1.0"
+edition = "2021"
+description = "星璃·集控本地代理：执行 OS 动作、按需启动 VNC 远程控制。仅监听 127.0.0.1。"
+
+# 体量目标：release 单二进制约数 MB（对比 Electron 同类数十~上百 MB）。
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hmac = "0.12"
+sha2 = "0.10"
+chrono = "0.4"
+reqwest = { version = "0.12", features = ["blocking", "json"], default-features = false }
+

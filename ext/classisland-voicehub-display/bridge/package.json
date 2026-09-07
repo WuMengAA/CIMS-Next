@@ -1,0 +1,13 @@
+{
+  "name": "voicehub-display-bridge",
+  "version": "1.0.0",
+  "description": "VoiceHub 校园点歌 → 班级大屏 桥接代理（轮询公开 API，产出 songboard.json，并提供全屏看板 HTTP 服务）",
+  "type": "module",
+  "scripts": {
+    "start": "node bridge.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "星集控",
+  "version": "0.1.0",
+  "identifier": "com.stellara.xingjikong",
+  "build": {
+    "beforeDevCommand": "python3 -m http.server 9876",
+    "beforeBuildCommand": "",
+    "devUrl": "http://localhost:9876",
+    "frontendDist": "../src"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "星集控 · 电教委员面板",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": ["icons/icon.png", "icons/icon.ico"]
+  }
+}

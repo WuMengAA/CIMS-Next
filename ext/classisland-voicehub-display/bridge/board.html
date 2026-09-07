@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>校园点歌 · 班级大屏</title>
+<style>
+  :root{
+    --bg:#0b0e1a; --panel:#141a2e; --line:#232a44; --text:#eaf0ff;
+    --muted:#9aa6cf; --accent:#5b8cff; --accent2:#8a6bff; --ok:#37d39a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 600px at 70% -10%, #1b2347 0, transparent 60%), var(--bg);
+    color:var(--text); font-family:system-ui,"Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column; padding:32px 40px; gap:22px; overflow:hidden;
+  }
+  .top{display:flex; align-items:center; gap:14px}
+  .badge{font-size:13px; padding:4px 12px; border-radius:999px; background:var(--panel); border:1px solid var(--line); color:var(--muted)}
+  .badge.live{color:var(--ok); border-color:rgba(55,211,154,.4)}
+  h1{font-size:20px; margin:0; letter-spacing:.04em}
+  .now{
+    display:flex; gap:28px; align-items:center; background:linear-gradient(120deg,#1a2244,#141a2e);
+    border:1px solid var(--line); border-radius:20px;
+    padding:26px 30px; min-height:200px;
+  }
+  .cover{width:148px;height:148px;border-radius:14px;background:#0e1426 center/cover no-repeat;flex:none;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .now .meta{flex:1; min-width:0}
+  .now .label{font-size:13px;color:var(--accent);letter-spacing:.3em;margin-bottom:8px}
+  .now .title{font-size:46px; font-weight:800; line-height:1.1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .now .artist{font-size:22px; color:var(--muted); margin-top:8px}
+  .now .by{font-size:15px; color:var(--muted); margin-top:14px}
+  .now .forced{display:inline-block;margin-top:12px;font-size:12px;color:#fff;background:var(--accent2);padding:3px 10px;border-radius:999px}
+  .list h2{font-size:16px; margin:0 0 12px; color:var(--muted); font-weight:600; letter-spacing:.1em}
+  .row{display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:12px; background:var(--panel); border:1px solid var(--line); margin-bottom:10px}
+  .row .idx{width:26px; color:var(--accent); font-weight:700; font-size:15px; text-align:center}
+  .row .ci{width:44px;height:44px;border-radius:8px;background:#0e1426 center/cover no-repeat;flex:none}
+  .row .t{font-size:18px; font-weight:600}
+  .row .a{font-size:14px; color:var(--muted)}
+  .row .v{margin-left:auto; font-size:13px; color:var(--muted)}
+  .empty{color:var(--muted); font-size:15px}
+  .foot{margin-top:auto; font-size:12px; color:var(--muted); display:flex; justify-content:space-between}
+</style>
+</head>
+<body>
+  <div class="top">
+    <h1>校园点歌 · 班级大屏</h1>
+    <span class="badge" id="live">连接中…</span>
+    <span class="badge" id="updated">—</span>
+  </div>
+
+  <div class="now">
+    <div class="cover" id="cover"></div>
+    <div class="meta">
+      <div class="label">NOW PLAYING</div>
+      <div class="title" id="title">—</div>
+      <div class="artist" id="artist"></div>
+      <div class="by" id="by"></div>
+      <div id="forcedWrap"></div>
+    </div>
+  </div>
+
+  <div class="list">
+    <h2>待播队列</h2>
+    <div id="queue"></div>
+  </div>
+
+  <div class="foot">
+    <span>数据来源：voicehub 校园点歌站（公开 API）</span>
+    <span id="src"></span>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  async function load() {
+    try {
+      const r = await fetch("/api/songboard", { cache: "no-store" });
+      const b = await r.json();
+      const now = b.forced && b.forced.now ? b.forced.now : b.now;
+      const queue = (b.forced && b.forced.queue && b.forced.queue.length) ? b.forced.queue : (b.queue || []);
+      if (now) {
+        $("title").textContent = now.title || "—";
+        $("artist").textContent = now.artist || "";
+        $("by").textContent = now.by ? ("点歌人：" + now.by + (now.at ? " · " + now.at : "")) : (now.at || "");
+        if (now.cover) $("cover").style.backgroundImage = `url("${now.cover}")`;
+        else $("cover").style.backgroundImage = "none";
+      } else {
+        $("title").textContent = "暂无播放中曲目";
+        $("artist").textContent = ""; $("by").textContent = "";
+        $("cover").style.backgroundImage = "none";
+      }
+      if (b.forced) $("forcedWrap").innerHTML = '<span class="forced">集控面板已推送至本屏</span>';
+      else $("forcedWrap").innerHTML = "";
+
+      const q = $("queue");
+      if (!queue.length) q.innerHTML = '<div class="empty">暂无待播歌曲，去 voicehub 点歌吧～</div>';
+      else q.innerHTML = queue.map((s, i) => `
+        <div class="row">
+          <div class="idx">${i + 1}</div>
+          <div class="ci" ${s.cover ? `style="background-image:url('${s.cover}')"` : ""}></div>
+          <div>
+            <div class="t">${escapeHtml(s.title || "")}</div>
+            <div class="a">${escapeHtml(s.artist || "")}${s.by ? " · " + escapeHtml(s.by) : ""}</div>
+          </div>
+          <div class="v">${s.votes != null ? "♥ " + s.votes : ""}</div>
+        </div>`).join("");
+
+      $("live").textContent = b.error ? "点歌站异常（看上次数据）" : "实时同步中";
+      $("live").className = "badge" + (b.error ? "" : " live");
+      $("updated").textContent = "更新于 " + new Date(b.updatedAt || Date.now()).toLocaleTimeString();
+      $("src").textContent = b.source || "";
+    } catch (e) {
+      $("live").textContent = "代理未连接";
+      $("live").className = "badge";
+    }
+  }
+  function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  load();
+  setInterval(load, 5000);
+</script>
+</body>
+</html>
