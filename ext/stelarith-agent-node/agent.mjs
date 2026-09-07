@@ -14,7 +14,11 @@
  *
  * 安全边界（与 Rust 版一致，绝不退让）：
  *   · 仅监听 127.0.0.1，外部不可直连；
- *   · 所有写动作都来自本机 ClassIsland 插件转发的指令，必须经 HMAC 验签 + 防重放；
+ *   · 所有写动作都来自本机 ClassIsland 插件转发的指令，必须验签 + 防重放；
+ *     验签支持两种模型（双模，互不冲突）：
+ *       - 开发/联调：HMAC-SHA256 共享密钥（面板 api.js signTask 默认路径）；
+ *       - 生产：网站服务端持 Ed25519 私钥签名（ext/stelarith-website-sync/sign-task.mjs），
+ *         代理持网站公钥验签（STELARITH_SITE_PUBKEY），杜绝共享密钥分发泄露。
  *   · 不暴露任何公网端口。
  *
  * 用法：
@@ -24,7 +28,8 @@
  *
  * 环境变量：
  *   STELARITH_AGENT_PORT      监听端口（默认 17999）
- *   STELARITH_AGENT_SECRET    验签共享密钥（默认 dev-secret-change-me，生产务必改）
+ *   STELARITH_AGENT_SECRET    验签共享密钥（HMAC 模式，默认 dev-secret-change-me，生产务必改）
+ *   STELARITH_SITE_PUBKEY     网站 Ed25519 公钥（SPKI PEM）。设置后优先走非对称验签（生产默认）
  *   STELARITH_EXT_URL         扩展网关基址，用于回报 VNC 会话（如 http://127.0.0.1:8088）
  *   STELARITH_DEVICE_UID      本机设备标识，回执时带上
  *   STELARITH_VNC_CMD         真实 VNC 启动命令（MOCK_VNC 未设时使用）
@@ -39,15 +44,44 @@ import fs from "node:fs";
 
 const PORT = Number(process.env.STELARITH_AGENT_PORT || 17999);
 const SECRET = process.env.STELARITH_AGENT_SECRET || "dev-secret-change-me";
+const SITE_PUBKEY = (process.env.STELARITH_SITE_PUBKEY || "").trim();
 const EXT_URL = (process.env.STELARITH_EXT_URL || "").replace(/\/+$/, "");
 const UID = process.env.STELARITH_DEVICE_UID || "unknown";
 const VNC_CMD = process.env.STELARITH_VNC_CMD || "vncserver";
 const MOCK_VNC = process.env.MOCK_VNC === "1" || process.argv.includes("--mock-vnc");
 const DRY_RUN = process.argv.includes("--dry-run");
 
-// ---- 验签（与面板 signTask / Rust verify 完全一致）----
-// token = hex(HMAC_SHA256(action + "|" + ts, secret))；ts 为秒级时间戳，容忍 ±60s。
+// ---- 验签（与面板 signTask / Rust verify 契约一致）----
+// 双模：
+//   1) 生产（STELARITH_SITE_PUBKEY 已设）：Ed25519 非对称验签。
+//      token = base64url(Ed25519_sign(action + "|" + ts))，message 与 HMAC 路径完全一致，
+//      由网站服务端私钥签名（ext/stelarith-website-sync/sign-task.mjs），代理持公钥验签。
+//   2) 开发/联调：HMAC-SHA256 共享密钥。
+//      token = hex(HMAC_SHA256(action + "|" + ts, secret))；ts 为秒级时间戳，容忍 ±60s。
+
+function b64urlToBuf(s) {
+  const b64 = String(s).replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  return Buffer.from(b64 + pad, "base64");
+}
+
+function verifyEd25519(action, ts, token) {
+  try {
+    const key = crypto.createPublicKey(SITE_PUBKEY);
+    const sig = b64urlToBuf(token);
+    const ok = crypto.verify(null, Buffer.from(`${action}|${ts}`), key, sig);
+    if (!ok) return false;
+    const now = Math.floor(Date.now() / 1000);
+    return Math.abs(now - Number(ts)) <= 60;
+  } catch {
+    return false;
+  }
+}
+
 function verify(action, ts, token) {
+  // 优先：配置了网站 Ed25519 公钥 → 非对称验签（生产默认）。
+  if (SITE_PUBKEY) return verifyEd25519(action, ts, token);
+  // 开发/联调：HMAC 共享密钥（面板 signTask 默认路径）。
   if (!SECRET || SECRET === "dev-secret-change-me") {
     // 未配置密钥：仅在联调时允许时间戳占位回落（不应于生产开启）。
     return token === String(ts);

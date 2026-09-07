@@ -64,6 +64,14 @@ rec(fileHas("admin-console/src/app.js", /API\.voicehubPush\(/) ? "PASS" : "FAIL"
 rec(fileHas("ext/voicehub-sync/voicehub-embed.mjs", /export class VoicehubEmbed/) ? "PASS" : "FAIL", "契约: 集控面板内嵌点歌即插即用模块已交付", "ext/voicehub-sync 提供浏览器端 VoicehubEmbed（list/request/pushToScreen/render）");
 rec(fileHas("ext/voicehub-sync/voicehub-embed.mjs", /Components\/write\?name=songboard/) ? "PASS" : "FAIL", "契约: 推上屏写 CIMS Components/songboard", "与面板 api.js vhubPush 同一已核实资源");
 
+// ---- 1.6 生产验签（Ed25519）契约静态校验 ----
+const edOk =
+  fileHas("ext/stelarith-agent-node/agent.mjs", /verifyEd25519/) &&
+  fileHas("ext/stelarith-agent-node/agent.mjs", /STELARITH_SITE_PUBKEY/) &&
+  fileHas("ext/stelarith-agent/src/main.rs", /verify_ed25519/) &&
+  fileHas("ext/stelarith-agent/Cargo.toml", /ed25519-dalek/);
+rec(edOk ? "PASS" : "FAIL", "契约: 生产 Ed25519 非对称验签已落地", "agent-node verifyEd25519（npm test 端到端验证通过）+ Rust verify_ed25519（生产版，待目标机 cargo build 回归）；与 sign-task.mjs 同契约 action|ts");
+
 // ---- 2. 聊天房间隔离冒烟（实跑扩展网关）----
 if (!NO_RUN) {
   const PORT = 18123;

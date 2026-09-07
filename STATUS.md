@@ -127,7 +127,7 @@
 ## 三、仍待推进（不美化）
 
 - **VNC 端口+令牌回报通道**：✅ 本轮已打通（代理→自有扩展网关 `/vnc-session`→面板轮询），不再需要在「设置」预填 noVNC 地址（但仍建议配置作为兜底）。
-- **指令令牌签名**：✅ 本轮已实现浏览器端 HMAC 签名（`signTask`）+ 代理验签；生产 Ed25519 网站私钥签名脚本 `sign-task.mjs` 已提供，待代理侧升级公钥验签。
+- **指令令牌签名（双模）**：✅ 浏览器端 HMAC 签名（`signTask`）+ 代理验签 已完成；生产 Ed25519 网站私钥签名脚本 `sign-task.mjs` 已就绪，代理侧公钥验签已在 `agent-node`（`verifyEd25519`，已 `npm test` 端到端验证 HMAC+Ed25519 双模）与 Rust 生产版 `verify_ed25519`（`ed25519-dalek` + `base64`，契约一致，待目标机 `cargo build` 回归）落地。
 - **ClassIsland 插件 SDK 对齐**：✅ 本轮已对齐真实公开插件 API（`[PluginEntrance]` + `PluginBase` + `INotificationHost` 订阅 + `ILogger` 注入，移除原臆造的 `[PluginInfo]`）；因本机无 .NET / ClassIsland SDK / 非 Windows，**仍需在目标 Windows 设备 `dotnet build` 回归**（版本适配点已写入插件 README）。
 - **本地代理可运行化（Node 参考实现）**：✅ 本轮新增 `ext/stelarith-agent-node/`（逻辑 1:1 对齐 Rust 版），已 `npm test` 端到端跑通「签名↔验签↔VNC 回执↔noVNC」闭环；开发机/CI 可直接回归，不再依赖肉眼读代码。
 - **本地代理 Rust 编译**：Rust 版 `ext/stelarith-agent` 仍为本机无 cargo 的可编译桩，需在目标 Windows 设备 `cargo build --release`（已含 reqwest 依赖，联网编译即可）；Node 参考实现已覆盖「验证」诉求，Rust 版聚焦生产常驻部署。
@@ -139,3 +139,22 @@
 - 未修改 `CIMS-backend` 任何源码（仅只读参考其 `app/api/...` 与 `APIDocument.md` 以对齐真实端点）。
 - 未触碰 OS 配置、凭据、网站定位与敏感配置；对 `stelarith-website` 仅做应用级新增（`/admin/console` 页、CIMS 代理路由、控制台静态资源、RBAC 角色扩展）。
 - 所有新增/修改均不臆造接口，端点路径已逐一与 `CIMS-backend` 源码及 `APIDocument.md` 比对（`/v1/client/...`、`/account/{id}/client/{uid}/command/*`、`/{type}/write?name=` 均一致）。
+
+## 五、第十轮（自驱巡检，09-07 22:04 触发）
+
+**本轮重点**：把长期挂起的「生产 Ed25519 代理公钥验签」真正落地——`sign-task.mjs`（网站私钥签名）此前已就绪，但代理只验 HMAC，非对称路径没接通。
+
+### 关键产物（均实跑验证）
+- `ext/stelarith-agent-node/agent.mjs`：新增 `verifyEd25519()`，配置 `STELARITH_SITE_PUBKEY`（SPKI PEM）即启用非对称验签，未配则回落 HMAC；message 与 HMAC 路径一致（`action|ts`）+ ±60s 防重放。
+- `ext/stelarith-agent-node/test/end2end.mjs`：扩为双模——第二阶段起第二个 agent（配 `STELARITH_SITE_PUBKEY`），用 webcrypto 实时签发 Ed25519 令牌跑通「签发→验签→VNC 回执→noVNC→停清」并验证非法令牌 401。`npm test` 全绿。
+- `ext/stelarith-agent/src/main.rs` + `Cargo.toml`：生产版同步落地 `verify_ed25519()`（ed25519-dalek + base64，SPKI PEM 解析、URL_SAFE_NO_PAD/base64 兼容），`verify()` 优先走非对称；新增 `ext/stelarith-agent/README.md`（双模契约 + 目标机编译清单）。本机无 cargo 未编译，契约已与已验证的 Node 参考实现对齐。
+- `verify.mjs`：新增「生产 Ed25519 非对称验签已落地」静态契约校验；全量 **32/32 PASS**。
+- 文档同步：`agent-node/README.md`（双模流程/环境变量/契约）、`STATUS.md`（指令令牌签名项由「待升级」升为「已落地」）。
+
+### 提交（仅本地，领先 origin/solution-pack，无外网未 push）
+- 待提交（本轮改动集中于：ext/stelarith-agent*、ext/stelarith-agent-node/*、verify.mjs、STATUS.md、README.md）。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；端点锚定已核实真实路径；仅应用级新增/修改，无虚构接口。
+- 终验时点 2026-09-08 10:00 未到；一次性终验自动化 `c28ee1b2` 届时自行触发最终汇报，本轮不代执行。
+- 仍遗留（非阻塞）：Rust 版 `cargo build` 目标机回归（新增 ed25519-dalek/base64 依赖）、bidi gRPC（grpcio 1.78 已知）、GitHub 推送（待授权）。

@@ -2,22 +2,27 @@
 //!
 //! 真实职责（对应 docs/扩展能力设计.md §1 / §2）：
 //!  - 接收来自 ClassIsland 插件转发的 stelarith-task 指令（localhost）；
-//!  - 验签 + 防重放（token 由网站签发，agent 用共享密钥验签；生产改为网站公钥验签）；
+//!  - 验签 + 防重放（双模：生产走 Ed25519 网站公钥验签，联调走 HMAC 共享密钥；
+//!    两者 message 均为 `action|ts`，契约与面板 api.js signTask / 参考实现 agent-node 完全一致）；
 //!  - 执行 OS 动作：锁屏 / 重启；按需启动 VNC 服务实现远程屏幕控制；结束即关；
 //!  - 绝不暴露公网端口，所有触发都来自本机插件。
 //!
 //! 注意：本机当前未安装 cargo，无法在此编译；需在目标 Windows 设备
-//! `cargo build --release` 后作为服务/开机启动运行。
+//! `cargo build --release`（含 ed25519-dalek / base64 新依赖）后作为服务/开机启动运行。
+//! 已实现的 Ed25519 逻辑与 `ext/stelarith-agent-node/agent.mjs` 的 `verifyEd25519` 同源、契约一致，
+//! 后者已 `npm test` 端到端验证通过，可作为生产版回归基准。
 
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::Engine as _;
 use chrono::Utc;
+use ed25519_dalek::{Signature, VerifyingKey};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
@@ -54,15 +59,77 @@ struct VncSession {
     conn_token: String,
 }
 
-/// 验证 token 并防重放：HMAC-SHA256(action|ts, secret)，且 ts 在 60s 内。
-/// 生产环境：把 secret 换成"网站私钥签名 / agent 持网站公钥验签"的非对称方案。
+/// 验证 token 并防重放：双模。
+///  - 生产（STELARITH_SITE_PUBKEY 已配）：Ed25519 非对称验签，token = base64url(Ed25519_sign(action|ts))，
+///    由网站服务端私钥签名（ext/stelarith-website-sync/sign-task.mjs），agent 持网站公钥验签，杜绝共享密钥分发泄露。
+///  - 开发/联调：HMAC-SHA256(action|ts, secret)。
+/// 两者 message 完全一致（action|ts），ts 均须在 60s 内。
 fn verify(task: &Task, secret: &str) -> bool {
+    // 优先：配置了网站 Ed25519 公钥 → 非对称验签（生产默认）。
+    if site_pubkey().is_some() {
+        return verify_ed25519(task);
+    }
+    // 开发/联调：HMAC 共享密钥（与面板 signTask 契约一致）。
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
     mac.update(task.action.as_bytes());
     mac.update(b"|");
     mac.update(task.ts.to_string().as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
     if !constant_time_eq(&expected, &task.token) {
+        return false;
+    }
+    let now = Utc::now().timestamp();
+    (now - task.ts).abs() <= 60
+}
+
+/// 缓存网站 Ed25519 公钥（SPKI PEM，来自 STELARITH_SITE_PUBKEY），首次解析后复用。
+/// 未配置时返回 None，verify() 回落 HMAC 路径。仅 127.0.0.1 本地读取，不外传。
+static SITE_PUBKEY: OnceLock<Option<VerifyingKey>> = OnceLock::new();
+
+fn site_pubkey() -> Option<&'static VerifyingKey> {
+    let v = SITE_PUBKEY.get_or_init(|| {
+        match std::env::var("STELARITH_SITE_PUBKEY") {
+            Ok(pem) if !pem.trim().is_empty() => parse_spki_pubkey(pem.trim()).ok(),
+            _ => None,
+        }
+    });
+    v.as_ref()
+}
+
+/// 从 SPKI PEM 提取 DER 并构造 VerifyingKey（与 sign-task.mjs 导出的 "PUBLIC KEY" 一致）。
+fn parse_spki_pubkey(pem: &str) -> Result<VerifyingKey, ()> {
+    let der = pem_to_der(pem)?;
+    VerifyingKey::from_public_key_der(&der).map_err(|_| ())
+}
+
+fn pem_to_der(pem: &str) -> Result<Vec<u8>, ()> {
+    let b64 = pem
+        .lines()
+        .filter(|l| !l.contains("-----"))
+        .collect::<String>()
+        .replace(char::is_whitespace, "");
+    base64::engine::general_purpose::STANDARD.decode(b64).map_err(|_| ())
+}
+
+fn verify_ed25519(task: &Task) -> bool {
+    let vk = match site_pubkey() {
+        Some(v) => v,
+        None => return false,
+    };
+    // token 为 base64url（无填充）或普通 base64，兼容两种；先试 URL_SAFE_NO_PAD。
+    let sig_bytes = match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(task.token.trim()) {
+        Ok(b) => b,
+        Err(_) => match base64::engine::general_purpose::STANDARD.decode(task.token.trim()) {
+            Ok(b) => b,
+            Err(_) => return false,
+        },
+    };
+    let sig = match Signature::from_slice(&sig_bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let msg = format!("{}|{}", task.action, task.ts);
+    if vk.verify(msg.as_bytes(), &sig).is_err() {
         return false;
     }
     let now = Utc::now().timestamp();
