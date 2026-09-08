@@ -2,7 +2,7 @@
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Rss, ExternalLink, Newspaper, RefreshCw } from "@lucide/svelte";
+	import { Rss, ExternalLink, Newspaper, RefreshCw, Sparkles } from "@lucide/svelte";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -60,7 +60,11 @@
 					class="group flex flex-col gap-1.5 p-4 transition-colors hover:bg-accent/40"
 				>
 					<div class="flex flex-wrap items-center gap-2">
-						{#if it.source}<Badge variant="secondary" class="text-[10px]">{it.source}</Badge>{/if}
+						{#if it.internal}
+							<Badge class="border-primary/30 bg-primary/15 text-[10px] text-primary"><Sparkles class="mr-1 size-3" />精选</Badge>
+						{:else if it.source}
+							<Badge variant="secondary" class="text-[10px]">{it.source}</Badge>
+						{/if}
 						{#if it.category}<Badge variant="outline" class="text-[10px]">{it.category}</Badge>{/if}
 						<span class="ml-auto text-xs text-muted-foreground">{fmtDate(it.pubDate)}</span>
 					</div>
@@ -73,7 +77,7 @@
 			{/each}
 		</div>
 		<p class="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
-			<RefreshCw class="size-3.5" /> 内容每 10 分钟聚合刷新一次，来自各源站，版权归原作者所有。
+			<RefreshCw class="size-3.5" /> 内容每 10 分钟聚合刷新一次：外部订阅源约占 7 成（标注出处、版权归原作者），站内精选约占 3 成。
 		</p>
 	{/if}
 </Container>

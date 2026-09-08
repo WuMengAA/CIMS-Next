@@ -2,6 +2,7 @@
 title: 本地音乐播放器的架构选型：为什么是 Flutter + Riverpod
 date: '2026-09-07'
 status: published
+pinned: true
 category: 工程笔记
 tags:
   - Flutter
