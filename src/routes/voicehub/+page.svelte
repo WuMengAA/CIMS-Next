@@ -31,6 +31,14 @@
 			点歌站尚未接入（未配置 VOICEHUB_BASE / VOICEHUB_KEY）。<br />
 			在 .env 配置后即可显示实时点歌榜。
 		</div>
+	{:else if data.error}
+		<div class="rounded-xl border border-red-500/40 bg-red-500/10 p-8 text-center text-sm">
+			<p class="font-medium text-red-300">已配置 Voicehub，但连接失败</p>
+			<p class="mt-2 text-muted-foreground">
+				HTTP 状态：{data.errorStatus ?? "未知（网络异常）"}。<br />
+				请检查 VOICEHUB_KEY 是否有效、是否具备 <code class="rounded bg-black/30 px-1">songs:read</code> 权限，且 VOICEHUB_BASE 指向正确的实例。
+			</p>
+		</div>
 	{:else}
 		<section class="rounded-2xl border p-6">
 			<h2 class="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
