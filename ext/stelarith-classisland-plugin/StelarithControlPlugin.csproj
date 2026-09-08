@@ -1,37 +1,47 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
+    <!--
+      目标版本已切到 ClassIsland 2.1.0.1（本机实际安装版本）。
+      重要：ClassIsland 2.x 的 UI 框架已由 WPF 迁移为 Avalonia，
+      因此本工程改为 net8.0、去掉 UseWPF/UseWindowsForms。
+      按 1.4.3.1（WPF）编译出的插件在 2.1.0.1 中会**被静默跳过、不加载**（已由运行日志证实）。
+    -->
+    <TargetFramework>net8.0</TargetFramework>
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- 本机已加载成功的插件（AIIsland/ExtraIsland/FancyAnima）目录内均含 X.runtimeconfig.json，
+         本工程此前缺此文件，补齐以对齐实际加载约定。 -->
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>StelarithControlPlugin</RootNamespace>
     <AssemblyName>StelarithControlPlugin</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="ClassIsland.PluginSdk" Version="2.1.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
   <!--
-    对齐 ClassIsland 真实插件 SDK（公开 NuGet：ClassIsland.PluginSdk）。
-    版本已绑定到本机验证通过的 PluginSdk 1.4.3.1（对应 ClassIsland 1.4.3.1）。
-    若部署目标 ClassIsland 版本不同，按该版本 PluginSdk 调整下方 Version。
-
-    部署步骤：
-      1) dotnet build -c Release
-      2) 把生成的 StelarithControlPlugin.dll（及依赖）放进：
-         %APPDATA%\ClassIsland\Plugins\StelarithControlPlugin\
-      3) 重启 ClassIsland；带 [PluginEntrance] 的程序集会被自动扫描加载。
-
-    已知适配点（已编译验证）：
-      · PluginBase.Initialize 为抽象方法 Initialize(HostBuilderContext, IServiceCollection)，无 base 实现；
-      · 服务经构造函数注入 IServiceProvider 获取；INotificationHost 类型不存在（通知服务为
-        INotificationHostService，仅提供 RegisterNotificationProvider，不暴露订阅事件），故指令接收
-        不走通知订阅，改由本地代理 StelarithAgent 推流调用 OnStelarithTaskAsync。
+    ClassIsland 2.x 的插件清单（YAML）。加载器先读 manifest.yml 才能定位入口程序集；
+    缺此文件时插件会被静默跳过（日志中完全不出现，也不报错）。
+    旧版 plugin.manifest.json 为 1.4.x 格式，2.x 不再识别。
   -->
   <ItemGroup>
-    <PackageReference Include="ClassIsland.PluginSdk" Version="1.4.3.1" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+    <None Include="manifest.yml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    VoiceHub 点歌看板显示组件：源码在 ../classisland-voicehub-display/plugin（无独立 csproj），
+    以 Link 方式并入本程序集，组件与主插件同属一个 dll，ClassIsland 扫描 [ComponentInfo] 即可发现。
+    已随 2.x 迁移为 Avalonia 纯代码 UI，故不再包含原 WPF 的 .xaml（不移动/不复制源文件，仅链接引用）。
+  -->
+  <ItemGroup>
+    <Compile Include="..\classisland-voicehub-display\plugin\VoiceHubSettings.cs" Link="VoiceHub\VoiceHubSettings.cs" />
+    <Compile Include="..\classisland-voicehub-display\plugin\VoiceHubDisplayComponent.cs" Link="VoiceHub\VoiceHubDisplayComponent.cs" />
   </ItemGroup>
 
 </Project>

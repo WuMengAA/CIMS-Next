@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging;
 namespace StelarithControlPlugin;
 
 /// <summary>
-/// 星璃·集控控制插件（对齐 ClassIsland 真实公开插件 SDK 1.4.x 形态，已在本机 dotnet build 验证）。
+/// 星璃·集控控制插件（目标 ClassIsland 2.1.0.1 / PluginSdk 2.1.0.1 / net8.0 + Avalonia，已在本机 dotnet build 与真实 ClassIsland 实例双重验证）。
 ///
 /// 职责：
 ///  1) 电教委员快捷操作入口（锁屏 / 截图 / 发起远程控制），这些动作本机即可执行；
@@ -20,28 +20,32 @@ namespace StelarithControlPlugin;
 ///  3) 接收 CIMS 经「本地代理」推送的 stelarith-task 指令：由本地代理 StelarithAgent 经
 ///     WebSocket/SSE 推流调用 OnStelarithTaskAsync（见 AgentClient）。
 ///
-/// 版本适配点（目标 ClassIsland 1.4.3.1 / PluginSdk 1.4.3.1，已编译验证）：
+/// 版本适配点（已编译 + 运行验证）：
+///   · 2.x 已从 WPF 迁移到 Avalonia，UI 组件走 ComponentBase&lt;TSettings&gt; + ComponentInfo(Guid,Name,Desc) 特性；
 ///   · PluginBase.Initialize 为抽象方法 Initialize(HostBuilderContext, IServiceCollection)，无 base 实现；
-///   · 服务经构造函数注入 IServiceProvider 获取；本插件未使用 INotificationHost（该类型不存在——
-///     ClassIsland 通知服务为 INotificationHostService，仅提供 RegisterNotificationProvider，不暴露
-///     "订阅全部到达通知"的事件），故指令接收不走通知订阅，改由本地代理推流。
+///   · ClassIsland 2.x 用 Activator.CreateInstance 动态创建插件，不支持构造函数注入，
+///     故必须提供无参构造函数（注入 ILogger&lt;T&gt; 会抛 MissingMethodException）。
 /// </summary>
 [PluginEntrance]
 public class StelarithControlPlugin : PluginBase
 {
-    private readonly ILogger<StelarithControlPlugin> _logger;
     private readonly AgentClient _agent = new();
 
-    public StelarithControlPlugin(ILogger<StelarithControlPlugin> logger)
+    /// <summary>
+    /// ClassIsland 2.x 通过 Activator.CreateInstance 动态创建插件实例（不支持构造函数注入），
+    /// 因此必须提供无参构造函数。1.4.x 时代注入 ILogger&lt;T&gt; 的写法在 2.x 会抛
+    /// MissingMethodException: No parameterless constructor defined。
+    /// 需要日志时改为从 Initialize 的 services/context 解析或直接输出到控制台。
+    /// </summary>
+    public StelarithControlPlugin()
     {
-        _logger = logger;
     }
 
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
         // 注：PluginBase.Initialize 为抽象方法，无 base 实现，故不可调用 base.Initialize。
         // 如需注册本插件自有服务，在此向 services 添加即可。
-        _logger.LogInformation("Stelarith: 插件已初始化；指令经本机代理 StelarithAgent 接收。");
+        Console.WriteLine("[Stelarith] 插件已初始化；指令经本机代理 StelarithAgent 接收。");
         // TODO(集成): 在 AgentClient 中实现 WebSocket/SSE 接收循环，收到 stelarith-task 即调用 OnStelarithTaskAsync。
     }
 
@@ -70,7 +74,7 @@ public class StelarithControlPlugin : PluginBase
                 await _agent.SendAsync(task);
                 break;
             default:
-                _logger.LogInformation("Stelarith: 收到未知动作 {Action}，已忽略", task.Action);
+                Console.WriteLine($"[Stelarith] 收到未知动作 {task.Action}，已忽略");
                 break;
         }
     }
