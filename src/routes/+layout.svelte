@@ -12,7 +12,7 @@
 	import BgEffects from "$lib/components/bg-effects.svelte";
 	import AnnouncementBanner from "$lib/components/announcement-banner.svelte";
 	import favicon from "$lib/assets/favicon.svg";
-	import { onNavigate } from "$app/navigation";
+	import { afterNavigate } from "$app/navigation";
 	import { navigating } from "$app/stores";
 	import { fade } from "svelte/transition";
 	import { replayReveals } from "$lib/actions/reveal.js";
@@ -22,9 +22,12 @@
 
 	let { children, data }: { children: Snippet; data: { settings: { title: string; description: string; siteName: string; slogan: string; socials: { name: string; url: string }[] }; nav: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] }; siteUrl: string } } = $props();
 	// 路由切换：仅重放内容区 reveal 分段动画。
-	// 不用全局 view-transition：它对整页 root 拍照过渡，侧边栏也跟着淡入，
-	// 观感是"每切一页整个界面重新加载一遍"。
-	onNavigate(() => {
+	// 必须在 afterNavigate（新页面 DOM 挂载完成后）重放，而非 onNavigate——
+	// onNavigate 在换页前执行，querySelector 命中的是即将销毁的旧页面节点，
+	// 导致新页面（尤其首页这种只靠全局 replay 解锁的 .reveal 区块）停在 opacity:0，
+	// 需再点一次才偶然显形（"点两下才刷新"）。afterNavigate 命中新节点，一次到位。
+	// 首屏仍靠下方 onMount 兜底（afterNavigate 不触发于初始直访）。
+	afterNavigate(() => {
 		try { replayReveals(); } catch { /* noop */ }
 	});
 
