@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="zUuApJcsutSCxOyWgYKaPO">
+<head data-page-node-id="cKGfVkCxJy5ZFQCOYWbg88">
+<meta charset="UTF-8" data-page-node-id="rQldtRwmTRNtAW0f0H6cvD">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="iuo9iGBHB06SKRPMuG8ELt">
+<title>星璃·学校多媒体统一集控方案包 — 最终交付物</title>
+<style>
+  :root{
+    --bg:#0d1117; --card:#161b22; --border:#30363d; --fg:#e6edf3;
+    --muted:#8b949e; --green:#3fb950; --amber:#d29922; --red:#f85149;
+    --purple:#a371f7; --blue:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--fg);line-height:1.6;padding:32px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:18px;margin:32px 0 12px;border-left:3px solid var(--purple);padding-left:10px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:12px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:12px 0}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+  .stat .big{font-size:22px;font-weight:700}
+  .stat .lbl{color:var(--muted);font-size:13px;margin-top:4px}
+  .ok{color:var(--green)} .warn{color:var(--amber)} .bad{color:var(--red)} .info{color:var(--blue)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:13px}
+  td code{background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:12px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .p-ok{background:rgba(63,185,80,.15);color:var(--green)}
+  .p-warn{background:rgba(210,153,34,.15);color:var(--amber)}
+  .p-bad{background:rgba(248,81,73,.15);color:var(--red)}
+  .p-info{background:rgba(88,166,255,.15);color:var(--blue)}
+  .ev{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;color:var(--muted);white-space:pre-wrap}
+  .arch{width:100%;height:auto;background:#0d1117;border:1px solid var(--border);border-radius:10px}
+  ol.steps{margin:8px 0;padding-left:20px} ol.steps li{margin:6px 0}
+  .foot{color:var(--muted);font-size:12px;margin-top:28px;text-align:center}
+  a{color:var(--blue)}
+</style>
+</head>
+<body data-page-node-id="x5nvnRKsHGcQy1jq5yfevE">
+<div class="wrap" data-page-node-id="qflk5XDoRnrJ6N25VX4WtA">
+  <h1 data-page-node-id="knhJSViSXbxFgMwiLQP2DE">星璃 · 学校多媒体统一集控方案包</h1>
+  <p class="sub" data-page-node-id="v5wrSx1s0NiCYSjqaawxmI">最终交付物看板 · 生成于 2026-09-08 · 分支 <code data-page-node-id="TOqd7qJv0H53Y4CDFtyaLi">origin/main</code>（无专门分支）</p>
+
+  <div class="grid" data-page-node-id="e9CDkc79BRrszIzP5QPjU2">
+    <div class="stat" data-page-node-id="k1nVpeOISZ0va45pGRtk3I"><div class="big ok" data-page-node-id="PBQoyWexXxNpW5uqybGBFb">✓ 9/9</div><div class="lbl" data-page-node-id="YB0WJzQdQkUSqn3ZxKhH4C">CIMS 后端 e2e 实测通过</div></div>
+    <div class="stat" data-page-node-id="pYjkJfM3OKUdWiyWAnzWux"><div class="big ok" data-page-node-id="MdX5lf9BmUaRlaEcuVw9Hv">✓ 200</div><div class="lbl" data-page-node-id="fBHi0WIpIEN84Ig6zD2Iop">网站 /voicehub 已上线(8090)</div></div>
+    <div class="stat" data-page-node-id="hncoeCpkStSCSEoU1OmCGt"><div class="big ok" data-page-node-id="dYrHAC88RU1unozOn1O0Pk">✓ 0 err</div><div class="lbl" data-page-node-id="zbgMEsnhxgu3k5C7kaJWie">ClassIsland 插件编译通过</div></div>
+    <div class="stat" data-page-node-id="eGEIYKZsOIeRZGj2Jt89Qw"><div class="big warn" data-page-node-id="d6WztN35PoKIgxuWvQ02Gm">⚠ Rust</div><div class="lbl" data-page-node-id="BLmfyoo4wWGbtf3kjnAELS">Agent/Tauri 待装工具链</div></div>
+  </div>
+
+  <h2 data-page-node-id="vj2i8nudtes5rOOwh6plw8">一、架构总览</h2>
+  <div class="card" data-page-node-id="GXoeodEPRBwg5WQ2P08hMD">
+    <svg class="arch" viewBox="0 0 920 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, PingFang SC, sans-serif" data-page-node-id="9JrqNI7ZgW31RVlFMH6MCo">
+      <defs data-page-node-id="cBNKDkQJjEXpTBmqKmefN9">
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" data-page-node-id="RpJgFNb3tIcffkSvsFafAE">
+          <path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff" data-page-node-id="zXI8PxUeW7tLhyDDiBhGDH"/>
+        </marker>
+      </defs>
+      <!-- centers -->
+      <rect x="370" y="140" width="180" height="80" rx="10" fill="#161b22" stroke="#a371f7" stroke-width="2" data-page-node-id="SHLhetrgyI1jCMRlYcGnuu"/>
+      <text x="460" y="172" fill="#e6edf3" font-size="14" text-anchor="middle" font-weight="700" data-page-node-id="LXztnIaassCtrxKUeIwj9l">CIMS 集控后端</text>
+      <text x="460" y="194" fill="#8b949e" font-size="11" text-anchor="middle" data-page-node-id="PxJuR2fRzZn2hMRYCpv003">FastAPI + gRPC · 四端口</text>
+
+      <!-- nodes -->
+      <rect x="40" y="40" width="170" height="64" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="2" data-page-node-id="aONhb404Ss5yzgkk3NP4zz"/>
+      <text x="125" y="66" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="700" data-page-node-id="pPuEkqyC7J81fSKbY79BZA">ClassIsland 插件</text>
+      <text x="125" y="86" fill="#8b949e" font-size="10" text-anchor="middle" data-page-node-id="3j1qlMo3Drb4zlG6sZZVFv">客户端·锁屏/截屏/转发</text>
+
+      <rect x="40" y="250" width="170" height="64" rx="8" fill="#161b22" stroke="#d29922" stroke-width="2" data-page-node-id="HFGAmeOC1wlkgjOi1WA24A"/>
+      <text x="125" y="276" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="700" data-page-node-id="wAXpvyfHznSrXM1ULIFbv6">StelarithAgent</text>
+      <text x="125" y="296" fill="#8b949e" font-size="10" text-anchor="middle" data-page-node-id="RRpxvwF7JjAQbTT57sIRXk">本地代理(Rust·待构建)</text>
+
+      <rect x="710" y="40" width="170" height="64" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="2" data-page-node-id="GmRK0noytduJ0QLPr8KOD4"/>
+      <text x="795" y="66" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="700" data-page-node-id="Yz8iwOvKE5LjX0ALujp0gl">网站 www(8090)</text>
+      <text x="795" y="86" fill="#8b949e" font-size="10" text-anchor="middle" data-page-node-id="jxBhLnC048kLZECy4qnXcd">/voicehub /admin/console</text>
+
+      <rect x="710" y="250" width="170" height="64" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="2" data-page-node-id="mj6zk26YGN7xt1CFwFCa1A"/>
+      <text x="795" y="276" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="700" data-page-node-id="J6C4iO3stFLlcdRw9MQt0S">VoiceHub 点歌</text>
+      <text x="795" y="296" fill="#8b949e" font-size="10" text-anchor="middle" data-page-node-id="B8GP1xZdnEs04y5BVAxHOf">校园点歌站·实时榜</text>
+
+      <!-- edges -->
+      <line x1="210" y1="72" x2="370" y2="160" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)" data-page-node-id="r3O59qi8FnsWqbdd2AzIMX"/>
+      <line x1="210" y1="282" x2="370" y2="220" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)" data-page-node-id="iclrQTxQlsjPFjB42vCobW"/>
+      <line x1="550" y1="180" x2="710" y2="72" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)" data-page-node-id="k7i0PEoZcXEb1mjSdEOTT3"/>
+      <line x1="550" y1="200" x2="710" y2="282" stroke="#58a6ff" stroke-width="2" marker-end="url(#ar)" data-page-node-id="5OPT0QqQaO4Z0Ef95MwKj6"/>
+      <line x1="795" y1="104" x2="795" y2="250" stroke="#30363d" stroke-width="2" stroke-dasharray="4 4" data-page-node-id="kkzNTEzaGC7O87W3RhVhKC"/>
+      <text x="815" y="180" fill="#8b949e" font-size="10" data-page-node-id="pdZpBz1p2lV7V4JLpyfeCx">点歌数据</text>
+    </svg>
+  </div>
+
+  <h2 data-page-node-id="in7gKs0SyZiJ4iAka3WdlU">二、组件交付明细</h2>
+  <div class="card" data-page-node-id="JID0wEjgGOgzN1xG86758D">
+    <table data-page-node-id="3PUrD0BXdQ8iHWWDQIWwcC">
+      <thead data-page-node-id="o00vmyummJqjaHik0O0KnX"><tr data-page-node-id="p9AIdnmaZ3iQ9c6eNbBFSp"><th data-page-node-id="hwetDQ6kpsUCzWFFUGFRa5">组件</th><th data-page-node-id="zzI1zBHD8c92riNB5olc34">状态</th><th data-page-node-id="CC3bGM5FtCO4Yxt1nBzUms">说明 / 证据</th></tr></thead>
+      <tbody data-page-node-id="chlW57E6WanAC2bw8fr27U">
+        <tr data-page-node-id="v5uaBHvyYTDShtKYGDOzZP">
+          <td data-page-node-id="MsjyBl7oUPDDC39MK92zLX">CIMS 集控后端</td>
+          <td data-page-node-id="PF0bHGCDcirBHVonp1AiAC"><span class="pill p-ok" data-page-node-id="XM23ZRou9yflDBmwicuLEg">已实机验证</span></td>
+          <td data-page-node-id="1XR7JBKz5GYz3mQedM1jEL">四端口监听(27041–27044)；e2e 9 项全过；4 处上游 bug 经 <code data-page-node-id="nHFGvloGPjlp0s3e2iisnz">cims-boot.py</code> 外部 patch（不改源码）</td>
+        </tr>
+        <tr data-page-node-id="yYW2vRudN6kz5r4Po99fBV">
+          <td data-page-node-id="Li09J1jbCBsC4E1KsbAaFp">ClassIsland 集控插件</td>
+          <td data-page-node-id="KHEqDtGLgX4offGtCVoGsi"><span class="pill p-ok" data-page-node-id="qUEkcCHWFbDpVNWHM1lTQD">已编译·已部署</span></td>
+          <td data-page-node-id="nNF9NO3eFqlnArOnLYFRgm"><code data-page-node-id="9Yx1ZhTfQLEmbF069L21QS">StelarithControlPlugin.dll</code> 合法 .NET 程序集 v1.0.0.0，已放 <code data-page-node-id="jFRK49PYLcGGN7lnhml7OO">D:\Classlsland\data\Plugins\StelarithControlPlugin\</code>；重启 ClassIsland 即加载</td>
+        </tr>
+        <tr data-page-node-id="pb6H86etbiMY2J46OApmYq">
+          <td data-page-node-id="YxfLPGFltHfEIEnTE8csJF">网站 www (本地 8090)</td>
+          <td data-page-node-id="P8SeytE1GHVpczWUnpyXDs"><span class="pill p-ok" data-page-node-id="xFJepkgl3PhJPKOu0ruhjW">已上线</span></td>
+          <td data-page-node-id="PAd3lPnu4qIM5FArMWP8xZ"><code data-page-node-id="5XxIpfYn1z1hJPi3rfCq7S">/voicehub</code>=200（实时点歌榜 SSR）；<code data-page-node-id="UnrnyqT2iUBdiEuJbE9kcR">/admin/console</code>=303（跳登录，集控面板子页）；CIMS 代理仅服务端持令牌</td>
+        </tr>
+        <tr data-page-node-id="DlnmQakAVGeQOiTB0yDXDp">
+          <td data-page-node-id="t0wg1iuhDxlA2HOlJWrjJQ">StelarithAgent（本地代理）</td>
+          <td data-page-node-id="xQLDw1hrXeqnAEywcL4cKT"><span class="pill p-warn" data-page-node-id="7nZJSe0RxflxxiHnazOmfT">待构建</span></td>
+          <td data-page-node-id="EPVzuW1Hcj1SuWHLtlAn2Q">Rust 实现，本机无 Rust 工具链；需 <code data-page-node-id="zdRDJltanDJ9zs2c7XwNF1">rustup</code> 安装后 <code data-page-node-id="XHoiDi3dRgNFZDIYjKHFJf">cargo build</code></td>
+        </tr>
+        <tr data-page-node-id="0HXgUFGrTqdOLBpdoypEaA">
+          <td data-page-node-id="DhXvKkrMibEgA2C5EVhoj5">Tauri 集控面板 admin-console</td>
+          <td data-page-node-id="kSEwspDul8kf6WavKdtmrC"><span class="pill p-warn" data-page-node-id="n6qAB9XdIwz5jfHdlsouBh">待构建</span></td>
+          <td data-page-node-id="HPedJHqO7tpil12KAUAN9O">前端零框架已就绪；打包 exe 需 Rust 工具链</td>
+        </tr>
+        <tr data-page-node-id="iLneMkAKDlZJ3qndycTAXe">
+          <td data-page-node-id="cBuCOQINaiw5iMftY1tkkR">VoiceHub 联动 / 显示组件</td>
+          <td data-page-node-id="79bG77Bma11ZOFBdGdUNuI"><span class="pill p-info" data-page-node-id="1GbyC7jUEMj8EbMYYxI0jO">已就位</span></td>
+          <td data-page-node-id="ebCHP84wwkObSpVoKmQklG">voicehub-sync 适配器 + classisland-voicehub-display 桥接；Node 依赖已装</td>
+        </tr>
+        <tr data-page-node-id="53BYafpG61EVse7EQ2zOVr">
+          <td data-page-node-id="EowqCnH6li9GWrQsi0mUIh">方案包代码收口</td>
+          <td data-page-node-id="ak1s2KpMHl07EBP4PRkgDd"><span class="pill p-ok" data-page-node-id="fHAiX6f5jmOGCs7llOVc9o">已收口</span></td>
+          <td data-page-node-id="TwFwpVEXLnmlhv6fjouCLq">全部合入 <code data-page-node-id="azQwv8g57Dr1RGLD1arbcK">origin/main</code>，无专门分支；feat/multimedia-console、solution-pack 分支已删</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 data-page-node-id="dNmW5L374Efcsb0EsFEaHM">三、验证证据</h2>
+  <div class="card" data-page-node-id="bBHCdhpsUOON12gEWTeVl8">
+    <p class="ev" data-page-node-id="xmEeNkmDGOkhFzHvw88ruq"># 网站(8090) 实测
+/              -> HTTP 200
+/voicehub      -> HTTP 200
+/admin/console -> HTTP 303   (重定向至登录，符合鉴权预期)
+
+# ClassIsland 插件程序集校验
+AssemblyName = StelarithControlPlugin
+Version      = 1.0.0.0
+部署路径      = D:\Classlsland\data\Plugins\StelarithControlPlugin\
+文件          = StelarithControlPlugin.dll / .deps.json / .pdb / plugin.manifest.json
+
+# CIMS 后端 e2e (cims-e2e.mjs)
+9/9 通过：健康→登录→建账户→客户端→下发指令→资源写入
+gRPC ListenCommand 双向流已建立（bidi 深层 bug 已修）
+
+# 仓库收口
+当前分支: main | 远程: origin/main (唯一) | 工作树 clean</p>
+  </div>
+
+  <h2 data-page-node-id="2Fbb7X17YkxRYOCyN11VNi">四、怎么看效果</h2>
+  <div class="card" data-page-node-id="ZydpgH8QTUpGHDd60L7z8O">
+    <ol class="steps" data-page-node-id="FNdlur7GSKPWevbsl8R3JU">
+      <li data-page-node-id="RpwBtVwefAR3S35HxuwQ9l"><b data-page-node-id="Rk6CHFYqiaUc0xyBTjveyj">网站</b>：浏览器打开 <code data-page-node-id="FW544EGgRixUFpaUGm668t">http://localhost:8090/voicehub</code> 看实时点歌榜；<code data-page-node-id="W8EtIgjmTTIGcFOWvtajEL">/admin/console</code> 进集控面板（需先登录）。</li>
+      <li data-page-node-id="pPjd66uxuaIFdh642LDeHB"><b data-page-node-id="AJL42879dnQbZPJS7YSHze">插件</b>：在您的桌面会话<b data-page-node-id="l4UmU2GmKvLVX0yjr5Z5N8">重启 ClassIsland</b> → 设置/插件列表里会出现 <code data-page-node-id="SVdMqusFEkD8Q8qAJ1Q987">StelarithControlPlugin</code>（沙箱会话无法跨会话控制您的进程，需您手动重启一次）。</li>
+      <li data-page-node-id="JVgyEpBjoAfww3jZfi5xlF"><b data-page-node-id="byBDHfxY53vHVH4DELpz0N">后端</b>：<code data-page-node-id="U9pEbWBwkMhxo7B2JGF7UX">cims-eval/cims-boot.py</code> 启动四端口，<code data-page-node-id="dGEnMZTgnQtcKGpK5IRhDV">cims-e2e.mjs</code> 跑回归。</li>
+    </ol>
+  </div>
+
+  <h2 data-page-node-id="ahEzsrr4MscHDauo63vBzG">五、遗留 / 下一步</h2>
+  <div class="card" data-page-node-id="njOwjWh4POsiivmSFJ4CZI">
+    <table data-page-node-id="wl54QRlO4wAJhYindk659k">
+      <thead data-page-node-id="cJci2UqfR0nqHsciOHZRv7"><tr data-page-node-id="9sh1shRElAODA4l6FCvqA6"><th data-page-node-id="TLCbdpPXpq1MeMIdeCBU6Q">事项</th><th data-page-node-id="n3BNJiP7bgyT5DzTbCAbLI">阻塞</th><th data-page-node-id="zhc3GMCjoSxDMjgkSJqztN">建议</th></tr></thead>
+      <tbody data-page-node-id="LtxtKPhvU42IGj1RFyu8Bh">
+        <tr data-page-node-id="jA80MEPEZRHYaneP9TkKxl"><td data-page-node-id="rZG226bIR6JkkrApx6r1xg">StelarithAgent + Tauri 面板打包</td><td data-page-node-id="G1qqLbKHSu6ZpxCxQEJI3d">本机无 Rust</td><td data-page-node-id="MHvxZqVNeREYlgL9WnAQqt">装 <code data-page-node-id="rqvpI8pUsJhwKP6436m8v0">rustup</code> 后我可立即构建</td></tr>
+        <tr data-page-node-id="V23izfTQNHDCM2ojZNvDV3"><td data-page-node-id="5N2TSabibo6SA4WtI3YGpf">插件运行时加载确认</td><td data-page-node-id="LmnN3A6rKIaNSXOeHP8T0p">需您桌面重启 ClassIsland</td><td data-page-node-id="gyuLSoc2JcWBGCGLfb9M7Y">重启后看插件列表/日志即可验证</td></tr>
+        <tr data-page-node-id="KEA6l8WaDAEVNH4RDYnl0Z"><td data-page-node-id="HXgZ8OALgAH4qGBXfXdR5f">bidi 收指令端到端</td><td data-page-node-id="oL06I4D1NX6kVKWq8xCB7U">CIMS 单租户库 session 未绑 tenant（tid 空）</td><td data-page-node-id="6l5v43rMRY8UXBaSzYejFy">测试库配好 session→tenant 绑定（不改 CIMS 源码）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="foot" data-page-node-id="OH0FKvyxijY3DoZZvh15Q2">星璃 · 无限音乐画布 — 学校多媒体统一集控方案包 · 交付看板</p>
+</div>
+</body>
+</html>

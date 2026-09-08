@@ -67,3 +67,6 @@ bin/
 obj/
 # 临时构建备份目录
 build_prev_*/
+
+# Tauri generated (build.rs embed output)
+src-tauri/gen/
