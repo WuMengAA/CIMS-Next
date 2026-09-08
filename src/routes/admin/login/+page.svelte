@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
+	import { Label } from "$lib/components/ui/label/index.js";
 	import { LogIn, Eye, EyeOff, User as UserIcon } from "@lucide/svelte";
 	import { superForm } from "sveltekit-superforms";
 	import { zodClient } from "sveltekit-superforms/adapters";
-	import { Field, Control, Label, FieldErrors } from "formsnap";
 	import { toast } from "svelte-sonner";
 	import type { PageProps } from "./$types";
 	import type { LoginForm } from "./+page.server";
@@ -13,7 +13,10 @@
 
 	let showPwd = $state(false);
 
-	const { form, message } = superForm(data.form, {
+	// 不使用 formsnap：其 Field 组件在 SSR 期依赖 form.current.errors 内部 store，
+	// 而当前 sveltekit-superforms 版本 form.current 返回表单数据对象，导致 500。
+	// 改用 superForm 原生 API（errors/enhance/submitting 均为 SSR 安全的 Svelte store）。
+	const { form, errors, message, enhance, submitting } = superForm(data.form, {
 		validators: zodClient<LoginForm>(),
 		onUpdated: ({ result }) => {
 			if (result.type === "failure" && result.message) {
@@ -21,8 +24,6 @@
 			}
 		}
 	});
-
-	const submitting = $derived(form.submitting.current);
 </script>
 
 <svelte:head>
@@ -38,38 +39,34 @@
 			<p class="text-sm text-muted-foreground">登录管理后台</p>
 		</div>
 
-		<form method="POST" use:form class="space-y-4 rounded-xl border border-border/60 bg-card p-6">
-			<Field {form} name="username">
-				<Control>
-					{#snippet children({ props })}
-						<Label class="mb-2">用户名</Label>
-						<div class="relative">
-							<UserIcon class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-							<Input {...props} placeholder="用户名" class="pl-9" />
-						</div>
-					{/snippet}
-				</Control>
-				<FieldErrors class="mt-1.5 text-sm text-destructive" />
-			</Field>
+		<form method="POST" use:enhance class="space-y-4 rounded-xl border border-border/60 bg-card p-6">
+			<div class="space-y-2">
+				<Label for="username" class="mb-2">用户名</Label>
+				<div class="relative">
+					<UserIcon class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+					<Input id="username" name="username" bind:value={form.username} placeholder="用户名" class="pl-9" autocomplete="username" />
+				</div>
+				{#if $errors.username}
+					<p class="mt-1.5 text-sm text-destructive">{$errors.username.join(" ")}</p>
+				{/if}
+			</div>
 
-			<Field {form} name="password">
-				<Control>
-					{#snippet children({ props })}
-						<Label class="mb-2">密码</Label>
-						<div class="relative">
-							<Input {...props} type={showPwd ? "text" : "password"} placeholder="密码" class="pr-10" />
-							<button type="button" onclick={() => (showPwd = !showPwd)} class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-								{#if showPwd}
-									<EyeOff class="h-4 w-4" />
-								{:else}
-									<Eye class="h-4 w-4" />
-								{/if}
-							</button>
-						</div>
-					{/snippet}
-				</Control>
-				<FieldErrors class="mt-1.5 text-sm text-destructive" />
-			</Field>
+			<div class="space-y-2">
+				<Label for="password" class="mb-2">密码</Label>
+				<div class="relative">
+					<Input id="password" name="password" type={showPwd ? "text" : "password"} bind:value={form.password} placeholder="密码" class="pr-10" autocomplete="current-password" />
+					<button type="button" onclick={() => (showPwd = !showPwd)} class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+						{#if showPwd}
+							<EyeOff class="h-4 w-4" />
+						{:else}
+							<Eye class="h-4 w-4" />
+						{/if}
+					</button>
+				</div>
+				{#if $errors.password}
+					<p class="mt-1.5 text-sm text-destructive">{$errors.password.join(" ")}</p>
+				{/if}
+			</div>
 
 			{#if $message}
 				<p class="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-center text-sm text-destructive">
@@ -77,9 +74,9 @@
 				</p>
 			{/if}
 
-			<Button class="w-full" disabled={submitting}>
+			<Button class="w-full" disabled={$submitting}>
 				<LogIn class="h-4 w-4 mr-2" />
-				{submitting ? "登录中..." : "登录"}
+				{$submitting ? "登录中..." : "登录"}
 			</Button>
 		</form>
 
