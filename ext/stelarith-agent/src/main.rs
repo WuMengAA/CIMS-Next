@@ -105,12 +105,14 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
                     *st.active.lock().unwrap() = Some(VncSession { child: c, port, conn_token: conn_token.clone() });
                     out.insert("result".into(), "vnc_started".into());
                     out.insert("vnc_port".into(), port.to_string());
-                    out.insert("conn_token".into(), conn_token);
+                    out.insert("conn_token".into(), conn_token.clone());
                     // 真实联动：把 vnc_port+conn_token 经扩展网关 /vnc-session 回报面板（见 docs/扩展能力设计.md §2.2）。
                     let _ = write_status(&format!("vnc up port={port} token={conn_token}"));
                     report_vnc_session(port, &conn_token);
                 }
-                Err(e) => out.insert("error".into(), e.to_string()),
+                Err(e) => {
+                    out.insert("error".into(), e.to_string());
+                }
             }
         }
         "remote_control_stop" => {
