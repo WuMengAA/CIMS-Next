@@ -20,7 +20,11 @@ export const load: PageServerLoad = async () => {
 				headers: { "x-api-key": key },
 			}),
 		]);
-		if (!nowR.ok || !qR.ok) throw new Error("voicehub " + nowR.status);
+		if (!nowR.ok || !qR.ok) {
+			const status = !nowR.ok ? nowR.status : qR.status;
+			// env 已就绪但 API 拒绝（如 401 未授权）：单独标记，便于前端区分"未配置"与"已配置但连接失败"
+			return { now: null, queue: [], configured: true, error: true, errorStatus: status };
+		}
 		const nowJ = await nowR.json();
 		const qJ = await qR.json();
 		const nowRaw = nowJ?.data?.songs?.[0] || null;
@@ -43,6 +47,7 @@ export const load: PageServerLoad = async () => {
 		}));
 		return { now, queue, configured: true };
 	} catch {
-		return { now: null, queue: [], configured: false, error: true };
+		// 网络异常等：env 已就绪但未能拿到数据
+		return { now: null, queue: [], configured: true, error: true, errorStatus: null };
 	}
 };
