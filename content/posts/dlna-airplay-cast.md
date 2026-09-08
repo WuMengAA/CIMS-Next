@@ -2,6 +2,7 @@
 title: DLNA / AirPlay 投屏：把本地音乐推到音箱
 date: '2026-09-07'
 status: published
+pinned: true
 category: 工程笔记
 tags:
   - DLNA

@@ -23,6 +23,7 @@ export interface FeedItem {
 	guid?: string;
 	source?: string;
 	category?: string;
+	internal?: boolean; // 站内精选（pinned 帖子），前端用「精选」徽标区分
 }
 
 // ── 小工具 ────────────────────────────────────────────────────────────────
@@ -131,7 +132,25 @@ async function fetchFeed(url: string, sourceName?: string, maxItems = 10): Promi
 	}
 }
 
-// ── 聚合（带缓存） ───────────────────────────────────────────────────────
+// ── 内部「精选」内容（pinned 帖子） ────────────────────────────────────────
+// 站内有价值的文章经后台置顶（pinned:true）即视为「精选」，混入新闻流，约占三成。
+// 不设置 source，由前端用「精选」徽标与「外部出处」徽标区分。
+function getInternalCuratedItems(origin: string): FeedItem[] {
+	const posts = listItems("posts")
+		.filter((p) => p.status === "published" && (p as any).pinned === true)
+		.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+	return posts.map((p) => ({
+		title: p.title,
+		link: origin + "/posts/" + p.slug,
+		description: (p.excerpt || "").slice(0, 600),
+		pubDate: (p.updated || p.date) as string,
+		guid: "internal-" + p.slug,
+		category: p.category,
+		internal: true
+	}));
+}
+
+// ── 聚合（带缓存）：外部 7 成 + 内部精选 3 成，按时间混排 ──────────────────
 export async function getAggregatedNews(force = false): Promise<FeedItem[]> {
 	if (!force) {
 		try {
@@ -144,18 +163,51 @@ export async function getAggregatedNews(force = false): Promise<FeedItem[]> {
 	const cfg = getFeedConfig();
 	const enabled = cfg.sources.filter((s) => s.enabled && s.url);
 	const results = await Promise.allSettled(enabled.map((s) => fetchFeed(s.url, s.name, s.maxItems)));
-	const merged: FeedItem[] = [];
-	for (const r of results) if (r.status === "fulfilled") merged.push(...r.value);
-	// 去重（按 link/guid/标题）
-	const seen = new Set<string>();
-	const deduped = merged.filter((it) => {
-		const k = (it.link || it.guid || it.title).trim();
-		if (!k || seen.has(k)) return false;
-		seen.add(k);
-		return true;
-	});
-	deduped.sort((a, b) => (b.pubDate || "").localeCompare(a.pubDate || ""));
-	const sliced = deduped.slice(0, 60);
+	const external: FeedItem[] = [];
+	for (const r of results) if (r.status === "fulfilled") external.push(...r.value);
+	// 外部去重（按 link/guid/标题），按时间倒序
+	const extSeen = new Set<string>();
+	const externalSorted = external
+		.filter((it) => {
+			const k = (it.link || it.guid || it.title).trim();
+			if (!k || extSeen.has(k)) return false;
+			extSeen.add(k);
+			return true;
+		})
+		.sort((a, b) => (b.pubDate || "").localeCompare(a.pubDate || ""));
+
+	// 内部精选
+	const origin = getSiteUrl("https://www.stelarith.com");
+	const internalSorted = getInternalCuratedItems(origin).sort((a, b) =>
+		(b.pubDate || "").localeCompare(a.pubDate || "")
+	);
+
+	// 配比：外部≈70%、内部≈30%，按时间倒序混排。
+	// 任一侧不足时由另一侧补；内部设硬上限 60% 以保持外部主导。
+	const TOTAL_CAP = 40;
+	const INTERNAL_RATIO = 0.3;
+	let wantInt = Math.round(TOTAL_CAP * INTERNAL_RATIO);
+	let wantExt = TOTAL_CAP - wantInt;
+	if (internalSorted.length < wantInt) {
+		wantExt += wantInt - internalSorted.length; // 内部不足 -> 外部补
+		wantInt = internalSorted.length;
+	}
+	if (externalSorted.length < wantExt) {
+		wantInt += wantExt - externalSorted.length; // 外部不足 -> 内部补
+		wantExt = externalSorted.length;
+	}
+	const hardIntCap = Math.floor(TOTAL_CAP * 0.6);
+	if (wantInt > hardIntCap) {
+		const overflow = wantInt - hardIntCap;
+		wantInt = hardIntCap;
+		wantExt = Math.min(externalSorted.length, wantExt + overflow);
+	}
+	const extChosen = externalSorted.slice(0, wantExt);
+	const intChosen = internalSorted.slice(0, wantInt);
+	const mixed = [...extChosen, ...intChosen].sort((a, b) =>
+		(b.pubDate || "").localeCompare(a.pubDate || "")
+	);
+	const sliced = mixed.slice(0, TOTAL_CAP);
 	try {
 		fs.mkdirSync(CACHE_DIR, { recursive: true });
 		fs.writeFileSync(NEWS_CACHE_FILE, JSON.stringify({ fetchedAt: Date.now(), items: sliced }));
@@ -284,7 +336,7 @@ export async function getClassIslandAnnouncements(origin: string, forceRefresh =
 		for (const n of news.slice(0, s.maxNewsItems)) {
 			out.push({
 				guid: "stelarith-news-" + hashId(n.link || n.guid || n.title),
-				summary: (n.source ? "[" + n.source + "] " : "") + n.title,
+				summary: (n.internal ? "[精选] " : n.source ? "[" + n.source + "] " : "") + n.title,
 				details: n.description,
 				severity: s.broadcastSeverity,
 				startTime: n.pubDate,

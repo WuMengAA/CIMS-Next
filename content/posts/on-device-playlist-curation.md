@@ -2,6 +2,7 @@
 title: 小模型本地歌单策展：不收集数据也能懂你
 date: '2026-09-07'
 status: published
+pinned: true
 category: 工程笔记
 tags:
   - 本地
