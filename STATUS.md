@@ -292,3 +292,34 @@
 - 未改 `CIMS-backend` 任何源码；未改 OS / 凭据 / 网站敏感配置；所有写入限定在 `school-multimedia-control/`。
 - 所有端点锚定已核实真实路径；新增自检项已把「虚构端点 / 陈旧表述」变成硬失败，防止后续回归。
 
+## 十一、第十八轮（自驱巡检 · 09-08 14:24 · 终验后 Rust 编译验证轮）
+
+**本轮定位**：终验 `c28ee1b2`（09-08 10:00）已交付——51/51 全绿 + 四处一致性硬伤已修 + `交付汇报.md` 最终定稿（见自动化记忆 `c28ee1b2-54a4-4424-b758-07c6bf8937ee`）。本轮为终验后确认性巡检 + 真正闭环一条长期遗留项。
+
+### 关键进展（实跑验证）
+- **本机 Rust 工具链可用**（rustc/cargo 1.98.1，2026-09-08 装机）；此前"本机无 cargo、Rust 代理只能目标机编译"的遗留项现可闭环。
+- `ext/stelarith-agent` 实跑 `cargo build`：首编暴露 4 处真实阻断（均为此前"未实跑"埋下）——
+  1. `Cargo.toml` 漏声明 `hex`（`hex::encode` 在 HMAC 路径用到）；
+  2. `ed25519-dalek` 2.x 无 `verify` feature（1.x 命名），须用 `signature`/`pkcs8`；
+  3. `from_public_key_der` / `verify` 两 trait 未 `use` 引入作用域；
+  4. `match` 分支类型不一致（Ok 语句 vs Err 表达式）+ `conn_token` move 后复用。
+  全部修复后编译通过（仅 1 无害 warning：未用 `scope` 字段），产物 `target/debug/stelarith-agent.exe`（5.8MB）。
+- **真机冒烟全绿**：启动后 `/status`→up；正确 HMAC 令牌 `lock`→`{"result":"locked"}`；错误令牌 / 过期 ts(>60s)→`{"error":"unauthorized_or_replay"}`。验签 + 防重放双模运行时确认成立。
+
+### 基线
+- `node verify.mjs` 重跑 **51/51 PASS**（无回归），`verify-report.md` 刷新。
+
+### 本轮改动（仅应用级）
+- `ext/stelarith-agent/Cargo.toml`：补 `hex = "0.4"`；`ed25519-dalek` feature 改 `pkcs8,signature`；新增 `Cargo.lock`（锁定可复现构建）。
+- `ext/stelarith-agent/src/main.rs`：补 `use ed25519_dalek::pkcs8::DecodePublicKey; use ed25519_dalek::Verifier;`；修 match 分支 + `conn_token.clone()`；顶部注释由"未安装 cargo"改为"已实跑编译验证"。
+- `ext/stelarith-agent/README.md`："本机无 cargo 未编译"→"已在开发机 `cargo build` 实跑通过 + 冒烟全绿"。
+
+### 提交（仅本地，未 push）
+- 父仓库 `school-multimedia-control/`：`feat(ext/stelarith-agent): 实跑编译验证 Rust 生产代理 + 修 4 处编译阻断 + 冒烟全绿`。
+- 远程 `origin = git@github.com:WuMengAA/CIMS-Next.git`；本地 `main` 与 `origin/main` 分叉，强推属红线，维持待授权。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；端点锚定已核实真实路径。
+- 终验 `c28ee1b2` 已交付最终汇报（满足收尾要求）。
+- 非阻塞遗留收口进展：**Rust 代理编译 + 冒烟 = 已闭环（本轮）**；ClassIsland 插件 `dotnet build` 仍待目标机回归；bidi gRPC（grpcio 1.78 已知）；GitHub 推送（分叉，待授权）。
+

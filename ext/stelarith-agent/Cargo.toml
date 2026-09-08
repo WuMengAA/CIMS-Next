@@ -19,9 +19,10 @@ serde_json = "1"
 hmac = "0.12"
 sha2 = "0.10"
 chrono = "0.4"
+hex = "0.4"
 reqwest = { version = "0.12", features = ["blocking", "json"], default-features = false }
 # 生产验签（Ed25519，与 Node 参考实现 ext/stelarith-agent-node/agent.mjs verifyEd25519 契约一致）：
 # token = base64url(Ed25519_sign(action|ts))，由网站私钥签名（ext/stelarith-website-sync/sign-task.mjs）。
-ed25519-dalek = { version = "2", features = ["pkcs8", "verify"] }
+ed25519-dalek = { version = "2", features = ["pkcs8", "signature"] }
 base64 = "0.22"
 

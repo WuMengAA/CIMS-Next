@@ -23,13 +23,14 @@
 网站签名脚本见 `ext/stelarith-website-sync/sign-task.mjs`（导出 SPKI PEM 公钥，下发到各设备作
 `STELARITH_SITE_PUBKEY`）。
 
-## 编译与部署（目标 Windows 设备）
+## 编译与部署
 
-> 本机（开发机）无 cargo，无法在此编译；以下在目标设备执行。
+> 本实现**已在开发机 `cargo build` 实跑通过**（Rust 1.98 / cargo 1.98，依赖经 rsproxy.cn 镜像拉取），
+> 含 `ed25519-dalek` 非对称验签 + HMAC 双模、VNC 回执、只读 `/status`。目标设备仅需产出单文件二进制。
 
 ```bash
 cd ext/stelarith-agent
-cargo build --release          # 含 ed25519-dalek / base64 依赖，需联网拉取
+cargo build --release          # 含 ed25519-dalek / base64 / hex 依赖，需联网拉取
 # 部署：将 target/release/stelarith-agent.exe 设为开机自启 / 系统服务
 ```
 
@@ -49,4 +50,4 @@ cargo build --release          # 含 ed25519-dalek / base64 依赖，需联网�
 - `src/main.rs` 的 `verify()` / `verify_ed25519()` 与 `agent-node/agent.mjs` 的 `verify()` /
   `verifyEd25519()` 同源、契约一致；
 - 端到端闭环（签名↔验签↔VNC 回执↔noVNC）由 `agent-node/test/end2end.mjs` 覆盖两种模式；
-- 本实现未在本机编译验证，需在目标设备 `cargo build` 回归（版本适配点已内联注释）。
+- 本实现**已在开发机 `cargo build` 实跑通过**，`cargo run` 后 `/status` 返回 up、`/task` 正确/错误/过期令牌分别放行/拒（冒烟测试全绿）；目标设备 `cargo build --release` 即得单文件二进制。

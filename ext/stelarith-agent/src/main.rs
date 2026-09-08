@@ -7,10 +7,9 @@
 //!  - 执行 OS 动作：锁屏 / 重启；按需启动 VNC 服务实现远程屏幕控制；结束即关；
 //!  - 绝不暴露公网端口，所有触发都来自本机插件。
 //!
-//! 注意：本机当前未安装 cargo，无法在此编译；需在目标 Windows 设备
-//! `cargo build --release`（含 ed25519-dalek / base64 新依赖）后作为服务/开机启动运行。
-//! 已实现的 Ed25519 逻辑与 `ext/stelarith-agent-node/agent.mjs` 的 `verifyEd25519` 同源、契约一致，
-//! 后者已 `npm test` 端到端验证通过，可作为生产版回归基准。
+//! 注意：生产部署需在目标 Windows 设备 `cargo build --release`（含 ed25519-dalek / base64 / hex
+//! 依赖）后作为服务/开机启动运行。本机（开发机）已实跑 `cargo build` 验证可编译、契约与
+//! `ext/stelarith-agent-node/agent.mjs` 的 `verifyEd25519` 同源一致。
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -22,6 +21,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine as _;
 use chrono::Utc;
+use ed25519_dalek::pkcs8::DecodePublicKey;
+use ed25519_dalek::Verifier;
 use ed25519_dalek::{Signature, VerifyingKey};
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
@@ -172,12 +173,14 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
                     *st.active.lock().unwrap() = Some(VncSession { child: c, port, conn_token: conn_token.clone() });
                     out.insert("result".into(), "vnc_started".into());
                     out.insert("vnc_port".into(), port.to_string());
-                    out.insert("conn_token".into(), conn_token);
+                    out.insert("conn_token".into(), conn_token.clone());
                     // 真实联动：把 vnc_port+conn_token 经扩展网关 /vnc-session 回报面板（见 docs/扩展能力设计.md §2.2）。
                     let _ = write_status(&format!("vnc up port={port} token={conn_token}"));
                     report_vnc_session(port, &conn_token);
                 }
-                Err(e) => out.insert("error".into(), e.to_string()),
+                Err(e) => {
+                    out.insert("error".into(), e.to_string());
+                }
             }
         }
         "remote_control_stop" => {
