@@ -259,3 +259,36 @@
 - 未改 CIMS-backend / OS / 凭据 / 网站敏感配置；仅应用级文档刷新 + 自检报告刷新。
 - 非阻塞遗留保持：Rust 目标机 `cargo build`、ClassIsland 插件 `dotnet build` 目标机回归、bidi gRPC（已知 grpcio 1.78）、GitHub 推送（本地与 origin/main 分叉，待授权后处理）。
 
+## 十、第十六轮（终验轮 · 09-08 10:00 触发 · 自动化 `c28ee1b2`）
+
+**本轮定位**：终验自动化正式触发，执行最终交付检查与定稿（不再"待触发"）。
+
+### 一致性核查结论（逐项实查，非抽样）
+1. **接口契约真实性**：`admin-console/src/api.js` 全部端点在 `CIMS-backend` 源码中逐条命中——
+   `account_router.py`（`prefix="/account/{account_id}/client"`）、`client_control.py`（restart/update-data）、
+   `client_notification.py`（send-notification）、`client_status.py`（list/{uid}/status）、
+   `data_write.py`（`/{resource_type}/write`）、`data_crud.py`（`/{resource_type}/list`）、
+   `client/manifest.py`（`/v1/client/{uid}/manifest`）、`client/resource.py`（`/v1/client/{type}`）、
+   `management/user_auth.py`（`/user/auth`）。**无 `/gateway/*` 等虚构端点**。
+2. **CIMS-backend 只读检查**：`git status` 显示 7 个未提交删除 `app/grpc/api/Protobuf/**/__init__.py`
+   （Python 3 命名空间包可容忍，判定可忽略，但如实记录）；`git log` 仅 1 个提交 `5c0ffa0`（shallow clone）。
+   **未做任何修改 / 恢复 / 提交**。
+3. **发现的四处硬伤并已修复**（详见 `交付汇报.md` §四）：
+   README 把 CIMS 写成 Go（实为 Python+FastAPI）；实施方案/架构图 Manifest 路径多写 `/api` 前缀、
+   命令流仍标「走 gRPC / 需自建代理」；实施方案相对链接 `../../` 越界、§9 交付物清单过时（列了不存在的文件）；
+   `API.md` §3 协作类承载方与 `api.js` 实际实现不符。
+
+### 本轮产物（仅应用级）
+- `README.md`：后端技术栈修正、目录结构补全、§4.1 改写为「已源码核实的真实端点清单」+ 历史参考说明。
+- `docs/实施方案.md`：命令流改主路径 management HTTP；Manifest 路径修正；§7 补「锁屏/截图无原生接口」；
+  §8 路线图标注单向命令 MVP 即用；§9 交付物清单按实际 68 文件重写；3 处越界链接修正。
+- `architecture/架构图.md`：§1 补面板/插件/代理/扩展网关节点；§2 路径修正；§3 重写为「主路径 HTTP + 备用 bidi + §3.2 OS 级动作」三张图。
+- `admin-console/API.md`：§3 协作类改为「首选/回落」双列承载方表，与 `api.js` 1:1。
+- `verify.mjs`：新增 19 项防回归校验（真实端点契约 6 + 反虚构 1 + 六文档反陈旧 6 + 交付物补全 6）。
+  **实跑 51/51 PASS**（原 32 项），`verify-report.md` 已刷新。
+- `交付汇报.md`：由「终验就绪版」重写为**「最终交付版」**（全貌 / 自主推进 / MVP 落地 / 已知约束 / 下一步 / 红线 / 交接表）。
+
+### 红线
+- 未改 `CIMS-backend` 任何源码；未改 OS / 凭据 / 网站敏感配置；所有写入限定在 `school-multimedia-control/`。
+- 所有端点锚定已核实真实路径；新增自检项已把「虚构端点 / 陈旧表述」变成硬失败，防止后续回归。
+
