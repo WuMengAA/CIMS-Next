@@ -1,0 +1,41 @@
+# ============================================================
+#  manifest.yml — ClassIsland 2.x 插件清单（YAML 格式）
+#  作用：ClassIsland 加载插件时首先读取此文件，据其中的
+#        entranceAssembly 找到入口程序集并调用 Plugin.Initialize()。
+#
+#  重要：ClassIsland 2.x 使用本文件；1.4.x 时代的 plugin.manifest.json
+#        已不再被识别（缺本文件会导致插件被静默跳过、不加载，且不报错）。
+# ============================================================
+
+# 插件唯一标识符（与其他插件不重复）
+id: stelarith.control
+
+# 插件显示名称（在 ClassIsland 设置界面中显示）
+name: 星璃集控
+
+# 插件功能描述
+description: 校园多媒体统一集控客户端：本机锁屏/截屏，接收 StelarithAgent 推流的集控指令
+
+# 入口程序集文件名（不含路径，ClassIsland 会在插件目录下找到）
+entranceAssembly: "StelarithControlPlugin.dll"
+
+# 插件项目主页/源码地址
+url: https://github.com/WuMengAA/CIMS-Next
+
+# 当前版本号（major.minor.build.revision）
+version: 1.0.0.0
+
+# 目标 ClassIsland API 版本（插件最低要求的 API 版本；2.x 应用要求 >= 2.0.0.0）
+apiVersion: 2.0.0.0
+
+# 作者署名
+author: Stelarith
+
+# GitHub 仓库所有者（用于自动更新检查）
+repoOwner: WuMengAA
+
+# GitHub 仓库名称（用于自动更新检查）
+repoName: CIMS-Next
+
+# 发布资源根路径（GitHub Release 中的目录前缀）
+assetsRoot: main/
