@@ -12,10 +12,10 @@ namespace StelarithControlPlugin;
 public static class OSActions
 {
     [DllImport("user32.dll")]
-    private static extern void LockWorkStation();
+    private static extern void LockWorkStationNative();
 
     /// <summary>锁屏（Windows 原生，无需提权）。</summary>
-    public static void LockWorkStation() => LockWorkStation();
+    public static void LockWorkStation() => LockWorkStationNative();
 
     /// <summary>截图保存到指定路径（供报修/审计留证）。</summary>
     public static void CaptureScreen(string path)

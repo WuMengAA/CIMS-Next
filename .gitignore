@@ -1,6 +1,9 @@
 node_modules/
 dist/
 target/
+bin/
+obj/
+*.user
 .DS_Store
 *.log
 .env

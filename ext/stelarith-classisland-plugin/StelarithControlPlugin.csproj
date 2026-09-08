@@ -14,8 +14,9 @@
 
   <!--
     对齐 ClassIsland 真实插件 SDK（公开 NuGet：ClassIsland.PluginSdk）。
-    版本相关：Version 需替换为与「部署目标 ClassIsland 版本」匹配的 PluginSdk 版本号
-    （示例 1.0.0 为占位，请以官方发布页当前版本为准）。
+    版本相关：Version 需替换为与「部署目标 ClassIsland 版本」匹配的 PluginSdk 版本号。
+    经本机构建实测，NuGet 当前发布的最新稳定版为 1.4.3.1（原 1.0.0 占位已被 NuGet 自动解析到该版）。
+    如部署目标为其他 ClassIsland 版本，请按该版本对应的 PluginSdk 版本调整下行 Version。
 
     部署步骤：
       1) dotnet build -c Release
@@ -29,7 +30,7 @@
       · PluginBase.GetService<T>()
   -->
   <ItemGroup>
-    <PackageReference Include="ClassIsland.PluginSdk" Version="1.0.0" />
+    <PackageReference Include="ClassIsland.PluginSdk" Version="1.4.3.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
   </ItemGroup>
 

@@ -323,3 +323,37 @@
 - 终验 `c28ee1b2` 已交付最终汇报（满足收尾要求）。
 - 非阻塞遗留收口进展：**Rust 代理编译 + 冒烟 = 已闭环（本轮）**；ClassIsland 插件 `dotnet build` 仍待目标机回归；bidi gRPC（grpcio 1.78 已知）；GitHub 推送（分叉，待授权）。
 
+## 十二、第十九轮（自驱巡检 · 09-08 16:30 · 终验后 ClassIsland 插件实编闭环轮）
+
+**本轮定位**：终验 `c28ee1b2`（09-08 10:00）早已交付（第十八轮确认 51/51 全绿 + 四处一致性硬伤已修 + `交付汇报.md` 最终定稿）。终验后持续巡检发现本机新具备 **.NET 10.0.102 SDK**，于是把长期挂起、一直标记"目标机回归"的 **ClassIsland 插件 `dotnet build`** 真正在本机实编闭环。
+
+### 关键进展（实跑验证）
+- 本机 `dotnet 10.0.102` 可用；NuGet 经 dotnet 网络栈可达。`ClassIsland.PluginSdk 1.0.0`（原占位）实际解析为真实发布版 **1.4.3.1**，已固定到 csproj。
+- **首编暴露并修复 3 处此前无法发现的真实错误**（正是"目标机回归"要抓的）：
+  1. `PluginBase.Initialize()` 无参无法重写——真实抽象签名为 `Initialize(HostBuilderContext, IServiceCollection)`（CS0115/CS0534）；
+  2. `OSActions.LockWorkStation` 与 P/Invoke 声明 `LockWorkStation` 重名（CS0111），改名 `LockWorkStationNative`；
+  3. 订阅"通知事件"的整个设计在真实 SDK 下不成立——真实命令接收钩子是 `IManagementService.Connection`（`IManagementServerConnection`）的 `event CommandReceived`；通知体系是 `INotificationProvider` 生产者模型，无 `NotificationReceived` 事件。
+- **最终编译通过**：`dotnet build -c Release` → 0 错误，仅 1 条 NU1701 无害警告（SDK 传递依赖 `unvell.ReoGridWPF.dll` 面向 .NET Framework），产物 `bin/Release/net8.0-windows/StelarithControlPlugin.dll`。
+- 架构落地：插件 `Initialize` 注册 `IHostedService`（`StelarithCommandHost`），由其在宿主启动后注入 `IManagementService` 并订阅 `CommandReceived`，事件参数用 `dynamic` 提取载荷后交 `StelarithDispatch` 分发（本地锁屏/截图 或 转发本地代理 `StelarithAgent`）；插件同时实现 `INotificationProvider` 注册为通知提供方。
+
+### 基线
+- `node verify.mjs` 重跑 **51/51 PASS**（无回归），`verify-report.md` 已刷新（本轮）。
+
+### 本轮改动（仅应用级）
+- `ext/stelarith-classisland-plugin/StelarithControlPlugin.csproj`：`ClassIsland.PluginSdk` 占位 `1.0.0` → 真实 `1.4.3.1`；注释补真实 SDK 版本说明。
+- `ext/stelarith-classisland-plugin/StelarithControlPlugin.cs`：重写——`Initialize(HostBuilderContext, IServiceCollection)` + 注册 `StelarithCommandHost` 与 `INotificationProvider`；抽出 `StelarithDispatch`（解析/分发唯一实现）；`StelarithTask` 模型保留。
+- `ext/stelarith-classisland-plugin/StelarithCommandHost.cs`（新增）：`BackgroundService` 订阅 `CommandReceived` 并注册通知提供方。
+- `ext/stelarith-classisland-plugin/OSActions.cs`：P/Invoke 改名 `LockWorkStationNative` 修复重名。
+- `ext/stelarith-classisland-plugin/README.md`：纠正"通知事件/INotificationHost/占位版本/目标机回归"等过时表述，改为真实 `CommandReceived` 契约 + 已实编结论。
+- `.gitignore`：补 `bin/` `obj/` `*.user`（避免编译产物污染）。
+- `STATUS.md`：本节。
+
+### 提交（仅本地，未 push）
+- 父仓库 `school-multimedia-control/`：本轮统一提交（见提交记录）。无 remote 之外的强推。
+- 远程 `origin = git@github.com:WuMengAA/CIMS-Next.git`；本地 `main` 与 `origin/main` 分叉，强推属红线，维持待授权。
+
+### 红线 / 待确认
+- 未改 `CIMS-backend`（只读）；未改 OS / 凭据 / 网站敏感配置；端点锚定已核实真实路径；仅应用级新增/修改。
+- 终验 `c28ee1b2` 已交付最终汇报（满足收尾要求）。
+- **非阻塞遗留收口进展**：Rust 代理编译+冒烟（第十八轮闭环）；**ClassIsland 插件 `dotnet build` 本机实编通过（本轮闭环）**。剩余：bidi gRPC（grpcio 1.78 已知，与插件无关）；GitHub 推送（与 origin/main 分叉，待授权后处理）。
+
