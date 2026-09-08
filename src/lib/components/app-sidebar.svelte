@@ -165,23 +165,37 @@
 				</Sidebar.Menu>
 			</Sidebar.GroupContent>
 		</Sidebar.Group>
-		{#if authed}
-		<Sidebar.Separator />
-		<Sidebar.Group>
-			<Sidebar.GroupContent>
-				<Sidebar.Menu>
-					{#each bottom.filter((b) => b.url !== "/admin" || data?.canEdit) as item (item.url)}
-						<Sidebar.MenuItem>
-							<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)}>
-								<item.icon />
-								<span>{item.title}</span>
-							</Sidebar.MenuButton>
-						</Sidebar.MenuItem>
-					{/each}
-				</Sidebar.Menu>
-			</Sidebar.GroupContent>
-		</Sidebar.Group>
-		{/if}
+	{#if authed}
+	<Sidebar.Separator />
+	<Sidebar.Group>
+		<Sidebar.GroupContent>
+			<Sidebar.Menu>
+				{#each bottom.filter((b) => b.url !== "/admin" || data?.canEdit) as item (item.url)}
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)}>
+							<item.icon />
+							<span>{item.title}</span>
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
+				{/each}
+			</Sidebar.Menu>
+		</Sidebar.GroupContent>
+	</Sidebar.Group>
+	{:else}
+	<Sidebar.Separator />
+	<Sidebar.Group>
+		<Sidebar.GroupContent>
+			<Sidebar.Menu>
+				<Sidebar.MenuItem>
+					<Sidebar.MenuButton href="/admin/login" isActive={isActive("/admin/login")}>
+						<LogIn />
+						<span>登录</span>
+					</Sidebar.MenuButton>
+				</Sidebar.MenuItem>
+			</Sidebar.Menu>
+		</Sidebar.GroupContent>
+	</Sidebar.Group>
+	{/if}
 	</Sidebar.Content>
 	<Sidebar.Footer>
 		<div class="flex flex-wrap items-center gap-1 px-2 pb-2">
