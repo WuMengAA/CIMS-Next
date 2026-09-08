@@ -69,4 +69,4 @@ obj/
 build_prev_*/
 
 # Tauri generated (build.rs embed output)
-src-tauri/gen/
+/admin-console/src-tauri/gen/
