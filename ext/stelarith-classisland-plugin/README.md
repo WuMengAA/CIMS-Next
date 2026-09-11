@@ -1,6 +1,6 @@
 # StelarithControlPlugin · ClassIsland 集控控制插件
 
-星璃·集控方案在班级端的接入点：**接收 CIMS 经 ClassIsland 集控通道下发的 `stelarith-task` 指令，在本地执行轻动作或转发给本地代理**。
+星璃·集控方案在班级端的接入点：**接收 CIMS 经 ClassIsland 集控通道下发的 `stelarith-task` 指令并执行**，并**后台主动定时同步（cshua）CIMS 已下发的课表/组件配置**，使展示与当前策略保持一致。
 
 > 设计原则：不直连任何虚构网关。所有「下令」都来自 CIMS 真实集控通道，所有「执行」都在本机（插件做轻动作，重动作交给本地代理）。
 
@@ -99,3 +99,18 @@ CIMS 经集控服务器下发客户端命令，由 **`IManagementServerConnectio
 - `IManagementService.Connection` 订阅时机依赖集控连接就绪；设备未加入集控时命令通道不可用（已记录 warning，不影响插件加载）。
 - 快捷操作 UI 入口（设置页按钮）需按目标 ClassIsland 版本接入 `IComponentProvider` / 设置页提供器（当前 `QuickLock` / `QuickScreenshot` / `RequestRemoteControl` 已声明行为，UI 绑定待目标版本接入）。
 - bidi gRPC 联调边界（grpcio 1.78）与插件无关，不影响单向指令链路。
+
+---
+
+## 7. 主动同步（cshua）
+
+过去插件只**被动**接收命令，无法主动感知 CIMS 已下发的课表/组件配置变化。本版本新增后台 `StelarithSyncService`（`IHostedService`），按固定间隔主动拉取并刷新展示快照：
+
+- **拉取目标**：CIMS 客户端应用（`ClientAppBase`，默认 `http://127.0.0.1:8096`）；
+- **接口**：`GET /api/v1/client/{ClientUid}/manifest`、`GET /api/v1/client/ClassPlan?name=...`、`GET /api/v1/client/Components?name=...`；
+- **租户识别**：客户端应用 `TenantMiddleware` 按 `Host: <Slug>.<BaseDomain>` 识别租户，故每跳都显式带 `Host` 头；资源接口会 302 到 `/get?token=...`，同步服务**手动跟随重定向并逐跳保持 Host**（HttpClient 自动重定向会改回 `Host: 127.0.0.1:8096` 导致 403）；
+- **结果**：最新快照存于线程安全的 `StelarithSyncState.Current`（含 `ManifestJson` / `ClassPlanJson` / `ComponentsJson` / `At` / `Ok`），供通知提供方或后续 UI 读取展示；
+- **配置**：参数经插件目录下的 `stelarith-sync.json` 覆盖（不存在则用默认值，默认值对齐 e2e 环境 `slug=e2e-school`、`ClientUid=lab-pc-001`），无需重新编译即可按真实环境调整 `Slug` / `ClientUid` / `BaseDomain` / `RefreshIntervalSeconds` 等。
+
+> 部署时务必把真实环境的 `Slug`、`ClientUid` 写入 `stelarith-sync.json`（与 DLL 同目录），否则拉取会因租户/设备不匹配而失败（日志可见 warning）。
+

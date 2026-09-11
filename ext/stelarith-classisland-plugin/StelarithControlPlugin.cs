@@ -50,6 +50,11 @@ public class StelarithControlPlugin : PluginBase, INotificationProvider
     /// </summary>
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
+        // 主动同步（cshua）：后台定时从 CIMS 客户端应用拉取当前下发的课表/组件配置。
+        // 配置可经插件目录下的 stelarith-sync.json 覆盖（见 StelarithSyncOptions.Load）。
+        var syncOptions = StelarithSyncOptions.Load();
+        services.AddSingleton(syncOptions);
+        services.AddHostedService<StelarithSyncService>();
         services.AddHostedService<StelarithCommandHost>();
         services.AddSingleton<INotificationProvider>(this);
     }
