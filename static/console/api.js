@@ -417,13 +417,27 @@
     },
     deviceAction: async (id, action) => {
       if (!canUseBackend()) return { status: "success", message: "（演示）指令已模拟下发" };
-      const ep = { restart: "restart", sync: "update-data", notify: "send-notification" }[action];
-      if (!ep) return { status: "success", message: "（演示）该动作无后端对应，已模拟" };
-      const body = action === "notify"
-        ? JSON.stringify({ MessageContent: "来自集控面板的提醒" })
-        : undefined;
-      return reqTo(state.mgmtHost, `/account/${acct()}/client/${id}/command/${ep}`,
-        { method: "POST", body });
+      // ① CIMS 原生指令端点（HTTP→gRPC，由设备侧 CIMS 客户端执行）
+      //    refresh 是面板「刷新」按钮的动作名，对应 CIMS 的 update-data（拉取最新资源）。
+      const ep = { restart: "restart", refresh: "update-data", sync: "update-data", notify: "send-notification" }[action];
+      if (ep) {
+        const body = action === "notify"
+          ? JSON.stringify({ MessageContent: "来自集控面板的提醒" })
+          : undefined;
+        return reqTo(state.mgmtHost, `/account/${acct()}/client/${id}/command/${ep}`,
+          { method: "POST", body });
+      }
+      // ② 锁屏 / 截图：CIMS 无原生端点，经 send-notification 下发 stelarith_task，
+      //    由班级端 ClassIsland 插件解析后执行本地动作（与远程控制同一链路）。
+      if (action === "lock" || action === "screenshot") {
+        const ts = Math.floor(Date.now() / 1000);
+        const token = await signTask(action, ts);
+        const task = { action, token, scope: "device", ts };
+        const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+        return reqTo(state.mgmtHost, `/account/${acct()}/client/${id}/command/send-notification`,
+          { method: "POST", body });
+      }
+      return { status: "error", message: `不支持的动作：${action}` };
     },
 
     // ---- 远程屏幕控制（经 CIMS 通知下发 stelarith_task，触发设备侧代理按需启 VNC）----
