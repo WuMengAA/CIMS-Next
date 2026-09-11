@@ -3,7 +3,7 @@
 // --delay 为分段序号（0 起步），元素按 --delay * 90ms 错峰入场；spring 阻尼曲线由 CSS 变量控制。
 import type { Action } from "svelte/action";
 
-export const reveal: Action<HTMLElement, { delay?: number }> = (node, opts = {}) => {
+export const reveal: Action<HTMLElement, { delay?: number } | undefined> = (node, opts = {}) => {
 	// 优先参数 > data-reveal-delay 属性 > 内联 style --reveal-delay（首页区块用此写法）
 	const inlineDelay = node.style.getPropertyValue("--reveal-delay");
 	const delay = opts.delay ?? Number(node.dataset.revealDelay ?? (inlineDelay || 0));

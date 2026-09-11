@@ -3,7 +3,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { Plus, Trash2, ArrowUp, ArrowDown, GripVertical, Save, LayoutList } from "@lucide/svelte";
 
 	interface NavItem { title: string; url: string; icon?: string; }
@@ -133,8 +133,8 @@
 					{#each group.items as item, i (group.key + i)}
 						<div class="flex items-center gap-2 px-3 py-2">
 							<GripVertical class="size-4 shrink-0 cursor-grab text-muted-foreground" />
-							<Input bind:value={item.title} oninput={(e) => updateItem(group.key, i, "title", (e.target as HTMLInputElement).value)} placeholder="名称" class="h-8 max-w-[160px]" />
-							<Input bind:value={item.url} oninput={(e) => updateItem(group.key, i, "url", (e.target as HTMLInputElement).value)} placeholder="/路径" class="h-8 flex-1" />
+							<Input bind:value={item.title} oninput={(e: Event) => updateItem(group.key, i, "title", (e.target as HTMLInputElement).value)} placeholder="名称" class="h-8 max-w-[160px]" />
+							<Input bind:value={item.url} oninput={(e: Event) => updateItem(group.key, i, "url", (e.target as HTMLInputElement).value)} placeholder="/路径" class="h-8 flex-1" />
 							<Button variant="ghost" size="icon" class="h-8 w-8" onclick={() => moveItem(group.key, i, -1)} disabled={i === 0}><ArrowUp class="h-3.5 w-3.5" /></Button>
 							<Button variant="ghost" size="icon" class="h-8 w-8" onclick={() => moveItem(group.key, i, 1)} disabled={i === group.items.length - 1}><ArrowDown class="h-3.5 w-3.5" /></Button>
 							<Button variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" onclick={() => removeItem(group.key, i)}><Trash2 class="h-3.5 w-3.5" /></Button>

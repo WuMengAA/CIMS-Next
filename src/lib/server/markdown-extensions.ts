@@ -1,4 +1,4 @@
-import type MarkdownIt from "markdown-it";
+import type { MarkdownIt } from "markdown-it";
 
 /**
  * 零依赖的 markdown 语法扩展（在 markdown-it 原生能力之上补齐常用写法）。

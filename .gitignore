@@ -22,6 +22,11 @@ Thumbs.db
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
+# SQLite 运行库（多用户 / 会话 / 活动流；运行时生成，不入库）
+/content/stelarith.db
+/content/stelarith.db-wal
+/content/stelarith.db-shm
+
 # CMS data (sensitive / runtime-generated)
 /content/users.json
 /content/comments.json
@@ -70,3 +75,9 @@ build_prev_*/
 
 # Tauri generated (build.rs embed output)
 /admin-console/src-tauri/gen/
+
+# 本地部署/启动脚本（含明文密码，不入库）
+start-*.ps1
+
+# WorkBuddy 项目级工作记忆与自动化（含个人信息，不入库）
+/.workbuddy/

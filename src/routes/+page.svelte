@@ -7,8 +7,11 @@
 	import { resolveFeatureIcon } from "$lib/feature-icons.js";
 	import { reveal } from "$lib/actions/reveal.js";
 	import { page } from "$app/state";
+	import type { PageProps } from "./$types";
 
-	let { data }: { data: { settings: { title: string; description: string; siteName: string; slogan: string; heroTitle: string; heroSubtitle: string; heroBadge: string; features: { title: string; description: string }[]; socialTitle: string; footer: string; socials: { name: string; url: string }[] }; posts: any[]; projects: any[]; docs: any[] } } = $props();
+	// 用生成的 PageProps：手写内联结构体会与服务端 load 漂移，
+	// 且构建不做类型检查时会静默失效（曾漏掉 features[].icon）。
+	let { data }: PageProps = $props();
 
 	const iconMap: Record<string, any> = {
 		"github": Github, "twitter": Twitter, "x": Twitter,
@@ -44,12 +47,8 @@
 			{data.settings.heroSubtitle}
 		</p>
 		<div class="flex items-center gap-3">
-			<Button asChild class="btn-glow btn-shine">
-				<a href="#social">关注我</a>
-			</Button>
-			<Button asChild variant="secondary" class="btn-shine">
-				<a href="/posts">开始阅读</a>
-			</Button>
+			<Button href="#social" class="btn-glow btn-shine">关注我</Button>
+			<Button href="/posts" variant="secondary" class="btn-shine">开始阅读</Button>
 		</div>
 	</section>
 

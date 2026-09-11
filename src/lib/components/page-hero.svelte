@@ -18,10 +18,8 @@
 	</div>
 	<h1 class="font-heading text-3xl font-semibold tracking-tight">{title}</h1>
 	<p class="max-w-lg text-muted-foreground">{desc}</p>
-	<Button asChild variant="secondary">
-		<a href={backHref}>
-			<ArrowLeft class="size-4 mr-2" />
-			返回首页
-		</a>
+	<Button href={backHref} variant="secondary">
+		<ArrowLeft class="size-4 mr-2" />
+		返回首页
 	</Button>
 </div>

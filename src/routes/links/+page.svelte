@@ -60,11 +60,9 @@
 			<p class="text-sm leading-relaxed text-muted-foreground">
 				如果你喜欢这个站点，可以通过爱发电赞助支持我，让我有更多动力持续维护。
 			</p>
-			<Button asChild variant="secondary" class="w-fit gap-2">
-				<a href="https://www.ifdian.net/a/stelarith" target="_blank" rel="noopener noreferrer">
-					赞助支持
-					<ExternalLink class="size-4" />
-				</a>
+			<Button href="https://www.ifdian.net/a/stelarith" target="_blank" rel="noopener noreferrer" variant="secondary" class="w-fit gap-2">
+				赞助支持
+				<ExternalLink class="size-4" />
 			</Button>
 		</div>
 		<div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-6">
@@ -75,11 +73,9 @@
 			<p class="text-sm leading-relaxed text-muted-foreground">
 				加群交流请前往置顶文章，或在 GitHub 提交 Issue 反馈。
 			</p>
-			<Button asChild variant="secondary" class="w-fit gap-2">
-				<a href="/posts/friend-group-guide">
-					加群向导
-					<ExternalLink class="size-4" />
-				</a>
+			<Button href="/posts/friend-group-guide" variant="secondary" class="w-fit gap-2">
+				加群向导
+				<ExternalLink class="size-4" />
 			</Button>
 		</div>
 	</section>
@@ -146,11 +142,9 @@
   "description": "一句话简介",
   "url": "https://你的站点/"
 {"}"}</code></pre>
-			<Button asChild variant="secondary" class="w-fit gap-2">
-				<a href="https://github.com/afoim/af_friends-data" target="_blank" rel="noopener noreferrer">
-					去 Fork
-					<ExternalLink class="size-4" />
-				</a>
+			<Button href="https://github.com/afoim/af_friends-data" target="_blank" rel="noopener noreferrer" variant="secondary" class="w-fit gap-2">
+				去 Fork
+				<ExternalLink class="size-4" />
 			</Button>
 		</div>
 	</section>

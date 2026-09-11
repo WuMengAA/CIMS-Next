@@ -1,6 +1,7 @@
 import { verifyToken } from "$lib/server/auth.js";
+import type { Role } from "$lib/permissions.js";
 
-export function getApiUser(request: Request): { username: string; role: "admin" | "editor" } | null {
+export function getApiUser(request: Request): { username: string; role: Role } | null {
 	const cookie = request.headers.get("cookie");
 	const token = cookie?.match(/admin_token=([^;]+)/)?.[1] || "";
 	const user = verifyToken(token);

@@ -1,23 +1,20 @@
 import { fail, redirect } from "@sveltejs/kit";
 import { message, superValidate } from "sveltekit-superforms";
 import { zod4 } from "sveltekit-superforms/adapters";
-import { z } from "zod";
-import { verifyLogin, makeToken } from "$lib/server/auth.js";
+import { verifyLogin, makeToken, markLogin } from "$lib/server/auth.js";
+import { recordActivity } from "$lib/server/activity.js";
+import { loginSchema } from "$lib/schemas/login.js";
 
-const schema = z.object({
-	username: z.string().min(1, "请输入用户名"),
-	password: z.string().min(1, "请输入密码")
-});
-
-export type LoginForm = typeof schema;
+// schema 定义在 $lib/schemas/login.ts，客户端复用同一份（见该文件注释）。
+export type { LoginForm } from "$lib/schemas/login.js";
 
 export const load = async () => {
-	return { form: await superValidate(zod4(schema)) };
+	return { form: await superValidate(zod4(loginSchema)) };
 };
 
 export const actions = {
-	default: async ({ request, cookies }) => {
-		const form = await superValidate(request, zod4(schema));
+	default: async ({ request, cookies, getClientAddress }) => {
+		const form = await superValidate(request, zod4(loginSchema));
 		if (!form.valid) return fail(400, { form });
 
 		const user = verifyLogin(form.data.username, form.data.password);
@@ -25,12 +22,19 @@ export const actions = {
 			return message(form, "用户名或密码错误", { status: 401 });
 		}
 
-		cookies.set("admin_token", makeToken(user), {
+		let ip = "";
+		try { ip = getClientAddress(); } catch { /* noop */ }
+		const ua = request.headers.get("user-agent") || "";
+
+		cookies.set("admin_token", makeToken(user, { ip, userAgent: ua }), {
 			path: "/",
 			httpOnly: true,
 			sameSite: "strict",
-			secure: false
+			secure: false,
+			maxAge: 30 * 24 * 60 * 60
 		});
+		markLogin(user.username, ip);
+		recordActivity({ userId: user.id, username: user.username, action: "login", ip, userAgent: ua });
 		redirect(302, "/admin");
 	}
 };

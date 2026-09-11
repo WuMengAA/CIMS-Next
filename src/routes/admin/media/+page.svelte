@@ -65,7 +65,7 @@
 			<p class="text-sm">拖拽文件到此处，或</p>
 			<label class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-4 py-2 text-sm hover:bg-accent">
 				选择文件
-				<input type="file" multiple class="hidden" onchange={(e) => { if (e.target.files) handleFileUpload(e.target.files); }} />
+				<input type="file" multiple class="hidden" onchange={(e: Event) => { const t = e.target as HTMLInputElement; if (t.files) handleFileUpload(t.files); }} />
 			</label>
 			{#if uploading}
 				<p class="text-xs text-muted-foreground">上传中...</p>

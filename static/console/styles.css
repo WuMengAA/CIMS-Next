@@ -31,6 +31,17 @@ body{
 }
 .nav:hover{background:var(--panel2); color:var(--text)}
 .nav.active{background:var(--accent); color:#fff}
+/* ===== 移动端侧栏抽屉 =====
+   宽屏：侧栏是常驻列，按钮与遮罩都不出现，布局与旧版逐像素一致。
+   窄屏：侧栏脱离文档流改为浮层，靠 translateX 滑出/滑回（有过渡动画），
+         点菜单项 / 遮罩 / Esc 自动收起，内容区拿回全部宽度。 */
+.nav-toggle{display:none; padding:6px; line-height:0; border-color:transparent}
+.nav-toggle:hover{border-color:var(--line); background:var(--panel2)}
+.nav-mask{
+  position:fixed; inset:46px 0 26px; background:rgba(0,0,0,.5);
+  opacity:0; pointer-events:none; transition:opacity .22s ease; z-index:30;
+}
+.nav-mask.show{opacity:1; pointer-events:auto}
 #main{flex:1; overflow:auto; padding:14px; min-width:0}
 #statusbar{
   height:26px; flex:0 0 26px; background:var(--panel); border-top:1px solid var(--line);
@@ -94,3 +105,42 @@ tbody tr:hover{background:var(--panel2)}
 .song-now{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding:10px 12px; background:var(--panel2); border:1px solid var(--line); border-radius:var(--r); font-size:14px}
 .song-now b{color:var(--accent)}
 code{background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:1px 5px; font-size:11px; color:var(--text)}
+
+/* --- 权限与可访问性（2026-09-10 集控迭代） --- */
+/* 无权限按钮：明显弱化并禁止点击，title 里说明原因 */
+button:disabled{opacity:.4; cursor:not-allowed; border-color:var(--line)}
+button:disabled:hover{border-color:var(--line)}
+.nav.hidden{display:none!important}
+/* 键盘可达：统一焦点环，不再依赖浏览器默认（深色底上默认环几乎看不见） */
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible{
+  outline:2px solid var(--accent); outline-offset:2px;
+}
+/* 表格里的空状态行不参与 hover 高亮 */
+tbody tr:hover td.muted{background:transparent}
+
+@media (max-width:760px){
+  /* 窄屏：侧栏收起为浮层抽屉，表格允许横向滚动而不是撑破布局 */
+  .nav-toggle{display:inline-flex; align-items:center; justify-content:center}
+  .brand .sub{display:none}
+  #topbar{padding:0 10px; gap:8px}
+  .top-left{flex:1 1 auto}
+  .top-right{flex:0 1 auto; min-width:0; gap:6px}
+  #class-select{max-width:104px; min-width:0}
+  .chip,.conn{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:96px}
+  /* 不许换行：窄屏下「设置」曾被挤成两行 */
+  #btn-settings{white-space:nowrap; flex:0 0 auto}
+  #sidebar{
+    position:fixed; top:46px; bottom:26px; left:0; z-index:40;
+    width:200px; flex:0 0 200px;
+    transform:translateX(-100%);
+    transition:transform .24s cubic-bezier(.4,0,.2,1);
+    box-shadow:2px 0 16px rgba(0,0,0,.45);
+  }
+  #sidebar.open{transform:translateX(0)}
+  #main{overflow-x:auto}
+  table{min-width:520px}
+}
+@media (max-width:430px){
+  /* 超窄屏：品牌让位给班级选择与连接状态（面板名在文档标题 / 外层返回条上已有） */
+  .brand{display:none}
+}

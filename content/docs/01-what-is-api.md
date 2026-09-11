@@ -1,12 +1,12 @@
 ---
 title: 大模型API到底是个什么东西
-date: '2026-09-05'
+date: '2026-09-11'
 status: published
 category: AI 入门
 tags:
   - AI
   - API
-order: 0
+owner: admin
 ---
 我第一次听到“API调用”的时候，满脑子都是问号。
 

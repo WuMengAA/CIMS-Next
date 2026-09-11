@@ -44,7 +44,7 @@
 		tooltipContent,
 		tooltipContentProps,
 		...restProps
-	}: WithElementRef<HTMLAttributes<HTMLButtonElement>, HTMLButtonElement> & {
+	}: WithElementRef<HTMLAttributes<HTMLButtonElement>, HTMLElement> & {
 		isActive?: boolean;
 		href?: string;
 		variant?: SidebarMenuButtonVariant;
@@ -71,7 +71,9 @@
 	{#if child}
 		{@render child({ props: mergedProps })}
 	{:else if href}
-		<a bind:this={ref} {href} {...mergedProps}>
+		<!-- mergedProps 的键来自 HTMLButtonAttributes，与 <a> 的 props 类型天然不兼容；
+		     mergeProps 的返回类型无法同时满足 a / button 两种宿主元素，这里按目标元素断言。 -->
+		<a bind:this={ref} {href} {...(mergedProps as HTMLAttributes<HTMLAnchorElement>)}>
 			{@render children?.()}
 		</a>
 	{:else}

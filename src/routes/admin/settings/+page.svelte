@@ -4,7 +4,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { Switch } from "$lib/components/ui/switch/index.js";
 	import { Slider } from "$lib/components/ui/slider/index.js";
 	import { Save, Plus, Trash2, Download, Wand2, LayoutGrid } from "@lucide/svelte";
@@ -85,7 +85,7 @@
 
 	async function exportBackup() {
 		try {
-			const headers = {};
+			const headers: Record<string, string> = {};
 			if (backupPass.trim()) headers["x-encrypt-pass"] = backupPass.trim();
 			const res = await fetch("/api/backup", { headers });
 			if (!res.ok) { backupMsg = "导出失败，请重试"; return; }
@@ -220,8 +220,8 @@
 			<div class="grid gap-1.5"><Label>强调色</Label><input type="color" bind:value={bgColor3} class="h-9 w-full cursor-pointer rounded-md border border-border/60 bg-transparent" /></div>
 		</div>
 		<div class="grid grid-cols-2 gap-3">
-			<div class="grid gap-1.5"><Label>浓度（{Math.round(intensityArr[0] * 100)}%）</Label><Slider bind:value={intensityArr} min={0.05} max={0.9} step={0.05} class="mt-3" /></div>
-			<div class="grid gap-1.5"><Label>速度（{speedArr[0].toFixed(1)}x）</Label><Slider bind:value={speedArr} min={0.2} max={3} step={0.1} class="mt-3" /></div>
+			<div class="grid gap-1.5"><Label>浓度（{Math.round(intensityArr[0] * 100)}%）</Label><Slider type="multiple" bind:value={intensityArr} min={0.05} max={0.9} step={0.05} class="mt-3" /></div>
+			<div class="grid gap-1.5"><Label>速度（{speedArr[0].toFixed(1)}x）</Label><Slider type="multiple" bind:value={speedArr} min={0.2} max={3} step={0.1} class="mt-3" /></div>
 		</div>
 	</div>
 

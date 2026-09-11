@@ -22,7 +22,9 @@ export default defineConfig(({ mode }) => {
 	},
 	ssr: {
 		// Libraries shipping .svelte source must be compiled by Svelte, not Node
-		noExternal: ['morphicons']
+		noExternal: ['morphicons'],
+		// node:sqlite 是 Node 22 内置模块（非 npm 包），显式外置避免打包器尝试解析
+		external: ['node:sqlite']
 	},
 	plugins: [
 		tailwindcss(),

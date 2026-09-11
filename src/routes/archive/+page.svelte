@@ -12,7 +12,7 @@
 
 	// 详情抽屉
 	let open = $state(false);
-	let cur = $state<{ section: string; slug: string; title: string } | null>(null);
+	let cur = $state<Item | null>(null);
 	let versions = $state<{ id: string; version: number; savedAt: string; editor: string; size: number }[]>([]);
 	let previewRaw = $state("");
 	let previewId = $state("");
