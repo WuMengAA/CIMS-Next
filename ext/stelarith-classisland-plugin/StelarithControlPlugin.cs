@@ -89,6 +89,14 @@ public static class StelarithDispatch
 {
     private static readonly AgentClient Agent = new();
 
+    // 集控面板下发的载荷字段为小写（action/token/scope/ts），而 StelarithTask 属性是 PascalCase。
+    // System.Text.Json 默认大小写敏感，不开这个开关会反序列化出 Action="" —— 表现为
+    // 「指令下发成功 200，但设备端毫无反应」。必须显式开启。
+    private static readonly JsonSerializerOptions TaskJson = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
     /// <summary>解析集控命令载荷中的 stelarith_task 片段；非本插件指令返回 null。</summary>
     public static StelarithTask? Parse(string raw)
     {
@@ -97,7 +105,7 @@ public static class StelarithDispatch
         {
             using var doc = JsonDocument.Parse(raw);
             if (doc.RootElement.TryGetProperty("stelarith_task", out var t))
-                return JsonSerializer.Deserialize<StelarithTask>(t.GetRawText());
+                return JsonSerializer.Deserialize<StelarithTask>(t.GetRawText(), TaskJson);
         }
         catch
         {
