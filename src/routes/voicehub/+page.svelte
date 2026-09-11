@@ -47,7 +47,16 @@
 			{#if data.now}
 				<div class="flex items-center gap-4">
 					{#if data.now.cover}
-						<img src={data.now.cover} alt="" class="size-20 rounded-lg object-cover" />
+						<!-- referrerpolicy="no-referrer"：封面多来自 B 站图床（i*.hdslb.com），
+						     其防盗链按 Referer 判定，带本站 Referer 会被 403、图挂掉。
+						     去掉 Referer 即可正常加载。 -->
+						<img
+							src={data.now.cover}
+							alt=""
+							referrerpolicy="no-referrer"
+							loading="lazy"
+							class="size-20 rounded-lg object-cover"
+						/>
 					{/if}
 					<div>
 						<div class="text-2xl font-bold">{data.now.title}</div>
@@ -76,7 +85,14 @@
 						<li class="flex items-center gap-3 rounded-lg border px-4 py-3">
 							<span class="w-6 text-center text-sm font-semibold text-primary">{i + 1}</span>
 							{#if s.cover}
-								<img src={s.cover} alt="" class="size-10 rounded object-cover" />
+								<!-- 同上：B 站图床防盗链，需去掉 Referer -->
+							<img
+								src={s.cover}
+								alt=""
+								referrerpolicy="no-referrer"
+								loading="lazy"
+								class="size-10 rounded object-cover"
+							/>
 							{/if}
 							<div class="min-w-0 flex-1">
 								<div class="truncate font-medium">{s.title}</div>

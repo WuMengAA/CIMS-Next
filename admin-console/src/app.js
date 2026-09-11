@@ -273,6 +273,21 @@
       <p class="muted">用于「校园点歌」视图拉取队列 / 点歌。需在 voicehub 后台生成具备 songs:read 与 songs:request 权限的 API Key。</p>
     </div>`;
 
+  // ============ 移动端侧栏抽屉 ============
+  // 窄屏下侧栏是浮层（见 styles.css 的 @media(max-width:760px)）：默认收起，
+  // 由顶栏汉堡按钮开合，点菜单项 / 遮罩 / Esc 自动收起。
+  // 这里只切 class，滑出滑回的动画交给 CSS transition —— 不引入任何依赖。
+  const navEl = $("#sidebar"), navMask = $("#nav-mask"), navBtn = $("#btn-nav");
+  function setNav(open) {
+    if (!navEl) return;
+    navEl.classList.toggle("open", open);
+    if (navMask) navMask.classList.toggle("show", open);
+    if (navBtn) navBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (navBtn) navBtn.addEventListener("click", () => setNav(!navEl.classList.contains("open")));
+  if (navMask) navMask.addEventListener("click", () => setNav(false));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNav(false); });
+
   // ============ 渲染与导航 ============
   async function go(v) {
     current = v || current;
@@ -288,10 +303,10 @@
     meta(`视图：${current} · ${API.state.demo ? "演示模式" : "后端模式"}`);
   }
 
-  document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => go(b.dataset.view)));
+  document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
   $("#btn-settings").addEventListener("click", () => {
     document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
-    current = "settings"; go("settings");
+    current = "settings"; go("settings"); setNav(false);
   });
 
   // ============ 事件委托 ============
@@ -489,6 +504,9 @@
     API.setDemo(false);
     API.setEmbedded(true);
     API.setSiteHost(""); // 同源：协作/上报走网站 /api/feedback
+    // 内嵌态由宿主页经 iframe query 注入 CIMS 账户 id（否则 accountId 恒空、cims() 降级演示）。
+    const q = new URLSearchParams(location.search);
+    API.state.accountId = q.get("accountId") || "";
     $("#login-mask").classList.add("hidden");
     setConn(true, "网站代理");
     loadClasses().then(() => go("dashboard"));

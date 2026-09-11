@@ -3,7 +3,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { Rss, Plus, Trash2, Copy, RefreshCw, Check, Loader2 } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import type { PageProps } from "./$types";
@@ -145,7 +145,7 @@
 		</label>
 		<div class="grid gap-1.5">
 			<label class="text-sm font-medium">新闻/文章严重级别</label>
-			<Select.Root type="single" bind:value={settings.broadcastSeverity}>
+			<Select.Root type="single" value={String(settings.broadcastSeverity)} onValueChange={(v) => { if (v != null) settings.broadcastSeverity = Number(v); }}>
 				<Select.Trigger class="w-full">{SEVERITIES.find((s) => String(s.value) === String(settings.broadcastSeverity))?.label ?? settings.broadcastSeverity}</Select.Trigger>
 				<Select.Content>
 					{#each SEVERITIES as s (s.value)}<Select.Item value={s.value} label={s.label} />{/each}

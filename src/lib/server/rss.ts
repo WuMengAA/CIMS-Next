@@ -23,6 +23,7 @@ export interface FeedItem {
 	guid?: string;
 	source?: string;
 	category?: string;
+	author?: string; // RSS <author> / Atom <name>，用于 <item><author> 输出
 	internal?: boolean; // 站内精选（pinned 帖子），前端用「精选」徽标区分
 }
 

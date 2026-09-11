@@ -31,11 +31,9 @@
 			<ArrowLeft class="size-4 mr-2" />
 			返回上页
 		</Button>
-		<Button asChild>
-			<a href="/">
-				<Home class="size-4 mr-2" />
-				返回首页
-			</a>
+		<Button href="/">
+			<Home class="size-4 mr-2" />
+			返回首页
 		</Button>
 	</div>
 </div>

@@ -4,12 +4,24 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { ROLE_LABELS } from "$lib/permissions.js";
-	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays } from "@lucide/svelte";
+	import { Textarea } from "$lib/components/ui/textarea/index.js";
+	import { ROLE_LABELS, type Role } from "$lib/permissions.js";
+	import { toast } from "svelte-sonner";
+	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays, UserCog, Save } from "@lucide/svelte";
 
-	interface Me { username: string; displayName: string; role: string; createdAt: string; }
+	interface Me {
+		username: string; displayName: string; email: string; bio: string; avatar: string;
+		role: string; createdAt: string; lastLoginAt?: string | null; loginCount?: number;
+	}
 	let me = $state<Me | null>(null);
 	let loading = $state(true);
+
+	// Profile form
+	let pDisplay = $state("");
+	let pEmail = $state("");
+	let pBio = $state("");
+	let pAvatar = $state("");
+	let saving = $state(false);
 
 	// Password change form
 	let currentPassword = $state("");
@@ -22,9 +34,37 @@
 		loading = true;
 		try {
 			const res = await fetch("/api/me");
-			if (res.ok) me = await res.json();
+			if (res.ok) {
+				const d = await res.json();
+				me = d;
+				if (d) {
+					pDisplay = d.displayName || "";
+					pEmail = d.email || "";
+					pBio = d.bio || "";
+					pAvatar = d.avatar || "";
+				}
+			}
 		} catch (e) { console.error(e); }
 		loading = false;
+	}
+
+	async function saveProfile() {
+		saving = true;
+		try {
+			const res = await fetch("/api/me", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ displayName: pDisplay, email: pEmail, bio: pBio, avatar: pAvatar })
+			});
+			const d = await res.json();
+			if (res.ok && d.ok) {
+				me = d.user;
+				toast.success("资料已保存");
+			} else {
+				toast.error(d.error || "保存失败");
+			}
+		} catch { toast.error("网络错误"); }
+		saving = false;
 	}
 
 	async function changePwd() {
@@ -39,9 +79,9 @@
 			});
 			const data = await res.json();
 			if (res.ok) {
-				pwdMsg = "密码已修改";
+				pwdMsg = "密码已修改，其他设备需重新登录";
 				currentPassword = ""; newPassword = "";
-				setTimeout(() => (pwdMsg = ""), 3000);
+				setTimeout(() => (pwdMsg = ""), 4000);
 			} else {
 				pwdErr = data.error || "修改失败";
 			}
@@ -82,7 +122,7 @@
 <div class="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 md:px-8">
 	<header class="flex flex-col gap-2">
 		<h1 class="font-heading text-3xl font-semibold tracking-tight">账号</h1>
-		<p class="text-sm text-muted-foreground">登录状态、密码与数据管理</p>
+		<p class="text-sm text-muted-foreground">个人资料、登录状态、密码与数据管理</p>
 	</header>
 
 {#if loading}
@@ -92,23 +132,39 @@
 	<div class="flex flex-col items-center gap-4 rounded-xl border border-dashed p-10 text-center">
 		<div class="flex size-12 items-center justify-center rounded-full bg-primary/15 text-primary"><User class="size-6" /></div>
 		<h2 class="font-heading text-lg">未登录</h2>
-		<p class="text-sm text-muted-foreground">登录后可管理内容、修改密码和导出备份。</p>
-		<Button asChild><a href="/admin/login">去登录</a></Button>
+		<p class="text-sm text-muted-foreground">登录后可管理个人资料、修改密码和导出备份。</p>
+		<Button href="/admin/login">去登录</Button>
 	</div>
 {:else}
 	<!-- Logged in -->
 	<div class="flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6">
 		<div class="flex flex-wrap items-center gap-3">
-			<div class="flex size-12 items-center justify-center rounded-full bg-primary/15 font-heading text-lg font-semibold text-primary">{me.displayName?.slice(0, 1) || me.username?.slice(0, 1)}</div>
+			{#if me.avatar}
+				<img src={me.avatar} alt="" class="size-12 shrink-0 rounded-full object-cover" />
+			{:else}
+				<div class="flex size-12 items-center justify-center rounded-full bg-primary/15 font-heading text-lg font-semibold text-primary">{me.displayName?.slice(0, 1) || me.username?.slice(0, 1)}</div>
+			{/if}
 			<div class="flex min-w-0 flex-1 flex-col gap-1">
 				<div class="flex items-center gap-2">
 					<span class="truncate font-heading text-lg font-medium">{me.displayName || me.username}</span>
-					<Badge variant={me.role === "admin" ? "default" : "outline"}>{ROLE_LABELS[me.role] || me.role}</Badge>
+					<Badge variant={me.role === "admin" ? "default" : "outline"}>{ROLE_LABELS[me.role as Role] || me.role}</Badge>
 				</div>
-				<p class="inline-flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground"><ShieldCheck class="size-3 shrink-0" /> <span class="truncate">@{me.username}</span> · <CalendarDays class="size-3 shrink-0" /> 注册于 {me.createdAt?.slice(0, 10)}</p>
+				<p class="inline-flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground"><ShieldCheck class="size-3 shrink-0" /> <span class="truncate">@{me.username}</span> · <CalendarDays class="size-3 shrink-0" /> 注册于 {me.createdAt?.slice(0, 10)}{#if me.loginCount} · 登录 {me.loginCount} 次{/if}</p>
 			</div>
 			<Button variant="ghost" size="sm" class="ml-auto shrink-0 text-muted-foreground hover:text-destructive" onclick={logout}><LogOut class="h-4 w-4 mr-1" /> 退出</Button>
 		</div>
+	</div>
+
+	<!-- Profile -->
+	<div class="flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6">
+		<h2 class="flex items-center gap-2 font-heading text-lg font-medium"><UserCog class="size-4 text-primary" /> 个人资料</h2>
+		<div class="grid gap-3 sm:grid-cols-2">
+			<div class="grid gap-1.5"><Label>显示名称</Label><Input bind:value={pDisplay} placeholder="昵称" /></div>
+			<div class="grid gap-1.5"><Label>邮箱</Label><Input type="email" bind:value={pEmail} placeholder="you@example.com" /></div>
+			<div class="grid gap-1.5 sm:col-span-2"><Label>头像 URL</Label><Input bind:value={pAvatar} placeholder="https://… （留空则用首字头像）" /></div>
+			<div class="grid gap-1.5 sm:col-span-2"><Label>个人简介</Label><Textarea bind:value={pBio} rows={3} placeholder="一句话介绍自己…" /></div>
+		</div>
+		<div><Button onclick={saveProfile} disabled={saving}><Save class="h-4 w-4 mr-2" />{saving ? "保存中..." : "保存资料"}</Button></div>
 	</div>
 
 	<!-- Change password -->

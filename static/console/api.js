@@ -65,6 +65,12 @@
   function clearAuth() { state.token = ""; state.accountId = ""; localStorage.removeItem(K_TOKEN); }
   function acct() { return state.accountId; }
 
+  // 是否具备「真实账户上下文」：非演示模式 + 配了 mgmt 后端 + 已选定账户。
+  // 三者缺一，/account//... 就是畸形路径（后端 404、控制台持续刷错误）。
+  // 统一判定为「没有真实后端可用」，让各调用方走既有演示/空数据分支，
+  // 而不是把畸形请求发出去。
+  function canUseBackend() { return !state.demo && !!state.mgmtHost && !!state.accountId; }
+
   async function reqTo(host, path, opts = {}) {
     if (!host) throw new Error("未配置后端地址");
     const ctl = new AbortController();
@@ -88,7 +94,7 @@
 
   // 走 management 端口；失败或有降级键时回落演示数据
   async function cims(path, opts, demoKey) {
-    if (state.demo || !state.mgmtHost) return D[demoKey] ? D[demoKey]() : {};
+    if (!canUseBackend()) return D[demoKey] ? D[demoKey]() : {};
     try { return await reqTo(state.mgmtHost, path, opts); }
     catch (e) { if (demoKey && D[demoKey]) return D[demoKey](); throw e; }
   }
@@ -116,11 +122,13 @@
     try { return await reqTo(state.clientHost, path, opts); }
     catch (e) { if (demoKey && D[demoKey]) return D[demoKey](); throw e; }
   }
-  // 走扩展网关（协作/上报）；未配置则演示降级
+  // 走站点侧协作接口（通知历史 / 班级交流 / 操作日志）。
+  // 注意：只有在「完全没配后端」（纯演示模式）时才返回内置演示数据；
+  // 一旦配了 extHost，请求失败就如实抛错，绝不静默回退假数据——
+  // 否则权限不足/服务异常会伪装成「有数据」，是最难排查的一类问题。
   async function ext(path, opts, demoKey) {
     if (state.demo || !state.extHost) return D[demoKey] ? D[demoKey]() : {};
-    try { return await reqTo(state.extHost, path, opts); }
-    catch (e) { if (demoKey && D[demoKey]) return D[demoKey](); throw e; }
+    return reqTo(state.extHost, path, opts);
   }
 
   // ---- 校园点歌（voicehub）独立客户端 ----
@@ -257,6 +265,49 @@
     ]),
   };
 
+  // ---- 协作数据归一化（站点后端返回 createdAt 等原始字段，这里转成面板展示形态）----
+  // 对内嵌真实后端：请求失败一律返回空数组，**不再回退演示数据**——
+  // 之前失败时静默显示假数据，让人误以为「后端通了」，反而更难排查。
+  function fmtTime(v) {
+    if (!v) return "";
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function normNotices(r) {
+    if (!Array.isArray(r)) return [];
+    return r.map((n) => ({
+      id: n.id,
+      title: n.title != null ? n.title : "",
+      scope: n.scope != null ? n.scope : "",
+      author: n.author || "",
+      at: n.at || fmtTime(n.createdAt),
+    }));
+  }
+  function normChat(r, me) {
+    if (!Array.isArray(r)) return [];
+    return r.map((m) => ({
+      id: m.id,
+      from: m.from != null ? m.from : (m.sender || ""),
+      text: m.text != null ? m.text : (m.body || ""),
+      room: m.room || "",
+      at: m.at || fmtTime(m.createdAt),
+      mine: (m.from != null ? m.from : m.sender) === me,
+    }));
+  }
+  function normAudit(r) {
+    if (!Array.isArray(r)) return [];
+    return r.map((a) => ({
+      id: a.id,
+      at: a.at || fmtTime(a.createdAt),
+      who: a.who != null ? a.who : (a.actor || ""),
+      act: a.act != null ? a.act : (a.action || ""),
+      target: a.target || "",
+      detail: a.detail || "",
+    }));
+  }
+
   // 把 CIMS 资源列表响应归一化为 {id,name}
   function normResources(list) {
     if (!Array.isArray(list)) return [];
@@ -284,7 +335,10 @@
 
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
-    voicehubList, voicehubRequest, voicehubPush,
+    // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest / voicehubPush）。
+    // 曾经写成 `voicehubList, voicehubRequest, voicehubPush,` 的简写属性：这几个标识符并不存在，
+    // 对象字面量一求值就抛 ReferenceError，导致 global.API 从未赋值、整个面板 API 层全废。
+    voicehubList: vhubList, voicehubRequest: vhubRequest, voicehubPush: vhubPush,
 
     // ---- 认证（CIMS 原生）----
     async login(host, email, password) {
@@ -344,7 +398,7 @@
 
     // ---- 设备（客户端控制，CIMS 原生）----
     listDevices: async () => {
-      if (state.demo || !state.mgmtHost) return D.devices();
+      if (!canUseBackend()) return D.devices();
       try {
         const uids = await reqTo(state.mgmtHost, `/account/${acct()}/client/list`);
         if (!Array.isArray(uids)) return D.devices();
@@ -362,7 +416,7 @@
       } catch (e) { return D.devices(); }
     },
     deviceAction: async (id, action) => {
-      if (state.demo || !state.mgmtHost) return { status: "success", message: "（演示）指令已模拟下发" };
+      if (!canUseBackend()) return { status: "success", message: "（演示）指令已模拟下发" };
       const ep = { restart: "restart", sync: "update-data", notify: "send-notification" }[action];
       if (!ep) return { status: "success", message: "（演示）该动作无后端对应，已模拟" };
       const body = action === "notify"
@@ -379,7 +433,7 @@
     // 并把 {ip,port,token} 回报到扩展网关 /vnc-session（见 ext/stelarith-ext-gateway）。面板用
     // deviceRemoteStatus(uid) 轮询该回执，拿到后内嵌 noVNC。
     deviceRemoteStart: async (uid, scope) => {
-      if (state.demo || !state.mgmtHost) return { status: "demo", message: "（演示）已模拟请求远程控制" };
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟请求远程控制" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask("remote_control_start", ts);
       const task = { action: "remote_control_start", token, scope: scope || "class", ts };
@@ -387,7 +441,7 @@
       return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
     },
     deviceRemoteStop: async (uid, scope) => {
-      if (state.demo || !state.mgmtHost) return { status: "demo", message: "（演示）已模拟结束会话" };
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟结束会话" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask("remote_control_stop", ts);
       const task = { action: "remote_control_stop", token, scope: scope || "class", ts };
@@ -406,11 +460,11 @@
     },
 
     // ---- 通知广播 ----
-    // 真实：向所有在线设备下发桌面通知（CIMS send-notification）
-    // 历史列表：CIMS 不存储，走扩展网关，未配置则演示
-    listNotices: () => ext("/notices", {}, "notices"),
+    // 下发：向所有在线设备下发桌面通知（CIMS send-notification，设备侧真实生效）
+    // 历史：CIMS 不存储 → 站点侧 SQLite 留痕（未配置后端时降级演示）
+    listNotices: async () => normNotices(await ext("/notices", {}, "notices")),
     sendNotice: async (title, scope) => {
-      if (state.demo || !state.mgmtHost) {
+      if (!canUseBackend()) {
         const list = D.notices(); list.unshift({ id: "n" + Date.now(), title, scope: scope || "本班", at: "刚刚" });
         return { status: "success", sent: 1 };
       }
@@ -425,18 +479,22 @@
           } catch (_) { /* 单台失败忽略 */ }
         }
       }
-      // 可选：写入扩展网关留痕
-      try { await ext("/notices", { method: "POST", body: JSON.stringify({ title, scope }) }); } catch (_) {}
+      // 留痕到站点（失败不阻断下发结果）
+      try { await ext("/notices", { method: "POST", body: JSON.stringify({ title, scope, sent }) }); } catch (_) {}
       return { status: "success", sent };
     },
 
-    // ---- 班级交流（扩展网关，支持房间/班级隔离，跨班互通）----
+    // ---- 班级交流（站点侧 SQLite，支持房间/班级隔离，跨班互通）----
     // room 缺省 "techrep-global"（全校电教委员群）；各班级用自身 classId 作房间。
-    listChat: (room) => ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"),
-    sendChat: async (text, from, room) => ext("/chat", {
-      method: "POST",
-      body: JSON.stringify({ text, from: from || (state.classId || "电教委员"), room: room || "techrep-global" }),
-    }, "chat"),
+    listChat: async (room) => normChat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
+    sendChat: async (text, from, room) => {
+      const me = from || (state.classId || "电教委员");
+      const r = await ext("/chat", {
+        method: "POST",
+        body: JSON.stringify({ text, from: me, room: room || "techrep-global" }),
+      }, "chat");
+      return r;
+    },
     CHAT_ROOM_GLOBAL: "techrep-global",
 
     // ---- 故障上报 / Bug（实名站：stelarith-website /api/feedback，复用反馈模型）----
@@ -448,7 +506,7 @@
         const items = await siteFetch("/api/feedback");
         return (Array.isArray(items) ? items : []).filter((x) => (x.labels || []).includes("report"))
           .map((x) => ({ id: x.id, title: x.title, level: (x.labels || []).find((l) => ["高", "中", "低"].includes(l)) || "-", status: x.status || "待处理", at: x.createdAt || "" }));
-      } catch (_) { return D.reports(); }
+      } catch (_) { return state.embedded || state.siteHost ? [] : D.reports(); }
     },
     async submitReport(r) {
       if (state.demo) return { ok: true, demo: true };
@@ -462,7 +520,7 @@
         const items = await siteFetch("/api/feedback");
         return (Array.isArray(items) ? items : []).filter((x) => (x.labels || []).includes("bug"))
           .map((x) => ({ id: x.id, title: x.title, status: x.status || "待受理", at: x.createdAt || "" }));
-      } catch (_) { return D.bugs(); }
+      } catch (_) { return state.embedded || state.siteHost ? [] : D.bugs(); }
     },
     async submitBug(b) {
       if (state.demo) return { ok: true, demo: true };
@@ -471,8 +529,18 @@
       return siteFetch("/api/feedback", { method: "POST", body: JSON.stringify({ title: b.title, content, labels: ["bug"] }) });
     },
 
-    // ---- 审计（扩展网关）----
-    listAudit: () => ext("/audit", {}, "audit"),
+    // ---- 操作日志（站点侧 SQLite）----
+    listAudit: async (action) =>
+      normAudit(await ext("/audit" + (action ? "?action=" + encodeURIComponent(action) : ""), {}, "audit")),
+    /** 记一条集控操作日志；失败不抛（审计不应阻断主流程）。 */
+    audit: async (action, target, detail) => {
+      try {
+        return await ext("/audit", {
+          method: "POST",
+          body: JSON.stringify({ action, target, detail }),
+        });
+      } catch (e) { return { ok: false, error: e.message }; }
+    },
   };
 
   global.API = API;

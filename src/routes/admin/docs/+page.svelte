@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { Plus, Trash2, BookMarked } from "@lucide/svelte";
 	import SortableList from "$lib/components/admin/sortable-list.svelte";
 	import { toast } from "svelte-sonner";

@@ -29,6 +29,8 @@
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
 	import { ChevronDown, ChevronUp } from "lucide";
+	import ViewSwitch from "$lib/components/view-switch.svelte";
+	import { can } from "$lib/permissions.js";
 	
 	import { page } from "$app/state";
 
@@ -82,7 +84,7 @@
 		"create": Sparkles, "sparkles": Sparkles, "novel": BookMarked, "novels": BookMarked, "anime": Clapperboard, "clapperboard": Clapperboard,
 		"game": Gamepad2, "games": Gamepad2, "gamepad2": Gamepad2, "tool": Wrench, "tools": Wrench, "wrench": Wrench,
 		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
-		"archive": Archive, "archives": Archive, "archive": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
+		"archive": Archive, "archives": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
 		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
 		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss
 	};
@@ -105,10 +107,22 @@
 	// （data.user），服务端已判定，无需客户端再发请求，侧边栏零闪烁、彻底常驻。
 	const authed = $derived(!!(data?.user));
 
+	// 后台入口：能进 /admin 就进 /admin，只有集控权限（电教委员/只读）则直接进 /admin/console，
+	// 两者都无则隐藏滑块（避免点了被 hooks 弹回登录页）。
+	const adminHref = $derived(
+		!data?.user
+			? null
+			: can(data.user.role as any, "viewAdmin")
+				? "/admin"
+				: can(data.user.role as any, "viewConsole")
+					? "/admin/console"
+					: null
+	);
+
 	const path = $derived(page.url.pathname);
 
 	function isActive(url: string): boolean {
-		if (url === "/") return path === "/" || path === "";
+		if (url === "/") return path === "/";
 		return path.startsWith(url);
 	}
 </script>
@@ -198,6 +212,13 @@
 	{/if}
 	</Sidebar.Content>
 	<Sidebar.Footer>
+		{#if adminHref}
+			<ViewSwitch
+				current="site"
+				{adminHref}
+				class="mx-2 group-data-[collapsible=icon]:hidden"
+			/>
+		{/if}
 		<div class="flex flex-wrap items-center gap-1 px-2 pb-2">
 			{#each socials as s (s.name)}
 				<a

@@ -265,7 +265,10 @@
 
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
-    voicehubList, voicehubRequest,
+    // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest）。
+    // 曾经写成简写属性 `voicehubList, voicehubRequest`：标识符不存在，字面量求值即抛
+    // ReferenceError，global.API 从未赋值，整个面板 API 层失效。
+    voicehubList: vhubList, voicehubRequest: vhubRequest,
 
     // ---- 认证（CIMS 原生）----
     async login(host, email, password) {

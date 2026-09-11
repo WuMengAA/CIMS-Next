@@ -4,9 +4,10 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { Save, ArrowLeft, Bold, Italic, Strikethrough, Heading2, Quote, List, ListOrdered, ListTodo, Table, Minus, Code, SquareCode, Link as LinkIcon, Image as ImageIcon, CornerDownLeft, ChevronRight, MonitorPlay } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
+	import { page } from "$app/state";
 
 	let {
 		section = "posts",
@@ -433,7 +434,7 @@
 		<Button onclick={() => save(true)} disabled={saving || !title.trim() || !body.trim()}>
 			<Save class="h-4 w-4 mr-2" /> {saving ? "保存中..." : "保存并返回"}
 		</Button>
-		<Button variant="outline" onclick={save} disabled={saving || !title.trim() || !body.trim()}>继续编辑</Button>
+		<Button variant="outline" onclick={() => save(false)} disabled={saving || !title.trim() || !body.trim()}>继续编辑</Button>
 		{#if saved}<Badge variant="secondary">已保存</Badge>{/if}
 	</div>
 </div>

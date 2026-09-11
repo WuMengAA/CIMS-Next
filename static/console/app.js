@@ -7,11 +7,69 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const toast = (m) => { $("#status-msg").textContent = m; };
   const meta = (m) => { $("#status-meta").textContent = m; };
+  /** 空状态行：表格无数据时给一句人话，而不是一片空白。 */
+  const emptyRow = (cols, text) => `<tr><td colspan="${cols}" class="muted" style="text-align:center;padding:18px 0">${esc(text || "暂无记录")}</td></tr>`;
 
   function setConn(ok, txt) {
     const el = $("#conn");
     el.className = "conn " + (ok ? "online" : "offline");
     el.textContent = txt || (ok ? "已连接" : "未连接");
+  }
+
+  // ============ 权限（由网站后台经 iframe query 下发）============
+  // 网站 /admin/console 已按角色算好 can(control/remote/manage/issue)，经 iframe src 的
+  // query 传入；独立打开面板（非内嵌）时不做限制。**内嵌时为 fail-closed**：
+  // 没拿到明确授权即视为无权限，避免「前端忘了传 → 谁都全权限」的危险默认。
+  const PERM = (function () {
+    const q = new URLSearchParams(location.search);
+    const embedded = q.get("embed") === "1" || location.pathname.startsWith("/admin/console");
+    const flag = (k) => q.get(k) === "1";
+    return {
+      embedded,
+      role: q.get("role") || "",
+      roleLabel: q.get("roleLabel") || "",
+      user: q.get("user") || "",
+      control: flag("control"),
+      remote: flag("remote"),
+      manage: flag("manage"),
+      issue: flag("issue"),
+    };
+  })();
+  const NEED_LABEL = { control: "设备控制", remote: "远程控制", manage: "设备管理", issue: "提交上报" };
+  const allow = (need) => !need || !PERM.embedded || !!PERM[need];
+  /** 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。 */
+  const VIEW_NEED = {
+    schedule: "control", config: "control", plugins: "manage",
+    devices: "control", remote: "remote", notify: "control",
+    report: "issue", bug: "issue",
+  };
+
+  function renderPermChip() {
+    const el = $("#perm-chip");
+    if (!el) return;
+    if (!PERM.embedded) { el.classList.add("hidden"); return; }
+    const parts = [];
+    if (PERM.manage) parts.push("设备管理");
+    if (PERM.control) parts.push("设备控制");
+    if (PERM.remote) parts.push("远程控制");
+    if (PERM.issue) parts.push("上报");
+    el.textContent = (PERM.roleLabel || PERM.role || "只读") + " · " + (parts.length ? parts.join(" / ") : "仅查看");
+    el.classList.remove("hidden");
+  }
+
+  /** 渲染后统一应用权限：隐藏无权限导航，禁用无权限按钮并说明原因。 */
+  function applyGating() {
+    document.querySelectorAll(".nav[data-need]").forEach((b) => {
+      b.classList.toggle("hidden", !allow(b.dataset.need));
+    });
+    view.querySelectorAll("[data-need]").forEach((el) => {
+      if (allow(el.dataset.need)) return;
+      el.disabled = true;
+      el.classList.add("locked");
+      el.setAttribute("aria-disabled", "true");
+      el.title = "当前账号（" + (PERM.roleLabel || PERM.role || "只读") + "）无「" +
+        (NEED_LABEL[el.dataset.need] || el.dataset.need) + "」权限";
+    });
   }
 
   // ============ 视图 ============
@@ -79,7 +137,7 @@
           <textarea id="cfg-json">${esc(JSON.stringify(c,null,2))}</textarea>
         </div>
         <div class="row" style="margin-top:8px">
-          <button class="primary" data-act="save-config">保存并下发</button>
+          <button class="primary" data-act="save-config" data-need="control">保存并下发</button>
           <button data-act="reload">重新拉取</button>
         </div>
       </div>`;
@@ -101,14 +159,14 @@
     return `
       <div class="card"><h3>设备控制</h3>
         <table><thead><tr><th>名称</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${ds.map(d=>`<tr><td>${esc(d.name)}</td><td>${esc(d.ip)}</td><td>${esc(d.ver)}</td><td>${esc(d.last)}</td>
+        ${ds.length ? ds.map(d=>`<tr><td>${esc(d.name)}</td><td>${esc(d.ip)}</td><td>${esc(d.ver)}</td><td>${esc(d.last)}</td>
           <td><span class="tag ${d.online?"ok":"err"}">${d.online?"在线":"离线"}</span></td>
           <td>
-            <button data-act="dev" data-id="${d.id}" data-a="restart">重启</button>
-            <button data-act="dev" data-id="${d.id}" data-a="refresh">刷新</button>
-            <button data-act="dev" data-id="${d.id}" data-a="lock">锁屏</button>
-            <button data-act="dev" data-id="${d.id}" data-a="screenshot">截图</button>
-          </td></tr>`).join("")}
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart">重启</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh">刷新</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="lock">锁屏</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="screenshot">截图</button>
+          </td></tr>`).join("") : emptyRow(6, "该账户下暂无已注册设备")}
         </tbody></table>
         <p class="muted">重启/刷新/锁屏/截图经 CIMS management 端口命令通道（HTTP→gRPC，CIMS 原生）；锁屏/截图由本机 ClassIsland 插件 + 本地代理执行。</p>
       </div>`;
@@ -120,15 +178,15 @@
       <div class="card"><h3>远程屏幕控制</h3>
         <p class="muted">点「远程控制」→ 经 CIMS 通知 → ClassIsland 插件 → 本地代理<b>按需启动 VNC</b> → 面板内嵌 noVNC 连接。会话级端口 + 令牌，结束即关；全程 HTTPS/加密隧道，每次控制写审计。</p>
         <table><thead><tr><th>名称</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${ds.map(d=>`<tr><td>${esc(d.name)}</td>
+        ${ds.length ? ds.map(d=>`<tr><td>${esc(d.name)}</td>
           <td><span class="tag ${d.online?"ok":"err"}">${d.online?"在线":"离线"}</span></td>
-          <td><button class="primary" data-act="remote-start" data-id="${d.id}" ${d.online?"":"disabled"}>远程控制</button></td></tr>`).join("")}
+          <td><button class="primary" data-act="remote-start" data-need="remote" data-id="${d.id}" ${d.online?"":"disabled"}>远程控制</button></td></tr>`).join("") : emptyRow(3, "该账户下暂无已注册设备")}
         </tbody></table>
       </div>
       <div id="vncbox" class="card hidden"><h3>VNC 会话 · <span id="vnc-name"></span></h3>
         <p class="muted" id="vnc-note"></p>
-        <iframe id="vnc-frame" style="width:100%;height:340px;border:0;background:#000"></iframe>
-        <div class="row"><button data-act="remote-stop">结束会话</button></div>
+        <iframe id="vnc-frame" title="远程屏幕" style="width:100%;height:340px;border:0;background:#000"></iframe>
+        <div class="row"><button data-act="remote-stop" data-need="remote">结束会话</button></div>
       </div>`;
   };
 
@@ -137,7 +195,7 @@
     return `
       <div class="card"><h3>校园点歌 · 实时联动</h3>
         <p class="muted">数据来自 voicehub（校园点歌站，公开 API）。可在「连接设置」配置点歌站地址与 API Key。点「推送到本班屏幕」会把当前播放 + 队列写入 CIMS 资源 <code>songboard</code>，由 ClassIsland 点歌看板插件拉取上屏。</p>
-        <div class="row"><button class="primary" data-act="vh-push">推送到本班屏幕</button>
+        <div class="row"><button class="primary" data-act="vh-push" data-need="control">推送到本班屏幕</button>
           <button data-act="vh-refresh">刷新</button></div>
         <h4 style="margin:14px 0 6px">正在播放</h4>
         ${now ? `<div class="song-now"><b>${esc(now.title)}</b> — ${esc(now.artist||"")}<span class="muted"> · ${esc(now.by||"")} · ${esc(now.at||"")}</span></div>`
@@ -164,11 +222,11 @@
         <div class="row">
           <input id="nt-title" placeholder="通知标题" style="width:320px"/>
           <select id="nt-scope"><option>本班</option><option>本年级</option><option>全校</option></select>
-          <button class="primary" data-act="send-notice">发布</button>
+          <button class="primary" data-act="send-notice" data-need="control">发布</button>
         </div></div>
       <div class="card"><h3>历史通知</h3>
         <table><thead><tr><th>标题</th><th>范围</th><th>时间</th></tr></thead><tbody>
-        ${ns.map(n=>`<tr><td>${esc(n.title)}</td><td>${esc(n.scope)}</td><td>${esc(n.at)}</td></tr>`).join("")}
+        ${ns.length ? ns.map(n=>`<tr><td>${esc(n.title)}</td><td>${esc(n.scope)}</td><td>${esc(n.at)}</td></tr>`).join("") : emptyRow(3, "暂无通知记录")}
         </tbody></table></div>`;
   };
 
@@ -227,20 +285,22 @@
         <div class="row"><input id="bg-title" placeholder="问题标题" style="width:320px"/></div>
         <textarea id="bg-steps" placeholder="复现步骤：1) ... 2) ... 3) ..."></textarea>
         <textarea id="bg-log" placeholder="粘贴相关日志（ClassIsland / CIMS 日志）" style="min-height:80px"></textarea>
-        <div class="row"><button class="primary" data-act="submit-bug">提交</button>
+        <div class="row"><button class="primary" data-act="submit-bug" data-need="issue">提交</button>
           <span class="muted">提交内容含环境信息与日志，便于维护者定位。</span></div>
       </div>
       <div class="card"><h3>我提交的</h3>
         <table><thead><tr><th>标题</th><th>状态</th><th>时间</th></tr></thead><tbody>
-        ${bs.map(b=>`<tr><td>${esc(b.title)}</td><td>${esc(b.status)}</td><td>${esc(b.at)}</td></tr>`).join("")}
+        ${bs.length ? bs.map(b=>`<tr><td>${esc(b.title)}</td><td>${esc(b.status)}</td><td>${esc(b.at)}</td></tr>`).join("") : emptyRow(3, "还没有提交过 Bug")}
         </tbody></table></div>`;
   };
 
   views.audit = async () => {
-    const as = await API.listAudit();
+    const logs = await API.listAudit();
     return `<div class="card"><h3>操作日志</h3>
-      <table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th></tr></thead><tbody>
-      ${as.map(a=>`<tr><td>${esc(a.at)}</td><td>${esc(a.who)}</td><td>${esc(a.act)}</td><td>${esc(a.target)}</td></tr>`).join("")}
+      <p class="muted">集控内的关键操作（下发课表/配置、设备指令、通知、远程控制、点歌推送）都会在此留痕，便于事后追溯。</p>
+      <div class="row" style="margin-bottom:8px"><button data-act="reload">刷新</button></div>
+      <table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>详情</th></tr></thead><tbody>
+      ${logs.length ? logs.map(a=>`<tr><td>${esc(a.at)}</td><td>${esc(a.who)}</td><td><span class="tag">${esc(a.act)}</span></td><td>${esc(a.target)}</td><td class="muted">${esc(a.detail||"")}</td></tr>`).join("") : emptyRow(5, "暂无操作记录")}
       </tbody></table></div>`;
   };
 
@@ -273,13 +333,39 @@
       <p class="muted">用于「校园点歌」视图拉取队列 / 点歌。需在 voicehub 后台生成具备 songs:read 与 songs:request 权限的 API Key。</p>
     </div>`;
 
+  // ============ 移动端侧栏抽屉 ============
+  // 窄屏下侧栏是浮层（见 styles.css 的 @media(max-width:760px)）：默认收起，
+  // 由顶栏汉堡按钮开合，点菜单项 / 遮罩 / Esc 自动收起。
+  // 这里只切 class，滑出滑回的动画交给 CSS transition —— 不引入任何依赖。
+  const navEl = $("#sidebar"), navMask = $("#nav-mask"), navBtn = $("#btn-nav");
+  function setNav(open) {
+    if (!navEl) return;
+    navEl.classList.toggle("open", open);
+    if (navMask) navMask.classList.toggle("show", open);
+    if (navBtn) navBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  if (navBtn) navBtn.addEventListener("click", () => setNav(!navEl.classList.contains("open")));
+  if (navMask) navMask.addEventListener("click", () => setNav(false));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setNav(false); });
+
   // ============ 渲染与导航 ============
   async function go(v) {
     current = v || current;
     document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("active", b.dataset.view === current));
+    // 视图级权限：无权限直接给一句人话，比进去看一屏禁用按钮友好
+    const need = VIEW_NEED[current];
+    if (!allow(need)) {
+      view.innerHTML = `<div class="card"><h3>无权限</h3>
+        <p class="muted">当前账号（${esc(PERM.roleLabel || PERM.role || "只读")}）无「${esc(NEED_LABEL[need] || need)}」权限，请联系管理员开通。</p></div>`;
+      toast("无权限：" + (NEED_LABEL[need] || need));
+      meta(`视图：${current} · 无权限`);
+      applyGating();
+      return;
+    }
     view.innerHTML = `<p class="muted">加载中…</p>`;
     try {
       view.innerHTML = await views[current]();
+      applyGating();
       toast("就绪");
     } catch (e) {
       view.innerHTML = `<div class="card"><h3>加载失败</h3><p class="muted">${esc(e.message)}</p></div>`;
@@ -288,10 +374,10 @@
     meta(`视图：${current} · ${API.state.demo ? "演示模式" : "后端模式"}`);
   }
 
-  document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => go(b.dataset.view)));
+  document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
   $("#btn-settings").addEventListener("click", () => {
     document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
-    current = "settings"; go("settings");
+    current = "settings"; go("settings"); setNav(false);
   });
 
   // ============ 事件委托 ============
@@ -326,10 +412,12 @@
       }
       else if (act === "toggle-plugin") {
         await API.setPlugin(el.dataset.id, el.dataset.on === "1");
+        API.audit("plugin.toggle", el.dataset.id, el.dataset.on === "1" ? "启用组件" : "禁用组件");
         toast("插件状态已更新"); go("plugins");
       }
       else if (act === "dev") {
         await API.deviceAction(el.dataset.id, el.dataset.a);
+        API.audit("device." + el.dataset.a, el.dataset.id, "下发设备指令");
         toast(`已下发指令：${el.dataset.a} → ${el.dataset.id}`);
       }
       else if (act === "send-notice") {
@@ -369,6 +457,7 @@
         const uid = el.dataset.id;
         try {
           await API.deviceRemoteStart(uid, "class");
+          API.audit("remote.start", uid, "请求远程控制会话");
           $("#vnc-name").textContent = uid;
           $("#vncbox").classList.remove("hidden");
           $("#vnc-frame").src = "about:blank";
@@ -473,15 +562,27 @@
   $("#btn-login").addEventListener("click", doLogin);
   $("#btn-demo").addEventListener("click", enterDemo);
 
-  // 内嵌于网站 /admin/console：复用网站会话，经服务端代理访问 CIMS，跳过自身登录
-  if (location.pathname.startsWith("/admin/console")) {
+  // 内嵌于网站 /admin/console：复用网站会话，经服务端代理访问 CIMS，跳过自身登录。
+  // 三条数据通道：
+  //   · CIMS 设备/课表/配置 → /api/console/cims（服务端持 CIMS 会话令牌）
+  //   · 通知历史/班级交流/操作日志 → /api/console/ext（站点 SQLite，真实的多人协作数据）
+  //   · 故障上报/Bug → /api/feedback（同源，复用网站反馈模型）
+  if (PERM.embedded || location.pathname.startsWith("/admin/console")) {
     API.setMgmtHost("/api/console/cims");
     API.setClientHost("/api/console/cims");
+    API.setExtHost("/api/console/ext");
     API.setDemo(false);
     API.setEmbedded(true);
-    API.setSiteHost(""); // 同源：协作/上报走网站 /api/feedback
+    API.setSiteHost(""); // 同源：上报走网站 /api/feedback
+    // 内嵌态由宿主页经 iframe query 注入 CIMS 账户 id（否则 accountId 恒空、
+    // canUseBackend() 为假，所有 cims() 静默降级演示数据）。
+    // ⚠️ 必须用 location.search 现取，不能复用 PERM 闭包里的 q（作用域仅限该 IIFE，
+    // 此处引用会 ReferenceError，导致 accountId 恒空、真实后端被静默降级）。
+    API.state.accountId = new URLSearchParams(location.search).get("accountId") || "";
     $("#login-mask").classList.add("hidden");
     setConn(true, "网站代理");
+    renderPermChip();
+    applyGating();
     loadClasses().then(() => go("dashboard"));
     return;
   }

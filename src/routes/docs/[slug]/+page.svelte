@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Badge } from "$lib/components/ui/badge/index.js";
+	import { Button } from "$lib/components/ui/button/index.js";
 	import { BookMarked, FileText, ListTree, Pencil, MessageSquareWarning } from "@lucide/svelte";
 	import Comments from "$lib/components/comments.svelte";
 	import ViewTracker from "$lib/components/view-tracker.svelte";

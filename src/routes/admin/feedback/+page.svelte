@@ -3,7 +3,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { MessageSquare, Trash2, Loader2, Send } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import type { PageProps } from "./$types";

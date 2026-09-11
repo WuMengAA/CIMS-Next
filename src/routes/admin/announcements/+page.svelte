@@ -4,7 +4,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Select } from "$lib/components/ui/select/index.js";
+	import * as Select from "$lib/components/ui/select/index.js";
 	import { Megaphone, Plus, Trash2, Pencil, Pin, Loader2 } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import type { PageProps } from "./$types";

@@ -286,10 +286,12 @@ function fixTableBlocks(src: string): string {
 }
 
 export function renderMarkdown(mdContent: string): RenderedContent {
-	// Images render progressively: off-screen content images load lazily
+	// Images render progressively: off-screen content images load lazily.
+	// referrerpolicy="no-referrer"：正文图片常引用 B 站图床（i*.hdslb.com）等有防盗链的站点，
+	// 带本站 Referer 会被 403 变成裂图；去掉 Referer 后正常显示。对本站图片无副作用。
 	const html = md
 		.render(fixTableBlocks(mdContent))
-		.replace(/<img /g, '<img loading="lazy" decoding="async" ');
+		.replace(/<img /g, '<img loading="lazy" decoding="async" referrerpolicy="no-referrer" ');
 	const toc: { id: string; text: string; level: number }[] = [];
 	const headingRe = /<h([23])\s+id="([^"]*)"[^>]*>([\s\S]*?)<\/h\1>/g;
 	let m: RegExpExecArray | null;
