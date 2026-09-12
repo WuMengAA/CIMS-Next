@@ -1,0 +1,36 @@
+# 星璃集控客户端插件清单
+# ClassIsland 加载插件时首先读取此文件（文件名必须为 manifest.yml，YAML 格式）。
+# 插件清单格式：https://docs.classisland.tech/zh-cn/latest/dev/plugins/create-project/#%E6%8F%92%E4%BB%B6%E6%B8%85%E5%8D%95%E6%96%87%E4%BB%B6
+
+# 插件唯一标识符（与其他插件不重复，文件夹名需与此一致）
+id: StelarithControlPlugin
+
+# 插件显示名称（在 ClassIsland 设置界面中显示）
+name: StelarithControlPlugin
+
+# 插件功能描述
+description: 星璃集控客户端插件：本机锁屏/截屏/通知转发，接收 StelarithAgent 推流的集控指令。
+
+# 入口程序集文件名（不含路径，ClassIsland 会在插件目录下找到）
+entranceAssembly: "StelarithControlPlugin.dll"
+
+# 插件项目主页/源码地址
+url: https://github.com/WuMengAA/CIMS-Next
+
+# 当前版本号（major.minor.build.revision）
+version: 1.0.0.0
+
+# 目标 ClassIsland API 版本（对齐运行版 2.1.0.1，插件 API 为 2.0.0.0 档）
+apiVersion: 2.0.0.0
+
+# 作者署名
+author: Stelarith
+
+# GitHub 仓库所有者（用于自动更新检查）
+repoOwner: WuMengAA
+
+# GitHub 仓库名称（用于自动更新检查）
+repoName: CIMS-Next
+
+# 发布资源根路径（GitHub Release 中的目录前缀）
+assetsRoot: main

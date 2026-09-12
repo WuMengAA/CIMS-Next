@@ -8,7 +8,6 @@ using ClassIsland.Core.Attributes;
 using ClassIsland.Shared.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 
 namespace StelarithControlPlugin;
 
@@ -36,13 +35,8 @@ namespace StelarithControlPlugin;
 [PluginEntrance]
 public class StelarithControlPlugin : PluginBase, INotificationProvider
 {
-    private readonly ILogger<StelarithControlPlugin> _logger;
-
-    // 真实 ClassIsland 插件入口：通过构造函数注入 ILogger<T>（来自 PluginBase 基类）。
-    public StelarithControlPlugin(ILogger<StelarithControlPlugin> logger)
-    {
-        _logger = logger;
-    }
+    // 注意：ClassIsland 通过 Activator.CreateInstance 实例化插件入口类，要求无参构造函数，
+    // 因此不能在构造函数中注入服务。日志等依赖请在 Initialize / 后台服务中通过 GetService<T>() 取得。
 
     /// <summary>
     /// 抽象方法重写：向宿主 DI 容器注册本插件所需的后台服务与自身（作为通知提供方）。

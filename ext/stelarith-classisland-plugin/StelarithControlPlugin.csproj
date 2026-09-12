@@ -30,8 +30,13 @@
       · PluginBase.GetService<T>()
   -->
   <ItemGroup>
-    <PackageReference Include="ClassIsland.PluginSdk" Version="1.4.3.1" />
+    <PackageReference Include="ClassIsland.PluginSdk" Version="2.1.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- 插件清单：ClassIsland 要求根目录存在 manifest.yml（YAML），并随构建复制到输出目录 -->
+  <ItemGroup>
+    <Content Include="manifest.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
