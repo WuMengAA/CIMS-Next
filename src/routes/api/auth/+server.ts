@@ -18,6 +18,7 @@ import {
 	resendVerification
 } from "$lib/server/auth.js";
 import { listUsersOverview, recordActivity } from "$lib/server/activity.js";
+import { syncUserToCims } from "$lib/server/cims-account.js";
 import type { Role } from "$lib/permissions.js";
 
 function clientMeta(event: RequestEvent) {
@@ -75,6 +76,21 @@ export async function POST(event: RequestEvent) {
 	if (action === "register") {
 		const result = registerUser(body.username, body.email, body.password, body.displayName);
 		if (!result.ok) return json({ error: result.error }, { status: 400 });
+
+		// 镜像到 CIMS（website 为账号权威）。明文密码只在注册这一刻存在于请求体
+		// （库里只存哈希），故同步必须在此处发生；CIMS 侧幂等，失败不阻断注册
+		// （fail-open，仅记日志）。
+		// CIMS 以 email 作为账号键，无邮箱的注册无法镜像，跳过以免产生无效调用。
+		const syncEmail = result.email || body.email || "";
+		if (syncEmail) {
+			syncUserToCims({
+				email: syncEmail,
+				username: result.username,
+				password: body.password,
+				displayName: body.displayName
+			}).catch((e) => console.error("[cims-sync]", e));
+		}
+
 		recordActivity({
 			userId: 0, username: result.username || "", action: "user_register",
 			detail: "开放注册（待验证）", ip: meta.ip, userAgent: meta.userAgent
@@ -115,6 +131,16 @@ export async function POST(event: RequestEvent) {
 			email: body.email
 		});
 		if (result.ok) {
+			// 管理员代建的账号同样镜像到 CIMS（无邮箱则跳过，CIMS 以 email 为键）。
+			const syncEmail = (body.email || "").trim();
+			if (syncEmail) {
+				syncUserToCims({
+					email: syncEmail,
+					username: body.username,
+					password: body.password,
+					displayName: body.displayName
+				}).catch((e) => console.error("[cims-sync]", e));
+			}
 			recordActivity({
 				userId: current.id, username: current.username, action: "user_create",
 				target: body.username, detail: `角色 ${body.role || "editor"}`, ip: meta.ip, userAgent: meta.userAgent
