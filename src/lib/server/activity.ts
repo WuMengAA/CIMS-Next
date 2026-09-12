@@ -166,6 +166,7 @@ export interface UserOverview {
 	bio: string;
 	role: string;
 	status: string;
+	verified: boolean;
 	createdAt: string;
 	lastLoginAt: string | null;
 	lastLoginIp: string | null;
@@ -181,7 +182,7 @@ export function listUsersOverview(): UserOverview[] {
 	const now = Date.now();
 	const rows = getDb()
 		.prepare(
-			`SELECT u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status,
+			`SELECT u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status, u.verified,
 			        u.created_at, u.last_login_at, u.last_login_ip, u.login_count,
 			        (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id) AS session_count,
 			        (SELECT MAX(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_seen_at,
@@ -200,6 +201,7 @@ export function listUsersOverview(): UserOverview[] {
 			bio: r.bio || "",
 			role: r.role,
 			status: r.status,
+			verified: !!r.verified,
 			createdAt: r.created_at,
 			lastLoginAt: r.last_login_at ?? null,
 			lastLoginIp: r.last_login_ip ?? null,

@@ -9,7 +9,7 @@
 	import * as Select from "$lib/components/ui/select/index.js";
 	import { createTable, tableFeatures, rowSortingFeature, createSortedRowModel, sortFn_alphanumeric } from "@tanstack/svelte-table";
 	import type { SortingState } from "@tanstack/svelte-table";
-	import { ArrowUpDown, Plus, Trash2, KeyRound, Users, Search, Pencil, ShieldOff, Circle, X } from "@lucide/svelte";
+	import { ArrowUpDown, Plus, Trash2, KeyRound, Users, Search, Pencil, ShieldOff, Circle, X, Check } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { confirmDelete } from "$lib/components/admin/confirm.svelte";
 	import { ROLE_LABELS, type Role } from "$lib/permissions.js";
@@ -19,7 +19,7 @@
 
 	interface UserInfo {
 		username: string; displayName: string; email?: string; bio?: string; avatar?: string;
-		role: string; status?: string; createdAt: string;
+		role: string; status?: string; verified?: boolean; createdAt: string;
 		lastLoginAt?: string | null; lastLoginIp?: string | null; loginCount?: number;
 		sessionCount?: number; lastSeenAt?: string | null; online?: boolean; activityCount?: number;
 	}
@@ -144,6 +144,17 @@
 		const d = await res.json();
 		if (d.ok) { toast.success("已保存"); editTarget = null; load(); }
 		else toast.error(d.error || "保存失败");
+	}
+
+	async function approveUser(username: string) {
+		const res = await fetch("/api/auth", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action: "update_user", username, status: "active" })
+		});
+		const d = await res.json();
+		if (d.ok) { toast.success(`已批准 ${username}，账号已激活`); load(); }
+		else toast.error(d.error || "批准失败");
 	}
 
 	async function removeUser(username: string) {
@@ -333,6 +344,8 @@
 							<TableCell>
 								{#if (u.status || "active") === "active"}
 									<Badge variant="outline">正常</Badge>
+								{:else if u.status === "pending"}
+									<Badge variant="secondary" class="border-amber-500/40 bg-amber-500/15 text-amber-600">待验证</Badge>
 								{:else}
 									<Badge variant="destructive">已停用</Badge>
 								{/if}
@@ -346,6 +359,11 @@
 							<TableCell class="text-muted-foreground">{u.createdAt?.slice(0, 10)}</TableCell>
 							<TableCell>
 								<div class="flex items-center gap-1">
+									{#if u.status === "pending"}
+										<Button variant="default" size="sm" onclick={() => approveUser(u.username)} title="批准并激活该账号">
+											<Check class="mr-1 h-3.5 w-3.5" /> 批准
+										</Button>
+									{/if}
 									<Button variant="outline" size="sm" onclick={() => openEdit(u)}>
 										<Pencil class="mr-1 h-3.5 w-3.5" /> 编辑
 									</Button>

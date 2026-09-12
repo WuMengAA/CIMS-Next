@@ -1,7 +1,7 @@
 import { fail, redirect } from "@sveltejs/kit";
 import { message, superValidate } from "sveltekit-superforms";
 import { zod4 } from "sveltekit-superforms/adapters";
-import { verifyLogin, makeToken, markLogin } from "$lib/server/auth.js";
+import { verifyLogin, makeToken, markLogin, getUser } from "$lib/server/auth.js";
 import { recordActivity } from "$lib/server/activity.js";
 import { loginSchema } from "$lib/schemas/login.js";
 
@@ -19,6 +19,11 @@ export const actions = {
 
 		const user = verifyLogin(form.data.username, form.data.password);
 		if (!user) {
+			// 待验证账号：给出可操作提示，而不是笼统的「用户名或密码错误」。
+			const pendingUser = getUser(form.data.username);
+			if (pendingUser && pendingUser.status === "pending") {
+				return message(form, "账号待验证：请先完成邮箱验证再登录", { status: 403 });
+			}
 			return message(form, "用户名或密码错误", { status: 401 });
 		}
 
