@@ -7,7 +7,7 @@
 | # | 资源 | 类型 | 当前状态 | 契合度 |
 |---|------|------|----------|--------|
 | 1 | https://www.acofork.com/ | 目标站点 | ✅ 已复刻（设计、布局、导航） | 100% |
-| 2 | DESIGN.md（D:/Stellara/.md/design-md/claude/） | 设计规范 | ✅ 已落地（layout.css tokens） | 100% |
+| 2 | DESIGN.md（D:/Stelarith/_misc/md/design-md/claude/） | 设计规范 | ✅ 已落地（layout.css tokens） | 100% |
 | 3 | https://github.com/pd4d10/hashmd | Markdown 编辑器 | ⚠️ npm 包为空壳，未采用；已自研分栏实时预览编辑器 | 60% |
 | 4 | https://github.com/guillermolg00/morphicons | 图标变形动画 | ✅ 已集成（侧边栏触发器 Menu⇄PanelLeft） | 90% |
 | 5 | https://github.com/blessonism/grok-icon-study | 图标风格研究 | 🔲 待评估（图标美感参考） | 40% |

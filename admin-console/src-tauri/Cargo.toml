@@ -2,7 +2,7 @@
 name = "xingjikong"
 version = "0.1.0"
 description = "星集控 · 电教委员集控面板"
-authors = ["Stellara"]
+authors = ["Stelarith"]
 edition = "2021"
 rust-version = "1.77"
 
