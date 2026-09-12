@@ -1,7 +1,7 @@
 # Stelarith 站点设计基准（Design Spec）
 
 > 本文件是站点的统一排版 / 视觉 / 响应式规范。所有页面改动都应遵循此处约定。
-> 选型来源：`D:\Stellara\.md\design-md\vercel\DESIGN.md`（Vercel 暗色规范）。
+> 选型来源：`D:\Stelarith\_misc\md\design-md\vercel\DESIGN.md`（Vercel 暗色规范）。
 
 ## 1. 选型结论
 
@@ -207,7 +207,7 @@ B 站图床（`i*.hdslb.com`）等按 Referer 防盗链，带本站 Referer 会 
 ### 验证（CDP 真浏览器，非 curl）
 
 - 桌面 11/11、移动 18/18 全绿：`data-slot="sidebar"` 数量正确、汉堡按钮可见可点、抽屉滑入/滑出、导航后自动收起、内容不被 `fixed` 侧栏遮挡。
-- 截图存 `D:/Stellara/shots/`：`desktop-admin.png` / `mobile-admin-open.png` / `mobile-console-open.png` 等。
+- 截图存工程内 `shots/`：`desktop-admin.png` / `mobile-admin-open.png` / `mobile-console-open.png` 等（原 `D:/Stellara/shots/` 绝对路径已随迁址失效）。
 
 ## 7. Markdown 扩展语法（写作约定）
 

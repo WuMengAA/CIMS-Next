@@ -7,7 +7,7 @@
 
 - **定位**：校园点歌 / 歌曲请求平台，面向全校学生（Nuxt 4 + Nitro + PostgreSQL/Drizzle）。
 - **部署**：Vercel，提交即自动部署（约 3 分钟），无需手动运维。
-- **代码**：GitHub fork `wumengaa/voicehub`（已通过 Cloudflare 加速镜像 `gh.245959623.xyz` 克隆到本地 `D:\Stellara\voicehub-fork` 备查）。
+- **代码**：GitHub fork `wumengaa/voicehub`（已通过 Cloudflare 加速镜像 `gh.245959623.xyz` 克隆到本地 `D:\Stelarith\Stelarith-voicehub-fork` 备查）。
 - **公开 API**（已核实源码 `server/api/open/*`）：需 `x-api-key` 头，权限见下。
 
 ## 二、已核实的 voicehub 公开 API（真实契约）

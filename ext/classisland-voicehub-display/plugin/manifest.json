@@ -2,7 +2,7 @@
   "PluginId": "top.lumina.voicehub.display",
   "Name": "VoiceHub 点歌看板",
   "Description": "在 ClassIsland 上展示校园点歌站（voicehub）的实时播放与队列，并支持集控面板经 CIMS 推送上屏。",
-  "Author": "Stellara",
+  "Author": "Stelarith",
   "Version": "1.0.0",
   "RequireApiVersion": "1.0.0"
 }

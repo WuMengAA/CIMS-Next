@@ -4,7 +4,8 @@
 
 ## 一、项目位置与运行
 - **目录已改名：`acofork-clone` → `stelarith`**（此记忆同步修正）
-- 项目根目录：`D:\Stellara\stelarith-website\stelarith`
+- 项目根目录：`D:\Stelarith\Stelarith-website\stelarith`
+  （2026-09-12 容器治理：`D:\Stellara` → `D:\Stelarith`，工程名加 Stelarith 前缀）
 - 独立 git 仓库（目录名已统一为 stelarith，与品牌 Stelarith 一致；原 acofork-clone 命名已废弃）
 - 开发：`pnpm dev --port 8090`（历史上 5174/5175/5176/5177 可能残留旧进程；认准最新端口或先杀 node 再起）
 - 构建：`pnpm build`（须 exit 0 才算通过）
