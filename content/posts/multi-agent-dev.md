@@ -10,6 +10,7 @@ tags:
   - 工程
 owner: admin
 excerpt: 当多个 Agent 同时改同一个仓库，怎么不互相踩？记录星璃工程里"暂停协调、分面并发、回归验证"的协作纪律。
+cover: /covers/multi-agent-dev.svg
 ---
 
 星璃的工程不是一个人（或一个 Agent）从头写到尾。常常出现：一个 Agent 在改集控面板，另一个在接域名，第三个在写内容。多个 Agent 并发改同一个 git 仓库，**最大的风险不是写错，而是互相覆盖提交**。

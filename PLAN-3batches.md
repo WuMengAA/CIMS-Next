@@ -20,10 +20,10 @@
 
 ## 批次一：内容 & 社区地基（先做，撑起其余批次）
 **1. 文章完整支持 + 多用户上传**
-- frontmatter 扩展：`author`（用户名）、`coverImage`、`summary`、`updatedAt`（git log 取最后修改时间，构建期注入）。
+- frontmatter 扩展：`author`、`cover`（**注：实际字段名是 `cover`，不是 `coverImage`**）、`summary`/`excerpt`、`updatedAt`。✅ 已支持；10 篇文章的 `cover` 本轮回填，配合新增的「封面生成器」工具。
 - 作者主页 `/u/[username]`：资料卡（昵称/角色/简介/注册日）+ 其文章/项目/文档列表。
 - 流量统计：内存计数 + 落盘 `content/stats.json`（按 slug 的 PV、近 7 日序列）；详情页 `load` 自增 PV（登录态不计自身）。
-- SEO 强化：三个详情页 `<svelte:head>` 动态 `title`/`description`/`og:title`/`og:description`/`og:image`（封面或默认卡 1200x630）。
+- SEO 强化：三个详情页 `<svelte:head>` 动态 `title`/`description`/`og:title`/`og:description`/`og:image`（封面或默认卡 1200x630）。✅ `og:title`/`og:description` 一直有；`og:image` 此前因缺封面而缺失，**本轮回填 `cover` 字段后已启用（SVG；若追求社交平台最大兼容可另出 PNG）**。
 
 **2. 项目多用户 + 申请软件专页**
 - 项目加 `owner` 字段；登录用户可提交「软件专页申请」`/apply/project`（名称/简介/仓库/官网/分类）。
@@ -40,7 +40,7 @@
 ## 批次二：社交 & 论坛 & 归档
 **1. 论坛**
 - 模型 `ForumChannel` / `ForumThread` / `ForumPost`。
-- 路由 `/forum`、`/forum/[channel]`、`/forum/[channel]/[thread]`（详情+回复）。
+- 路由 `/forum`、`/forum/[channel]`、`/forum/[channel]/[thread]`（详情+回复）。✅ 路由早前已建；**但种子数据此前完全缺失，导致列表空白、`/forum/[slug]` 404。本轮回填 `content/forum-channels/threads/replies.json`（3 频道 + 3 帖 + 1 回复）后已可用**。
 - 用户自由发帖；建频道需 `moderate` 或审核；后台 `/admin/forum` 置顶/锁定/删除。
 
 **2. 友链 + 站长认证**
@@ -57,13 +57,14 @@
 
 ## 批次三：全能后台（审核 / 文件 / 安全）
 **1. 统一审核系统** `/admin/moderation`
-- 聚合：评论待审、反馈、文档纠错、项目申请、友链申请、论坛举报。
-- 统一「通过 / 拒绝 / 删除」，权限 `moderate` 或 `admin`。
+- ⚠️ **该路由在源码中不存在**（8090 上返回 303 是因为 admin 布局对未登录 `/admin/*` 统一重定向到登录页，属旧 build 残留，并非页面可用）。
+- 实际审核**分散**在独立后台页：`/admin/comments`、`/admin/feedback`、`/admin/doc-corrections`、`/admin/project-applications`、`/admin/link-applications`、`/admin/forum`，**未聚合为统一审核台**。`can(moderate/admin)` 权限沿用。
 
 **2. 文件管理** `/admin/media`
 - 上传（写 `content/media/` 或 `static/media/`）、列表、删除、复制引用路径；文章引用媒体。
 
 **3. 安全系统** `/admin/security`
+- ⚠️ **该路由在源码中不存在**。审计见 `/admin/activities`，安全设置见 `/admin/settings`（二者已建，但非计划里命名的 `/admin/security` 聚合页）。
 - 审计日志 `content/audit.json`：登录成败、管理员增删改发、token 失效。
 - 安全设置：登录失败锁定、IP 限频、会话时长；展示审计 + 可保存。
 

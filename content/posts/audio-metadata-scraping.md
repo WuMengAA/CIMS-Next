@@ -10,6 +10,7 @@ tags:
   - CUE
 owner: admin
 excerpt: 本地曲库里一堆"裸"音频文件怎么办？梳理文件名匹配、音频指纹、CUE 分轨三条刮削路线，以及它们背后的公开数据库与规范。
+cover: /covers/audio-metadata-scraping.svg
 ---
 
 用户的硬盘里，音乐文件往往是"裸"的：一首歌只有个 `track01.mp3`，没有封面、没有流派、没有歌词。本地播放器要做得体面，第一步就是把元数据补全——这件事叫**刮削（scraping）**。

@@ -10,6 +10,7 @@ tags:
   - 播报
 owner: admin
 excerpt: 怎么让一个本地内容站点既输出标准 RSS 订阅源，又能被 ClassIsland 当作校园信息屏的公告源拉取播报？记录 RSS 2.0 规范与 ClassIsland Web 公告格式的对接实践。
+cover: /covers/rss-classisland-broadcast.svg
 ---
 
 我的站点「Stelarith」是一个本地自托管的内容平台。除了正常的博客订阅，我还想让它**直接驱动一块信息屏**——用 ClassIsland 把站点公告、新文章、聚合新闻推送到桌面大屏。这就涉及两套格式：标准 RSS 2.0，和 ClassIsland 的 Web 公告源。

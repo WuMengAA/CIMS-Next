@@ -11,6 +11,7 @@ tags:
   - 音频
 owner: admin
 excerpt: 本地播放器不该被束缚在耳机里。记录星璃怎么用 DLNA（UPnP AV）把音乐推到客厅音箱，用 AirPlay 推到 Apple 设备——两种协议，一个目标：让音乐走出屏幕。
+cover: /covers/dlna-airplay-cast.svg
 ---
 
 大多数本地播放器只在自己窗口里出声。但用户的音箱在客厅、在书房的 HomePod、在书架上那台老功放。把音乐"推"过去，体验才完整。星璃做了两条投屏路线：DLNA 和 AirPlay。
