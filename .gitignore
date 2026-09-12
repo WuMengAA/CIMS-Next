@@ -30,9 +30,6 @@ vite.config.ts.timestamp-*
 # CMS data (sensitive / runtime-generated)
 /content/users.json
 /content/comments.json
-/content/forum-channels.json
-/content/forum-threads.json
-/content/forum-replies.json
 /content/link-applications.json
 /content/nav.json
 /content/settings.json
