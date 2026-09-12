@@ -10,6 +10,7 @@ tags:
   - 播放队列
 owner: admin
 excerpt: 本地播放器的状态又碎又交叉：队列、循环、均衡器、歌词偏移、扫描进度……记录星璃如何用 Riverpod 把"播放队列"这一类状态收进可测试的 Provider。
+cover: /covers/riverpod-playback-queue.svg
 ---
 
 本地播放器的状态很碎：播放队列、循环模式、均衡器、歌词行偏移、扫描进度、收藏。如果散落在各组件里，维护会失控。继上次聊完"为什么选 Riverpod"，这里落到具体——以**播放队列**为例，看怎么用 Provider 把状态收拢。

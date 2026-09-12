@@ -11,6 +11,7 @@ tags:
   - 架构
 owner: admin
 excerpt: 做一款"会思考"的本地音乐播放器，技术栈怎么选？从跨平台、状态管理到音频解码引擎，记录星璃·无限音乐画布的选型理由与权衡。
+cover: /covers/local-music-architecture.svg
 ---
 
 做一款本地音乐播放器，和做一款在线音乐 App 是两回事。本地播放器的核心约束是：**文件在用户硬盘上、离线可用、不依赖任何云端服务**，同时还要在 Windows / macOS / Linux / Android / iOS 上表现一致。下面记录我在「星璃·无限音乐画布」上的技术选型与理由。

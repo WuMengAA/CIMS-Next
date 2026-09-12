@@ -10,6 +10,7 @@ tags:
   - 架构
 owner: admin
 excerpt: DeepSeek Harness 用 Cordis 做插件内核：服务声明、依赖注入、可逆卸载。但这套优雅模型的代价是"代际敏感"——主程序一改名，插件就 pending 或硬崩。记录兼容排查思路。
+cover: /covers/dsh-plugin-architecture.svg
 ---
 
 DeepSeek Harness（dsh）把"一切皆插件"落到实处，内核是 Cordis 这套**时空可组合**的元框架。理解它的架构，才能看懂为什么插件会"突然不激活"。
