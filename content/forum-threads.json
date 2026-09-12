@@ -1,0 +1,37 @@
+[
+  {
+    "id": "ft_welcome",
+    "channelId": "fc_general",
+    "title": "欢迎来到星璃社区 👋",
+    "body": "这里是星璃·无限音乐画布的官方讨论区。\n\n在这里你可以：\n- 提产品建议与 Bug 反馈\n- 分享你的本地曲库整理心得\n- 聊聊「会思考的播放器」应该长什么样\n\n本帖置顶，新人先看一眼社区公约：友善、就事论事、不引战。",
+    "author": "admin",
+    "authorRole": "admin",
+    "createdAt": "2026-09-07T00:10:00.000Z",
+    "status": "published",
+    "pinned": true,
+    "views": 128,
+    "lastReplyAt": "2026-09-08T12:00:00.000Z"
+  },
+  {
+    "id": "ft_arch",
+    "channelId": "fc_dev",
+    "title": "为什么选 Flutter + Riverpod，而不是原生或 React Native？",
+    "body": "做一款「会思考」的本地音乐播放器，跨平台是硬需求（桌面 + 移动都要）。\n\n最终选了 Flutter + Riverpod，主要考量：\n1. 跨平台一致性（UI 与音频引擎统一）\n2. Riverpod 把播放队列、循环、均衡器、歌词偏移这类交叉状态收进可测试的 Provider\n3. 音频解码走 media_kit / just_audio 这类成熟生态，不重复造轮子\n\n想听听大家在状态管理上踩过的坑。",
+    "author": "admin",
+    "authorRole": "admin",
+    "createdAt": "2026-09-07T01:00:00.000Z",
+    "status": "published",
+    "views": 64
+  },
+  {
+    "id": "ft_cue",
+    "channelId": "fc_share",
+    "title": "分享：CUE 分轨整理的踩坑清单",
+    "body": "很多无损碟是整轨 + CUE 文件。分轨时几个常见坑：\n\n- CUE 里编码不是 UTF-8（尤其 GBK），先转码否则曲名乱码\n- FILE 字段路径与实际音频文件名不一致\n- 索引偏移（INDEX 01）算错导致每首多了前奏静音\n\n星璃的刮削路线里把 CUE 当作一等公民处理，欢迎补充你遇到的怪 CUE。",
+    "author": "admin",
+    "authorRole": "admin",
+    "createdAt": "2026-09-07T02:00:00.000Z",
+    "status": "published",
+    "views": 39
+  }
+]
