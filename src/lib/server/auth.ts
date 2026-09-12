@@ -28,7 +28,10 @@ export interface User {
 	email?: string;
 	avatar?: string;
 	bio?: string;
-	status?: "active" | "disabled";
+	status?: "active" | "disabled" | "pending";
+	verified?: boolean;
+	verifyToken?: string;
+	verifyTokenExpires?: string;
 	updatedAt?: string;
 	lastLoginAt?: string | null;
 	lastLoginIp?: string | null;
@@ -53,6 +56,9 @@ interface UserRow {
 	bio: string;
 	role: string;
 	status: string;
+	verified: number;
+	verify_token: string;
+	verify_token_expires: string;
 	password_hash: string;
 	salt: string;
 	created_at: string;
@@ -71,7 +77,10 @@ function rowToUser(r: UserRow): User {
 		avatar: r.avatar || "",
 		bio: r.bio || "",
 		role: (r.role as Role) || "user",
-		status: r.status === "disabled" ? "disabled" : "active",
+		status: r.status === "active" ? "active" : r.status === "disabled" ? "disabled" : "pending",
+		verified: !!r.verified,
+		verifyToken: r.verify_token || "",
+		verifyTokenExpires: r.verify_token_expires || "",
 		passwordHash: r.password_hash,
 		salt: r.salt,
 		createdAt: r.created_at,
@@ -82,7 +91,7 @@ function rowToUser(r: UserRow): User {
 	};
 }
 
-const SELECT_USER = `SELECT id, username, display_name, email, avatar, bio, role, status,
+const SELECT_USER = `SELECT id, username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires,
 	password_hash, salt, created_at, updated_at, last_login_at, last_login_ip, login_count FROM users`;
 
 export function getUsers(): User[] {
@@ -117,7 +126,7 @@ export function verifyLogin(username: string, password: string): User | null {
 	if (!user) return null;
 	const hash = hashPassword(password, user.salt);
 	if (hash !== user.passwordHash) return null;
-	if (user.status === "disabled") return null;
+	if (user.status !== "active") return null; // 停用 / 待验证均不可登录
 	return user;
 }
 
@@ -139,11 +148,98 @@ export function createUser(
 	const ts = nowIso();
 	getDb()
 		.prepare(
-			`INSERT INTO users (username, display_name, email, avatar, bio, role, status, password_hash, salt, created_at, updated_at, login_count)
-			 VALUES (?, ?, ?, '', ?, ?, 'active', ?, ?, ?, ?, 0)`
+			`INSERT INTO users (username, display_name, email, avatar, bio, role, status, verified, password_hash, salt, created_at, updated_at, login_count)
+			 VALUES (?, ?, ?, '', ?, ?, 'active', 1, ?, ?, ?, ?, 0)`
 		)
 		.run(name, displayName.trim() || name, extra.email?.trim() || "", extra.bio?.trim() || "", role, hashPassword(password, salt), salt, ts, ts);
 	return { ok: true };
+}
+
+/** 按邮箱查重（仅返回是否存在，不泄露明细）。 */
+export function isEmailTaken(email: string): boolean {
+	if (!email) return false;
+	const row = getDb().prepare("SELECT id FROM users WHERE email = ?").get(email);
+	return !!row;
+}
+
+/** 按邮箱取用户（用于重发验证）。 */
+export function getUserByEmail(email: string): User | null {
+	if (!email) return null;
+	const row = getDb().prepare(`${SELECT_USER} WHERE email = ?`).get(email) as unknown as UserRow | undefined;
+	return row ? rowToUser(row) : null;
+}
+
+const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 开放注册：创建「待验证」账号（status=pending）。
+ * 默认角色 user，无需管理员介入；验证邮箱或管理员批准后方可登录。
+ */
+export function registerUser(
+	username: string,
+	email: string,
+	password: string,
+	displayName?: string
+): { ok: boolean; error?: string; verifyToken?: string; username?: string; email?: string } {
+	const name = (username || "").trim();
+	const mail = (email || "").trim();
+	const nick = (displayName || "").trim();
+	if (!name || !password) return { ok: false, error: "用户名和密码必填" };
+	if (password.length < 6) return { ok: false, error: "密码至少 6 位" };
+	if (!/^[a-zA-Z0-9_\u4e00-\u9fff]{2,20}$/.test(name)) {
+		return { ok: false, error: "用户名 2-20 位，仅含字母 / 数字 / 下划线 / 汉字" };
+	}
+	if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) {
+		return { ok: false, error: "邮箱格式不正确" };
+	}
+	if (getUser(name)) return { ok: false, error: "用户名已存在" };
+	if (mail && isEmailTaken(mail)) return { ok: false, error: "该邮箱已被注册" };
+
+	const salt = crypto.randomBytes(16).toString("hex");
+	const token = crypto.randomBytes(32).toString("base64url");
+	const ts = nowIso();
+	const exp = new Date(Date.now() + VERIFY_TTL_MS).toISOString();
+	getDb()
+		.prepare(
+			`INSERT INTO users
+			  (username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires, password_hash, salt, created_at, updated_at, login_count)
+			 VALUES (?, ?, ?, '', '', 'user', 'pending', 0, ?, ?, ?, ?, ?, ?, 0)`
+		)
+		.run(name, nick || name, mail, token, exp, hashPassword(password, salt), salt, ts, ts);
+	return { ok: true, verifyToken: token, username: name, email: mail };
+}
+
+/** 消费验证令牌：激活账号（status=active, verified=1）。 */
+export function verifyEmail(token: string): { ok: boolean; error?: string } {
+	if (!token) return { ok: false, error: "缺少验证令牌" };
+	const db = getDb();
+	const row = db.prepare("SELECT id, status, verify_token_expires FROM users WHERE verify_token = ?").get(token) as
+		| { id: number; status: string; verify_token_expires: string }
+		| undefined;
+	if (!row) return { ok: false, error: "验证链接无效或已使用" };
+	if (row.status !== "pending") return { ok: false, error: "账号已激活" };
+	const exp = Date.parse(row.verify_token_expires || "");
+	if (!Number.isFinite(exp) || exp < Date.now()) {
+		return { ok: false, error: "验证链接已过期，请重新获取" };
+	}
+	db.prepare("UPDATE users SET status = 'active', verified = 1, verify_token = '', verify_token_expires = '', updated_at = ? WHERE id = ?").run(
+		nowIso(),
+		row.id
+	);
+	return { ok: true };
+}
+
+/** 重发验证令牌（按用户名或邮箱）。 */
+export function resendVerification(identifier: string): { ok: boolean; error?: string; verifyToken?: string; email?: string } {
+	const user = getUser(identifier) || getUserByEmail(identifier || "");
+	if (!user) return { ok: false, error: "账号不存在" };
+	if (user.status === "active" && user.verified) return { ok: false, error: "账号已激活" };
+	const token = crypto.randomBytes(32).toString("base64url");
+	const exp = new Date(Date.now() + VERIFY_TTL_MS).toISOString();
+	getDb()
+		.prepare("UPDATE users SET verify_token = ?, verify_token_expires = ?, updated_at = ? WHERE id = ?")
+		.run(token, exp, nowIso(), user.id ?? -1);
+	return { ok: true, verifyToken: token, email: user.email };
 }
 
 export function deleteUser(username: string): { ok: boolean; error?: string } {
@@ -226,6 +322,10 @@ export function adminUpdateUser(
 		user.id ?? -1
 	);
 	if (patch.status === "disabled") revokeSessions(username);
+	// 管理员批准（置 active）等价于完成验证。
+	if (patch.status === "active") {
+		getDb().prepare("UPDATE users SET verified = 1 WHERE id = ?").run(user.id ?? -1);
+	}
 	return { ok: true };
 }
 

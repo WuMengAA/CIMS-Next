@@ -124,6 +124,11 @@
 			</Button>
 		</form>
 
+		<p class="text-center text-sm text-muted-foreground">
+			还没有账号？
+			<a href="/register" class="text-primary underline underline-offset-4">注册一个</a>
+		</p>
+
 		<p class="text-center text-xs text-muted-foreground">首次登录默认密码为生成值，请立即修改（或通过 ADMIN_PASSWORD 环境变量设置）</p>
 	</div>
 </div>

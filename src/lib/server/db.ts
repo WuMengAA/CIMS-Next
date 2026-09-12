@@ -117,13 +117,27 @@ function hashPassword(password: string, salt: string): string {
 function ensureDb(): DatabaseSync {
 	if (_db) return _db;
 	fs.mkdirSync(CONTENT_DIR, { recursive: true });
-	_db = new DatabaseSync(DB_FILE);
+	const db = new DatabaseSync(DB_FILE);
 	// WAL：读写并发更友好；busy_timeout 规避偶发锁等待。
-	_db.exec("PRAGMA journal_mode = WAL;");
-	_db.exec("PRAGMA foreign_keys = ON;");
-	_db.exec("PRAGMA busy_timeout = 5000;");
-	_db.exec(SCHEMA);
-	seed(_db);
+	db.exec("PRAGMA journal_mode = WAL;");
+	db.exec("PRAGMA foreign_keys = ON;");
+	db.exec("PRAGMA busy_timeout = 5000;");
+	db.exec(SCHEMA);
+	// 注册 / 邮箱验证所需字段（向后兼容旧库：缺失则安全新增）。
+	// ⚠️ SQLite 的 ALTER TABLE ADD COLUMN **不支持** IF NOT EXISTS，直接写会抛语法错误；
+	//    必须先用 PRAGMA table_info 探测列是否存在，再决定是否 ALTER。
+	const cols = new Set(
+		(db.prepare("PRAGMA table_info(users)").all() as { name: string }[]).map((c) => c.name)
+	);
+	if (!cols.has("verified")) db.exec("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0");
+	if (!cols.has("verify_token")) db.exec("ALTER TABLE users ADD COLUMN verify_token TEXT NOT NULL DEFAULT ''");
+	if (!cols.has("verify_token_expires")) db.exec("ALTER TABLE users ADD COLUMN verify_token_expires TEXT NOT NULL DEFAULT ''");
+	seed(db);
+	// 历史 active 账号（本就不经邮箱验证即可登录，含种子 admin）统一视为已验证；
+	// 新注册的 pending 用户不受影响（验证或管理员批准后才会变 active 且 verified=1）。
+	db.exec("UPDATE users SET verified = 1 WHERE status = 'active' AND verified = 0");
+	// 全部初始化成功后再缓存实例：避免半初始化（迁移失败）的 DB 被后续调用复用。
+	_db = db;
 	return _db;
 }
 

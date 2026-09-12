@@ -12,7 +12,10 @@ import {
 	getUser,
 	revokeSessions,
 	verifyToken,
-	markLogin
+	markLogin,
+	registerUser,
+	verifyEmail,
+	resendVerification
 } from "$lib/server/auth.js";
 import { listUsersOverview, recordActivity } from "$lib/server/activity.js";
 import type { Role } from "$lib/permissions.js";
@@ -36,6 +39,11 @@ export async function POST(event: RequestEvent) {
 		}
 		const user = verifyLogin(username, password);
 		if (!user) {
+			// 区分「待验证」与「密码错误」：pending 用户给出可操作提示，其余统一按凭证错误处理。
+			const pendingUser = getUser(username);
+			if (pendingUser && pendingUser.status === "pending") {
+				return json({ error: "账号待验证：请先点击邮箱验证链接完成激活" }, { status: 403 });
+			}
 			return json({ error: "用户名或密码错误" }, { status: 401 });
 		}
 		const token = makeToken(user, meta);
@@ -62,6 +70,38 @@ export async function POST(event: RequestEvent) {
 		}
 		cookies.delete("admin_token", { path: "/" });
 		return json({ ok: true });
+	}
+
+	if (action === "register") {
+		const result = registerUser(body.username, body.email, body.password, body.displayName);
+		if (!result.ok) return json({ error: result.error }, { status: 400 });
+		recordActivity({
+			userId: 0, username: result.username || "", action: "user_register",
+			detail: "开放注册（待验证）", ip: meta.ip, userAgent: meta.userAgent
+		});
+		return json({
+			ok: true,
+			username: result.username,
+			email: result.email,
+			// 本地无 SMTP 时直接回传令牌，方便页面生成验证链接；部署到邮件环境后该字段应收敛。
+			verifyToken: result.verifyToken
+		});
+	}
+
+	if (action === "verify") {
+		const result = verifyEmail(body.token);
+		if (!result.ok) return json({ error: result.error }, { status: 400 });
+		return json({ ok: true });
+	}
+
+	if (action === "resend_verification") {
+		const result = resendVerification(body.identifier);
+		if (!result.ok) return json({ error: result.error }, { status: 400 });
+		recordActivity({
+			userId: 0, username: body.identifier || "", action: "user_verify_resend",
+			ip: meta.ip, userAgent: meta.userAgent
+		});
+		return json({ ok: true, email: result.email, verifyToken: result.verifyToken });
 	}
 
 	// 以下动作均需登录
