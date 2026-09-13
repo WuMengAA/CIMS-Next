@@ -34,6 +34,21 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
   </ItemGroup>
 
+  <!--
+    集控面板入口需要 Avalonia 的托盘菜单类型（NativeMenuItem 等）。
+    运行时 ClassIsland 已加载这些程序集，此处仅编译期引用（HintPath 指向运行版目录，随部署环境替换）。
+  -->
+  <ItemGroup>
+    <Reference Include="Avalonia.Base">
+      <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Base.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Avalonia.Controls">
+      <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Controls.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- 插件清单：ClassIsland 要求根目录存在 manifest.yml（YAML），并随构建复制到输出目录 -->
   <ItemGroup>
     <Content Include="manifest.yml" CopyToOutputDirectory="PreserveNewest" />

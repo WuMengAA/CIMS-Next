@@ -5,6 +5,7 @@ using ClassIsland.Core;
 using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Abstractions.Services;
 using ClassIsland.Core.Attributes;
+using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -49,7 +50,14 @@ public class StelarithControlPlugin : PluginBase, INotificationProvider
         var syncOptions = StelarithSyncOptions.Load();
         services.AddSingleton(syncOptions);
         services.AddHostedService<StelarithSyncService>();
+        // 命令轮询自取后台服务：周期拉取 CIMS 命令队列（command_queue），
+        // 执行 stelarith_task / 触发配置刷新。绕开本机未激活集控时 gRPC 命令通道不触发的问题。
+        services.AddHostedService<StelarithCommandPollerService>();
         services.AddHostedService<StelarithCommandHost>();
+        // 集控面板入口（托盘右键菜单 / 设置侧边栏）
+        services.AddHostedService<StelarithPanelService>();
+        // 设置侧边栏：注册「星璃·集控面板」设置页（External 类别，含打开面板入口）
+        services.AddSettingsPage<StelarithPanelSettingsPage>();
         services.AddSingleton<INotificationProvider>(this);
     }
 
@@ -104,6 +112,42 @@ public static class StelarithDispatch
         catch
         {
             // 非本插件指令（例如普通集控命令），忽略
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 从命令队列载荷中提取 stelarith_task。兼容两种打包位置：
+    ///   1) 载荷根级含 "stelarith_task"（如轮询直接填的任务原文）；
+    ///   2) SendNotification 的 NotificationPayload —— stelarith_task 打包在其
+    ///      MessageContent 字段内（面板经 send-notification 下发的形态）。
+    /// 均取不到则返回 null。
+    /// </summary>
+    public static StelarithTask? ExtractTask(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        // 直接根级解析
+        var direct = Parse(raw);
+        if (direct is not null) return direct;
+        // 兼容 NotificationPayload.MessageContent 内嵌
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
+                doc.RootElement.TryGetProperty("MessageContent", out var mc) &&
+                mc.ValueKind == JsonValueKind.String)
+            {
+                var nestedValue = mc.GetString();
+                if (nestedValue is not null)
+                {
+                    var nested = Parse(nestedValue);
+                    if (nested is not null) return nested;
+                }
+            }
+        }
+        catch
+        {
+            // 忽略，返回 null
         }
         return null;
     }

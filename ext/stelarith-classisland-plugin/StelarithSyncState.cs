@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace StelarithControlPlugin;
 
@@ -81,6 +83,9 @@ public static class StelarithSyncState
 {
     private static StelarithSyncSnapshot _current = new() { Ok = false };
     private static readonly object Lock = new();
+    // 即时刷新信号：轮询服务收到 DataUpdated 时释放，同步服务据此立即拉取一次，
+    // 而不必干等下一个 RefreshInterval 周期。
+    private static readonly SemaphoreSlim RefreshSignal = new(0);
 
     public static StelarithSyncSnapshot Current
     {
@@ -91,4 +96,17 @@ public static class StelarithSyncState
     {
         lock (Lock) _current = snap;
     }
+
+    /// <summary>请求一次即时刷新（非阻塞；最多累积一个待刷新信号）。</summary>
+    public static void RequestRefresh()
+    {
+        if (RefreshSignal.CurrentCount == 0)
+        {
+            try { RefreshSignal.Release(); }
+            catch (SemaphoreFullException) { /* 已有一个待处理信号，忽略 */ }
+        }
+    }
+
+    /// <summary>供同步服务等待 "即时刷新请求" 的异步句柄。</summary>
+    internal static Task WaitForRefreshAsync(CancellationToken ct) => RefreshSignal.WaitAsync(ct);
 }

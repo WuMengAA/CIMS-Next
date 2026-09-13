@@ -38,11 +38,16 @@ dotnet build -c Release
 
 ## 3. 部署
 
-将编译产物 `StelarithControlPlugin.dll`（及依赖）放入：
+将编译产物 `StelarithControlPlugin.dll`（及依赖 `*.pdb` / `*.deps.json`）放入 ClassIsland 的**数据目录**下的插件目录：
 
 ```
-%APPDATA%\ClassIsland\Plugins\StelarithControlPlugin\
+<ClassIsland 数据目录>\Plugins\StelarithControlPlugin\
 ```
+
+> 本机实测数据目录为 `D:\Classlsland\data`，即部署到：
+> `D:\Classlsland\data\Plugins\StelarithControlPlugin\`
+> （注意不是 `%APPDATA%\ClassIsland\Plugins\`——ClassIsland 2.x 便携/自定义数据目录下，插件随数据目录走。）
+> 同目录需放置 `manifest.yml` 与 `stelarith-sync.json`。
 
 重启 ClassIsland 后，带 `[PluginEntrance]` 特性的程序集会被自动扫描加载。
 
@@ -104,13 +109,32 @@ CIMS 经集控服务器下发客户端命令，由 **`IManagementServerConnectio
 
 ## 7. 主动同步（cshua）
 
-过去插件只**被动**接收命令，无法主动感知 CIMS 已下发的课表/组件配置变化。本版本新增后台 `StelarithSyncService`（`IHostedService`），按固定间隔主动拉取并刷新展示快照：
+过去插件只**被动**接收命令，无法主动感知 CIMS 已下发的课表/组件配置变化。本版本新增后台 `StelarithSyncService`（`IHostedService`），按固定间隔主动拉取并刷新展示快照。
 
-- **拉取目标**：CIMS 客户端应用（`ClientAppBase`，默认 `http://127.0.0.1:8096`）；
-- **接口**：`GET /api/v1/client/{ClientUid}/manifest`、`GET /api/v1/client/ClassPlan?name=...`、`GET /api/v1/client/Components?name=...`；
-- **租户识别**：客户端应用 `TenantMiddleware` 按 `Host: <Slug>.<BaseDomain>` 识别租户，故每跳都显式带 `Host` 头；资源接口会 302 到 `/get?token=...`，同步服务**手动跟随重定向并逐跳保持 Host**（HttpClient 自动重定向会改回 `Host: 127.0.0.1:8096` 导致 403）；
+**对齐 ClassIsland 官方集控逻辑（manifest 驱动）**：
+
+- **第 1 步 · 取清单**：`GET /api/v1/client/{ClientUid}/manifest`，得到各资源的 `*Source.Value`（形如 `http://<host>/api/v1/client/ClassPlan?name=default_classplan`）与版本；
+- **第 2 步 · 按清单取资源**：遍历清单中所有 `*Source`，逐个取用（`ClassPlan` / `TimeLayout` / `Subjects` / `DefaultSettings` / `Policy` / `Components` / `Credentials`）——**资源集合由清单决定，插件不写死资源名/路径**，服务端增删资源无需改插件；
+- **租户识别**：客户端应用 `TenantMiddleware` 按 `Host: <Slug>.<BaseDomain>` 识别租户，故每跳都显式带 `Host` 头；资源接口会 302 到 `/get?token=...`，同步服务**手动跟随重定向并逐跳保持 Host**（HttpClient 自动重定向会改回 `Host: 127.0.0.1:8096`，`curl -L` 同样会丢 Host，导致假 404）；
+- **容错**：`resources refreshed X/Y ok` 诊断行会写明本轮成功项数；单项失败不影响其余项，下个周期重试；
 - **结果**：最新快照存于线程安全的 `StelarithSyncState.Current`（含 `ManifestJson` / `ClassPlanJson` / `ComponentsJson` / `At` / `Ok`），供通知提供方或后续 UI 读取展示；
-- **配置**：参数经插件目录下的 `stelarith-sync.json` 覆盖（不存在则用默认值，默认值对齐 e2e 环境 `slug=e2e-school`、`ClientUid=lab-pc-001`），无需重新编译即可按真实环境调整 `Slug` / `ClientUid` / `BaseDomain` / `RefreshIntervalSeconds` 等。
+- **配置**：参数经插件目录下的 `stelarith-sync.json` 覆盖（不存在则用默认值）。本机实测部署为 `Slug=demo-class`、`ClientUid=lab-pc-001`、`BaseDomain=localhost`。
 
 > 部署时务必把真实环境的 `Slug`、`ClientUid` 写入 `stelarith-sync.json`（与 DLL 同目录），否则拉取会因租户/设备不匹配而失败（日志可见 warning）。
+
+### 7.1 关键坑：资源缺失 → 后端 IP 自封 → 轮询 429
+
+CIMS 客户端/管理/Admin 三个 app 均挂载 `CCProtectMiddleware`：同一 IP 在 60s 窗口内产生 **≥5 次 ≥400 响应**即被封禁（返回 429，`code=100429`），封禁期间**所有**该 IP 请求（含命令轮询）一并被拒。
+
+因此**不能让同步去请求不存在的资源**——每轮 2 个 404 就足以在 60s 内触发封禁，把命令通道一起拖死。正确做法是保证租户资源齐备（见 `CIMS-backend/rebuild_min_tenant.py` 的官方 7 类资源初始化），让 manifest 声明的资源全部返回 200。
+
+### 7.2 兜底：宿主启动异常下的守护线程
+
+ClassIsland 宿主在逐个启动插件的 `IHostedService` 时，若某个第三方插件（本机为 AIIsland）在 `StartAsync` 抛异常（如跨线程访问 Avalonia 属性 "Call from invalid thread"），宿主对 `IHostedService` 的启动序列会被中断，导致本插件的 `BackgroundService` **可能不被启动**。
+
+为此 `StelarithSyncService` / `StelarithCommandPollerService` / `StelarithPanelService` 均采用**静态构造函数拉起后台守护线程**的范式，不依赖宿主 `StartAsync`：
+
+- 静态构造函数开线程 + 静态服务定位器（构造时把 `opt`/`logger` 存入静态字段）；
+- 与宿主路径（`ExecuteAsync`）用静态锁互斥，保证同一时刻只有一条循环在跑；
+- 诊断走**文件**（`AppContext.BaseDirectory` 下 `ste-sync-diag.log` / `ste-poller-diag.log` / `ste-panel-diag.log`），不依赖宿主 logger（宿主启动异常时 logger 可能被 Dispose）。
 
