@@ -5,7 +5,7 @@
 	import ConfirmHost from "$lib/components/admin/confirm-host.svelte";
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import { pageIn } from "$lib/transition.js";
-	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity } from "@lucide/svelte";
+	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText } from "@lucide/svelte";
 
 	let { children }: { children: Snippet } = $props();
 
@@ -20,6 +20,7 @@
 		{ title: "博客文章", url: "/admin/posts", icon: BookOpen },
 		{ title: "项目管理", url: "/admin/projects", icon: Rocket },
 		{ title: "文档资料", url: "/admin/docs", icon: BookMarked },
+		{ title: "页面管理", url: "/admin/pages", icon: FileText },
 		{ title: "媒体库", url: "/admin/media", icon: Image },
 		{ title: "友情链接", url: "/admin/links", icon: Link },
 		{ title: "友链申请", url: "/admin/link-applications", icon: Inbox },
@@ -34,7 +35,8 @@
 		{ title: "用户管理", url: "/admin/users", icon: UsersRound },
 		{ title: "活动中心", url: "/admin/activities", icon: Activity },
 		{ title: "站点设置", url: "/admin/settings", icon: Settings },
-		{ title: "集控面板", url: "/admin/console", icon: MonitorSmartphone }
+		{ title: "集控面板", url: "/admin/console", icon: MonitorSmartphone },
+		{ title: "服务存活", url: "/admin/health", icon: Activity }
 	];
 
 	const currentPath = $derived(page.url.pathname);
@@ -72,14 +74,14 @@
   纵向流里，宽度失效、高度为 0，fixed 的侧栏就直接盖在内容上（实测内容区
   x=0 w=1280，左侧统计卡被吃掉一大块，连顶栏按钮都点不到）。
   所以这里不靠 gap，改为由下面的 Inset 自己让出 md:pl-(--sidebar-width)，
-  并用 peer-data-[collapsible=offcanvas] 让它跟着折叠一起收回（两侧同 300ms，动画合拍）。
+  并用 peer-data-[collapsible=icon] 让它跟着折叠一起收回（两侧同 300ms，动画合拍）。
 -->
 <Sidebar.Root class="bg-sidebar text-sidebar-foreground">
 	<ConfirmHost />
 	<Sidebar.Header>
 		<a href="/" class="flex items-center gap-3">
 			<div class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-semibold text-primary-foreground">S</div>
-			<div class="flex flex-col gap-0.5 leading-none">
+			<div class="flex flex-col gap-0.5 leading-none group-data-[collapsible=icon]:hidden">
 				<span class="font-heading text-base font-semibold">Stelarith CMS</span>
 				<span class="text-xs text-muted-foreground">内容管理</span>
 			</div>
@@ -92,7 +94,7 @@
 				<Sidebar.Menu>
 				{#each nav as item (item.url)}
 					<Sidebar.MenuItem>
-						<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)}>
+						<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)} tooltipContent={item.title}>
 							<item.icon />
 							<span>{item.title}</span>
 						</Sidebar.MenuButton>
@@ -106,7 +108,7 @@
 		<!-- 前台 / 后台滑块：后台侧固定停在「后台」，点「前台」回站点 -->
 		<ViewSwitch current="admin" class="mx-1 group-data-[collapsible=icon]:hidden" />
 		<div class="flex items-center justify-between px-3">
-			<p class="text-xs text-muted-foreground">Stelarith CMS</p>
+			<p class="text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">Stelarith CMS</p>
 			<button onclick={logout} class="text-xs text-muted-foreground hover:text-destructive">退出登录</button>
 		</div>
 	</Sidebar.Footer>
@@ -114,7 +116,7 @@
 	<Sidebar.Rail />
 </Sidebar.Root>
 
-<Sidebar.Inset class="transition-[padding] duration-300 ease-in-out md:pl-(--sidebar-width) md:peer-data-[collapsible=offcanvas]:pl-0">
+<Sidebar.Inset class="transition-[padding] duration-300 ease-in-out md:pl-(--sidebar-width) md:peer-data-[collapsible=icon]:pl-(--sidebar-width-icon)">
 	<Sidebar.Header class="border-b border-border px-3 md:px-6">
 		<div class="flex items-center justify-between gap-2">
 			<div class="flex min-w-0 items-center gap-2">

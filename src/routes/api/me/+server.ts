@@ -14,6 +14,8 @@ export function GET(event: RequestEvent) {
 		bio: user.bio || "",
 		avatar: user.avatar || "",
 		role: user.role,
+		className: user.className || "",
+		gradeName: user.gradeName || "",
 		createdAt: user.createdAt,
 		lastLoginAt: user.lastLoginAt ?? null,
 		loginCount: user.loginCount ?? 0
@@ -31,7 +33,9 @@ export async function PUT(event: RequestEvent) {
 		displayName: body.displayName,
 		email: body.email,
 		bio: body.bio,
-		avatar: body.avatar
+		avatar: body.avatar,
+		className: body.className,
+		gradeName: body.gradeName
 	});
 	if (!r.ok) return json({ error: r.error }, { status: 400 });
 
@@ -50,17 +54,19 @@ export async function PUT(event: RequestEvent) {
 	return json({
 		ok: true,
 		user: fresh
-			? {
-					username: fresh.username,
-					displayName: fresh.displayName,
-					email: fresh.email,
-					bio: fresh.bio,
-					avatar: fresh.avatar,
-					role: fresh.role,
-					createdAt: fresh.createdAt,
-					lastLoginAt: fresh.lastLoginAt ?? null,
-					loginCount: fresh.loginCount ?? 0
-				}
-			: null
+	? {
+				username: fresh.username,
+				displayName: fresh.displayName,
+				email: fresh.email,
+				bio: fresh.bio,
+				avatar: fresh.avatar,
+				role: fresh.role,
+				className: fresh.className || "",
+				gradeName: fresh.gradeName || "",
+				createdAt: fresh.createdAt,
+				lastLoginAt: fresh.lastLoginAt ?? null,
+				loginCount: fresh.loginCount ?? 0
+			}
+		: null
 	});
 }

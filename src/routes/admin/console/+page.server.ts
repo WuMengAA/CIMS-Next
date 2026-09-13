@@ -17,6 +17,14 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	return {
 		role: u.role,
 		user: u.displayName || u.username,
+		// 全权接入 website 账号信息：把当前登录用户完整资料下发面板。
+		// 面板内嵌态与宿主同源，还会实时拉一次 /api/me 校准；这里先给一批即时的，
+		// 让顶栏身份区在首帧即可渲染（不依赖异步请求）。
+		email: u.email || "",
+		avatar: u.avatar || "",
+		bio: u.bio || "",
+		className: u.className || "",
+		gradeName: u.gradeName || "",
 		can: {
 			control: can(u.role, "controlDevice"),
 			remote: can(u.role, "remoteControl"),

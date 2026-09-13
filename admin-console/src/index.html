@@ -14,11 +14,12 @@
     <button id="btn-nav" class="ghost nav-toggle" type="button" aria-label="切换侧边栏" aria-controls="sidebar" aria-expanded="false">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
     </button>
-    <div class="brand" data-page-node-id="uLfQpdaaZ1zwb4mn3dhmso">星集控 <span class="sub" data-page-node-id="TYEag7OplHmlWhh7TuuK1V">· 电教委员面板</span></div>
+    <div class="brand" data-page-node-id="uLfQpdaaZ1zwb4mn3dhmso"><span class="brand-mark">星</span>星集控 <span class="sub" data-page-node-id="TYEag7OplHmlWhh7TuuK1V">· 电教委员面板</span></div>
   </div>
   <div class="top-right" data-page-node-id="8s9NDE4HPI70Ee0E90H2DP">
     <select id="class-select" title="切换班级" data-page-node-id="QJCCVuqm3lvVWDGRSdHNPC"></select>
     <span id="conn" class="conn offline" data-page-node-id="IaT0vCvEUryaUyM7OrV5l3">未连接</span>
+    <span id="perm-chip" class="chip hidden" title="本账号在集控内可执行的操作"></span>
     <span id="user-chip" class="chip" data-page-node-id="FREbkvqQHC5NWH9KEu6SC8">未登录</span>
     <button id="btn-settings" class="ghost" data-page-node-id="rh2L0vzZ5D7RIJY5cf045A">设置</button>
   </div>
@@ -30,16 +31,16 @@
 <div id="body" data-page-node-id="g8B8DjvgiO3Hh5oURGsfCi">
   <nav id="sidebar" data-page-node-id="Lqj1qeWgMDM8yoAxs1IGl5">
     <button class="nav active" data-view="dashboard" data-page-node-id="Bt2ky5bVuYrv3yLBLcNOfF"><i data-page-node-id="FlU69HKU7dFlC46SaQpKvW"></i>总览</button>
-    <button class="nav" data-view="schedule" data-page-node-id="AHPw4Aejc27gKVk2YsEqx7"><i data-page-node-id="vy5vu1T3vuM3FPc2s57QUU"></i>课表</button>
-    <button class="nav" data-view="config" data-page-node-id="2lCqa0R71FCMWDtHHjGRkJ"><i data-page-node-id="LA3CjV957XYldSaI6dT0Fe"></i>配置下发</button>
-    <button class="nav" data-view="plugins" data-page-node-id="mDpnZuML9Gi3aXFdDB1Tg7"><i data-page-node-id="GHD0yfFaBrYlZcNWCjC86S"></i>插件</button>
-    <button class="nav" data-view="devices" data-page-node-id="YSFURThKJPl3BJAj2fEhnh"><i data-page-node-id="5sBymMT0B0Amzbq9gEBvFx"></i>设备控制</button>
-    <button class="nav" data-view="remote" data-page-node-id="kR3mZxQvLp9Wc2bN7uT8Ya"><i data-page-node-id="pQ1wE7rYt5Uu0oI3sD6hG"></i>远程控制</button>
+    <button class="nav" data-view="schedule" data-need="control" data-page-node-id="AHPw4Aejc27gKVk2YsEqx7"><i data-page-node-id="vy5vu1T3vuM3FPc2s57QUU"></i>课表</button>
+    <button class="nav" data-view="config" data-need="control" data-page-node-id="2lCqa0R71FCMWDtHHjGRkJ"><i data-page-node-id="LA3CjV957XYldSaI6dT0Fe"></i>配置下发</button>
+    <button class="nav" data-view="plugins" data-need="manage" data-page-node-id="mDpnZuML9Gi3aXFdDB1Tg7"><i data-page-node-id="GHD0yfFaBrYlZcNWCjC86S"></i>插件</button>
+    <button class="nav" data-view="devices" data-need="control" data-page-node-id="YSFURThKJPl3BJAj2fEhnh"><i data-page-node-id="5sBymMT0B0Amzbq9gEBvFx"></i>设备控制</button>
+    <button class="nav" data-view="remote" data-need="remote" data-page-node-id="kR3mZxQvLp9Wc2bN7uT8Ya"><i data-page-node-id="pQ1wE7rYt5Uu0oI3sD6hG"></i>远程控制</button>
     <button class="nav" data-view="voicehub" data-page-node-id="vH7mZxQvLp9Wc2bN7uT8Yb"><i data-page-node-id="vQ1wE7rYt5Uu0oI3sD6hH"></i>校园点歌</button>
-    <button class="nav" data-view="notify" data-page-node-id="AH6XER2oUxHUNeaQHT9CYc"><i data-page-node-id="VNoLDzl83wri0xqW2fs1h5"></i>通知广播</button>
+    <button class="nav" data-view="notify" data-need="control" data-page-node-id="AH6XER2oUxHUNeaQHT9CYc"><i data-page-node-id="VNoLDzl83wri0xqW2fs1h5"></i>通知广播</button>
     <button class="nav" data-view="chat" data-page-node-id="1YVmOzyGasKV5vm0C2EfyC"><i data-page-node-id="F38FWZGg4VjAq38MXpOIlM"></i>班级交流</button>
-    <button class="nav" data-view="report" data-page-node-id="c6sMhPauVHq9vq92OX6BqV"><i data-page-node-id="4iMbeeRrtGPHe24b0OCqQW"></i>故障上报</button>
-    <button class="nav" data-view="bug" data-page-node-id="djfGM3VSX5EBcfBpz8bUdo"><i data-page-node-id="WTig2ZtrEMou1Cz12Fsm5F"></i>提交 Bug</button>
+    <button class="nav" data-view="report" data-need="issue" data-page-node-id="c6sMhPauVHq9vq92OX6BqV"><i data-page-node-id="4iMbeeRrtGPHe24b0OCqQW"></i>故障上报</button>
+    <button class="nav" data-view="bug" data-need="issue" data-page-node-id="djfGM3VSX5EBcfBpz8bUdo"><i data-page-node-id="WTig2ZtrEMou1Cz12Fsm5F"></i>提交 Bug</button>
     <button class="nav" data-view="audit" data-page-node-id="M4bpUwnOxVYMCVhL97dZZz"><i data-page-node-id="MpKjBrCMMZz4Q9ShIgUbp4"></i>操作日志</button>
   </nav>
   <main id="main" data-page-node-id="mBqTPeYtepQISwQuehKxOJ"><div id="view" data-page-node-id="hCMKXe4bC8pQgS8xwDGbKq"></div></main>
@@ -58,7 +59,7 @@
     <input id="in-host" placeholder="后端地址 如 https://cims.example.edu/mgmt" data-page-node-id="DU5v6sVtwzw4nWWIT0XxHt" />
     <input id="in-email" placeholder="邮箱" value="admin@example.edu" data-page-node-id="CK137mQc7jsQXsFfWOsIRS" />
     <input id="in-password" type="password" placeholder="密码" data-page-node-id="UwoVIBUC8bg5NsS6IIFo3A" />
-    <button id="btn-login" class="primary" data-page-node-id="J6H0cidQE7hwqRtGxCuWzx">登录</button>
+    <button id="btn-login" class="primary btn-shine" data-page-node-id="J6H0cidQE7hwqRtGxCuWzx">登录</button>
     <p id="login-msg" class="muted" data-page-node-id="zCxJTPmkyXtU61cvHhttz4"></p>
     <details class="muted" data-page-node-id="dJ22PdibdvAFuNBX5bzHI0">
       <summary data-page-node-id="nkrOF5xkrMjeIuIkNraNYr">没有后端？用演示模式</summary>

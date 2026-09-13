@@ -61,7 +61,8 @@ const ARCHIVE_DIR = path.join(CONTENT_DIR, "archive");
 const sections: Record<string, string> = {
 	posts: path.join(CONTENT_DIR, "posts"),
 	projects: path.join(CONTENT_DIR, "projects"),
-	docs: path.join(CONTENT_DIR, "docs")
+	docs: path.join(CONTENT_DIR, "docs"),
+	pages: path.join(CONTENT_DIR, "pages")
 };
 
 const md = markdownIt({
@@ -94,7 +95,7 @@ function ensureDirs() {
 	fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
 }
 
-export function listItems(section: "posts" | "projects" | "docs"): ContentItem[] {
+export function listItems(section: "posts" | "projects" | "docs" | "pages"): ContentItem[] {
 	ensureDirs();
 	const dir = sections[section];
 	if (!fs.existsSync(dir)) return [];
@@ -149,7 +150,7 @@ export function toSummary(item: ContentItem): Omit<ContentItem, "body"> & { exce
 	return { ...rest, excerpt };
 }
 
-export function getItem(section: "posts" | "projects" | "docs", slug: string): ContentItem | null {
+export function getItem(section: "posts" | "projects" | "docs" | "pages", slug: string): ContentItem | null {
 	ensureDirs();
 	const filePath = path.join(sections[section], slug + ".md");
 	if (!fs.existsSync(filePath)) return null;
@@ -176,7 +177,7 @@ export function getItem(section: "posts" | "projects" | "docs", slug: string): C
 }
 
 export function saveItem(
-	section: "posts" | "projects" | "docs",
+	section: "posts" | "projects" | "docs" | "pages",
 	item: Partial<ContentItem> & { title: string; body: string }
 ): ContentItem {
 	ensureDirs();
@@ -219,7 +220,7 @@ function appendVersionSnapshot(section: string, slug: string, raw: string, edito
 	}
 }
 
-export function getVersions(section: "posts" | "projects" | "docs", slug: string): ContentVersion[] {
+export function getVersions(section: "posts" | "projects" | "docs" | "pages", slug: string): ContentVersion[] {
 	const file = archiveFile(section, slug);
 	if (!fs.existsSync(file)) return [];
 	const lines = fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean);
@@ -231,7 +232,7 @@ export function getVersions(section: "posts" | "projects" | "docs", slug: string
 	}).filter(Boolean) as ContentVersion[];
 }
 
-export function getVersionRaw(section: "posts" | "projects" | "docs", slug: string, versionId: string): string | null {
+export function getVersionRaw(section: "posts" | "projects" | "docs" | "pages", slug: string, versionId: string): string | null {
 	const file = archiveFile(section, slug);
 	if (!fs.existsSync(file)) return null;
 	const lines = fs.readFileSync(file, "utf-8").trim().split("\n").filter(Boolean);
@@ -241,7 +242,7 @@ export function getVersionRaw(section: "posts" | "projects" | "docs", slug: stri
 	return null;
 }
 
-export function restoreVersion(section: "posts" | "projects" | "docs", slug: string, versionId: string): boolean {
+export function restoreVersion(section: "posts" | "projects" | "docs" | "pages", slug: string, versionId: string): boolean {
 	const raw = getVersionRaw(section, slug, versionId);
 	if (!raw) return false;
 	// 写入当前文件（会再次触发快照，形成历史链）
@@ -249,14 +250,14 @@ export function restoreVersion(section: "posts" | "projects" | "docs", slug: str
 	return true;
 }
 
-export function deleteItem(section: "posts" | "projects" | "docs", slug: string): boolean {
+export function deleteItem(section: "posts" | "projects" | "docs" | "pages", slug: string): boolean {
 	ensureDirs();
 	const filePath = path.join(sections[section], slug + ".md");
 	if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return true; }
 	return false;
 }
 
-export function reorderItems(section: "posts" | "projects" | "docs", orderedSlugs: string[]): void {
+export function reorderItems(section: "posts" | "projects" | "docs" | "pages", orderedSlugs: string[]): void {
 	ensureDirs();
 	for (let index = 0; index < orderedSlugs.length; index++) {
 		const item = getItem(section, orderedSlugs[index]);
@@ -331,19 +332,19 @@ export function deleteUpload(filename: string): boolean {
 	return false;
 }
 
-export function getTags(section: "posts" | "projects" | "docs"): string[] {
+export function getTags(section: "posts" | "projects" | "docs" | "pages"): string[] {
 	const set = new Set<string>();
 	for (const it of listItems(section)) for (const t of it.tags || []) set.add(t);
 	return [...set].sort();
 }
 
-export function getCategories(section: "posts" | "projects" | "docs"): string[] {
+export function getCategories(section: "posts" | "projects" | "docs" | "pages"): string[] {
 	const set = new Set<string>();
 	for (const it of listItems(section)) if (it.category) set.add(it.category);
 	return [...set].sort();
 }
 
-export function getFolders(section: "posts" | "projects" | "docs"): string[] {
+export function getFolders(section: "posts" | "projects" | "docs" | "pages"): string[] {
 	const set = new Set<string>();
 	for (const it of listItems(section)) if (it.folder) set.add(it.folder);
 	return [...set].sort();
@@ -683,7 +684,7 @@ export function getNav(): NavConfig {
 	ensureDirs();
 	const defaults: NavConfig = {
 		workspace: [
-			{ title: "首页", url: "/" }, { title: "博客", url: "/posts" }, { title: "项目", url: "/projects" }, { title: "文档", url: "/docs" }
+			{ title: "首页", url: "/" }, { title: "博客", url: "/posts" }, { title: "项目", url: "/projects" }, { title: "文档", url: "/docs" }, { title: "页面", url: "/pages" }
 		],
 		more: [],
 		bottom: [{ title: "管理后台", url: "/admin" }]

@@ -24,7 +24,8 @@
 		Newspaper,
 		Rss,
 		MessagesSquare,
-		LogIn
+		LogIn,
+		FileText
 	} from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
@@ -60,6 +61,7 @@
 		{ title: "博客", url: "/posts", icon: "blog" },
 		{ title: "项目", url: "/projects", icon: "projects" },
 		{ title: "文档", url: "/docs", icon: "docs" },
+		{ title: "页面", url: "/pages", icon: "pages" },
 		{ title: "AI 绘图", url: "/create", icon: "create" },
 		{ title: "交互小说", url: "/novels", icon: "novels" },
 		{ title: "追番", url: "/anime", icon: "anime" },
@@ -86,7 +88,7 @@
 		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
 		"archive": Archive, "archives": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
 		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
-		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss
+		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss, "pages": FileText
 	};
 
 	const workspace = $derived(
@@ -159,7 +161,7 @@
 						</Sidebar.MenuItem>
 					{/each}
 					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (moreOpen = !moreOpen)} aria-expanded={moreOpen}>
+						<Sidebar.MenuButton onclick={() => (moreOpen = !moreOpen)} aria-expanded={moreOpen} tooltipContent="更多">
 							<MorphIcon icon={moreOpen ? ChevronUp : ChevronDown} spring="snappy" reducedMotion="user" size={16} aria-hidden="true" />
 							<span>更多</span>
 						</Sidebar.MenuButton>
@@ -186,7 +188,7 @@
 			<Sidebar.Menu>
 				{#each bottom.filter((b) => b.url !== "/admin" || data?.canEdit) as item (item.url)}
 					<Sidebar.MenuItem>
-						<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)}>
+						<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)} tooltipContent={item.title}>
 							<item.icon />
 							<span>{item.title}</span>
 						</Sidebar.MenuButton>
