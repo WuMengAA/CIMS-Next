@@ -109,7 +109,7 @@
 		if (!el) return;
 		const start = el.selectionStart ?? body.length;
 		const end = el.selectionEnd ?? body.length;
-		const sel = body.slice(start, end) || placeholder;
+		const sel = body.slice(start, end) || (placeholderSel ? placeholder : "");
 		body = body.slice(0, start) + before + sel + after + body.slice(end);
 		requestAnimationFrame(() => {
 			el.focus();
@@ -155,7 +155,12 @@
 			const res = await fetch("/api/media", { method: "POST", body: form });
 			const data = await res.json();
 			if (res.ok && data.url) {
-				insertAtCursor("![](" + data.url + ")", "", file.name.split(".")[0], false);
+				// 上传成功后直接插入正文并关闭弹窗，避免「传了却看不到效果」的错觉。
+				const alt = file.name.replace(/\.[^.]+$/, "");
+				insertAtCursor("\n\n![" + alt + "](" + data.url + ")\n\n", "", "", false);
+				mediaShow = false;
+				toast.success("图片已上传并插入");
+				loadMedia();
 			} else {
 				toast.error(data.error || "上传失败");
 			}
@@ -178,8 +183,9 @@
 		mediaLoading = false;
 	}
 	function pickMedia(url: string, alt: string) {
-		insertAtCursor("![" + alt + "](" + url + ")", "", alt, false);
+		insertAtCursor("\n\n![" + alt + "](" + url + ")\n\n", "", "", false);
 		mediaShow = false;
+		toast.success("已插入图片");
 	}
 
 	// ===== Website embed (iframe video / page) =====
@@ -376,6 +382,7 @@
 						<h3 class="font-heading text-base font-semibold">选择图片（媒体库）</h3>
 						<button onclick={() => (mediaShow = false)} class="text-muted-foreground hover:text-foreground">✕</button>
 					</div>
+					<p class="mb-3 text-xs text-muted-foreground">点击任意图片即可插入到正文；也可上传新图片。</p>
 					<div class="mb-3 flex items-center gap-2">
 						<Button size="sm" variant="outline" onclick={() => fileInput?.click()}>上传新图片</Button>
 						{#if uploadingImg}<span class="text-xs text-muted-foreground">上传中…</span>{/if}
