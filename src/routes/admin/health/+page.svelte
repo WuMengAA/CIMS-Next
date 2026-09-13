@@ -72,5 +72,5 @@
 </div>
 
 <p class="mt-4 text-xs text-muted-foreground">
-	最近探测：{fmtTime(checkedAt)} · 探测超时 3 秒；端点可在部署环境通过 HEALTH_ENDPOINTS（JSON 数组 [{name,url}]）自定义。
+	最近探测：{fmtTime(checkedAt)} · 探测超时 3 秒；端点可在部署环境通过 HEALTH_ENDPOINTS（JSON 数组 [&#123;name,url&#125;]）自定义。
 </p>
