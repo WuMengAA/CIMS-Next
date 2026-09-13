@@ -36,11 +36,28 @@ namespace StelarithControlPlugin;
 /// 守护线程可能各自轮询——为此守护线程用同一把锁（静态 _sync）互斥，保证同一时刻只有一个轮询循环在跑。
 /// </summary>
 public sealed class StelarithCommandPollerService : BackgroundService
-{
-    private readonly ILogger<StelarithCommandPollerService> _logger;
+    {
+        // 后端 command_poll.py 返回小写 JSON 字段（commands/id/type/payload/created_at），
+        // 而 BatchResponse/QueuedCommand 用 PascalCase 属性——System.Text.Json 默认大小写敏感，
+        // 若不开 CaseInsensitive 会把 Commands 反序列化成 null，导致每轮命令被服务端取走置 done、
+        // 本地却丢弃不执行（命令被"吞掉"的根因）。必须显式开启忽略大小写。
+        private static readonly JsonSerializerOptions JsonOpts = new()
+        {
+            PropertyNameCaseInsensitive = true,
+        };
+
+        private readonly ILogger<StelarithCommandPollerService> _logger;
     private readonly StelarithSyncOptions _opt;
     private readonly StelarithCommandHandler _handler;
-    private static readonly HttpClient Http = new();
+    // 用 SocketsHttpHandler 并限制连接存活时间：uvicorn 默认 keep-alive=5s，而轮询间隔也是 5s，
+    // 若复用空闲超时的连接会抛 "An error occurred while sending the request"（guard loop exception）。
+    // 把 PooledConnectionLifetime 压到服务端空闲超时（5s）以下，确保每次轮询前连接已被回收、不踩断连。
+    private static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromSeconds(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(1),
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    });
     // 轮询优先取命令队列的间隔（最小 5 秒；与同步刷新间隔独立，避免互相干扰）
     private static readonly TimeSpan MinPollInterval = TimeSpan.FromSeconds(5);
     // 静态服务定位器（与 PanelService 一致），供静态守护线程取配置；构造时赋值
@@ -155,7 +172,7 @@ public sealed class StelarithCommandPollerService : BackgroundService
         BatchResponse? batch;
         try
         {
-            batch = JsonSerializer.Deserialize<BatchResponse>(body);
+            batch = JsonSerializer.Deserialize<BatchResponse>(body, JsonOpts);
         }
         catch (Exception ex)
         {

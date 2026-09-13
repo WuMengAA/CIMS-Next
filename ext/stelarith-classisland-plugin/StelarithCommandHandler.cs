@@ -185,7 +185,10 @@ public sealed class StelarithCommandHandler
 
         if (!string.IsNullOrWhiteSpace(textContent) && !LooksLikeTaskJson(textContent))
         {
-            Notify(string.IsNullOrWhiteSpace(title) ? "星璃·集控" : title, textContent);
+            var finalTitle = string.IsNullOrWhiteSpace(title) ? "星璃·集控" : title;
+            StelarithNotificationProvider.Diag(
+                $"处理 SendNotification: title={finalTitle} contentLen={textContent!.Length} provider={(StelarithNotificationProvider.Current is null ? "未就绪(降级)" : "已就绪")}");
+            Notify(finalTitle, textContent);
         }
         else if (task is null)
         {
@@ -335,26 +338,54 @@ public sealed class StelarithCommandHandler
         }
     }
 
-    /// <summary>展示系统通知（Windows 托盘气泡，简单可靠，不依赖宿主通知中心版本）。</summary>
+    /// <summary>
+    /// 展示一条来自集控的播报。
+    ///
+    /// 首选 ClassIsland 官方提醒系统（<see cref="StelarithNotificationProvider"/>）——它会在
+    /// 教室大屏播放「遮罩 + 正文」，并遵循宿主在【设置】→【提醒】里的开关与时长配置，
+    /// 这正是官方集控 SendNotification 的语义。
+    ///
+    /// 若提供方尚未被 DI 构造（极早期或宿主异常），降级为 Windows 托盘气泡，保证不静默丢失。
+    /// </summary>
     private void Notify(string title, string message)
+    {
+        // ① 官方提醒通道
+        var provider = StelarithNotificationProvider.Current;
+        if (provider is not null)
+        {
+            provider.Push(title, message);
+            return;
+        }
+
+        // ② 降级：系统托盘气泡
+        ShowTrayBalloon(title, message);
+    }
+
+    // 托盘气泡实例必须长期持有：NotifyIcon 一旦被释放（Dispose），Windows 会连未展示完的
+    // 气泡一起撤掉 —— 旧实现用 `using var ni` 在方法返回时就释放，气泡实际从未出现过。
+    private static readonly object TrayLock = new();
+    private static System.Windows.Forms.NotifyIcon? _trayIcon;
+
+    private static void ShowTrayBalloon(string title, string message)
     {
         try
         {
-            using var icon = new System.Drawing.Icon(System.Drawing.SystemIcons.Information, 32, 32);
-            using var ni = new System.Windows.Forms.NotifyIcon
+            lock (TrayLock)
             {
-                Icon = icon,
-                Visible = true,
-                Text = title,
-                BalloonTipTitle = title,
-                BalloonTipText = message,
-            };
-            // 展示后立即释放（防止托盘图标残留）；异步线程安全由调用方保证
-            ni.ShowBalloonTip(4000);
+                _trayIcon ??= new System.Windows.Forms.NotifyIcon
+                {
+                    Icon = System.Drawing.SystemIcons.Information,
+                    Visible = true,
+                    Text = "星璃·集控",
+                };
+                _trayIcon.BalloonTipTitle = title;
+                _trayIcon.BalloonTipText = message;
+                _trayIcon.ShowBalloonTip(4000);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Stelarith cmd: 系统通知展示失败（不影响命令执行）");
+            StelarithNotificationProvider.Diag("托盘气泡降级失败: " + ex.Message);
         }
     }
 

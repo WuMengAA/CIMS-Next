@@ -6,7 +6,6 @@ using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Abstractions.Services;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Extensions.Registry;
-using ClassIsland.Shared.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -20,7 +19,8 @@ namespace StelarithControlPlugin;
 ///     解析 IManagementService 并订阅集控连接（IManagementServerConnection）的 CommandReceived 事件，
 ///     捕获 CIMS 经集控通道下发的 stelarith-task 指令（真实 SDK 下"收到命令"的唯一钩子）；
 ///  2) 在本地执行轻量动作（锁屏 / 截图）或转发给本地代理 StelarithAgent 执行 OS 级动作；
-///  3) 注册为 INotificationProvider，使星璃指令出现在 ClassIsland 通知中心（展示侧）；
+///  3) 注册官方提醒提供方 StelarithNotificationProvider，使集控下发的播报在教室大屏播放
+///     （对齐官方集控 SendNotification 语义，见 StelarithNotificationProvider 注释）；
 ///  4) 提供电教委员快捷操作入口（锁屏 / 截图 / 一键远程控制）。
 ///
 /// 不直连任何虚构网关——所有"下令"都来自 CIMS 真实集控通道，所有"执行"都在本机。
@@ -34,7 +34,7 @@ namespace StelarithControlPlugin;
 ///   · 命令事件参数字段随 ClassIsland 版本，故用 dynamic 安全提取，避免写死字段名导致编译失败。
 /// </summary>
 [PluginEntrance]
-public class StelarithControlPlugin : PluginBase, INotificationProvider
+public class StelarithControlPlugin : PluginBase
 {
     // 注意：ClassIsland 通过 Activator.CreateInstance 实例化插件入口类，要求无参构造函数，
     // 因此不能在构造函数中注入服务。日志等依赖请在 Initialize / 后台服务中通过 GetService<T>() 取得。
@@ -58,20 +58,19 @@ public class StelarithControlPlugin : PluginBase, INotificationProvider
         services.AddHostedService<StelarithPanelService>();
         // 设置侧边栏：注册「星璃·集控面板」设置页（External 类别，含打开面板入口）
         services.AddSettingsPage<StelarithPanelSettingsPage>();
-        services.AddSingleton<INotificationProvider>(this);
+        // 官方提醒提供方：注册后宿主会在【应用设置】→【提醒】列出「星璃·集控」，
+        // 集控下发的 SendNotification 可直接在教室大屏播放「遮罩 + 正文」。
+        // 必须走这个官方扩展方法——它会先把 [NotificationProviderInfo] 写入
+        // NotificationProviderRegistryService，否则 NotificationProviderBase 的构造函数会抛异常。
+        services.AddNotificationProvider<StelarithNotificationProvider>();
     }
 
     // ---- 电教委员快捷操作入口（在 ClassIsland 设置页 / 组件面板挂载按钮调用）----
     public Task QuickLock() => StelarithDispatch.RunAsync(new StelarithTask { Action = "lock" });
     public Task QuickScreenshot() => StelarithDispatch.RunAsync(new StelarithTask { Action = "screenshot" });
     public Task RequestRemoteControl() => StelarithDispatch.RunAsync(new StelarithTask { Action = "remote_control_start" });
-
-    // ---- INotificationProvider 实现（注册为通知提供方，展示侧）----
-    public string Name { get; set; } = "星璃·集控";
-    public string Description { get; set; } = "星璃多媒体统一集控指令通道";
-    public Guid ProviderGuid { get; set; } = new Guid("9f1c2b3a-4d5e-6f7a-8b9c-0d1e2f3a4b5c");
-    public object? SettingsElement { get; set; }
-    public object? IconElement { get; set; }
+    // 提醒提供方（INotificationProvider）已移至 StelarithNotificationProvider，
+    // 由 services.AddNotificationProvider<T>() 注册，具备真正的推送能力。
 }
 
 /// <summary>CIMS 集控命令内约定的结构化指令（见 docs/扩展能力设计.md §1.2）。</summary>
