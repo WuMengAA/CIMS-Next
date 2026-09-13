@@ -25,7 +25,11 @@ function getServiceList(): { name: string; url: string }[] {
 			/* fall through to defaults */
 		}
 	}
-	const self = process.env.PUBLIC_SITE_URL || process.env.ORIGIN || "http://127.0.0.1:8090";
+	// 「网站自身」优先探测本机监听地址（127.0.0.1:PORT），而非外网 PUBLIC_SITE_URL：
+	// 后者要经过 DNS/CDN 出网回环，在受限网络下会稳定超时，导致存活页对「自己」误报异常。
+	// 需要探测外网可达性时，用 HEALTH_SELF_URL 或 HEALTH_ENDPOINTS 显式指定。
+	const port = process.env.PORT || "8090";
+	const self = process.env.HEALTH_SELF_URL || `http://127.0.0.1:${port}`;
 	const cims = process.env.CIMS_BASE || "http://127.0.0.1:8097";
 	return [
 		{ name: "网站 (Website)", url: self },
