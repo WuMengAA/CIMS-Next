@@ -9,6 +9,10 @@
 		data: {
 			role: string;
 			user: string;
+			email: string;
+			avatar: string;
+			className: string;
+			gradeName: string;
 			accountId: string;
 			can: { control: boolean; remote: boolean; manage: boolean; issue: boolean };
 		};
@@ -22,6 +26,10 @@
 			role: data.role,
 			roleLabel,
 			user: data.user,
+			email: data.email,
+			avatar: data.avatar,
+			className: data.className,
+			gradeName: data.gradeName,
 			accountId: data.accountId,
 			control: data.can.control ? "1" : "0",
 			remote: data.can.remote ? "1" : "0",
@@ -65,21 +73,21 @@
 		position: fixed;
 		inset: 0;
 		z-index: 1000;
-		background: #0e0e0c;
+		background: var(--background, #1b1b19);
 		display: flex;
 		flex-direction: column;
 	}
-	/* 顶部细条：返回入口 + 当前身份与权限，不再让按钮孤零零压住面板内容 */
+	/* 顶部细条：返回入口 + 当前身份与权限。统一走 website 暖调 token（layout.css 提供）。 */
 	.bar {
 		flex: 0 0 auto;
 		display: flex;
 		align-items: center;
 		gap: 10px;
 		padding: 6px 10px;
-		background: #161a2c;
-		border-bottom: 1px solid #232842;
+		background: var(--sidebar, #141413);
+		border-bottom: 1px solid var(--border, oklch(100% 0 0 / 0.24));
 		font-size: 12px;
-		color: #9aa3c4;
+		color: var(--muted-foreground, #b0aea5);
 	}
 	.who {
 		margin-left: auto;
@@ -90,8 +98,8 @@
 	.perm {
 		padding: 2px 8px;
 		border-radius: 999px;
-		background: #1d2236;
-		color: #9aa3c4;
+		background: var(--accent, oklch(30% 0.004 106.6));
+		color: var(--muted-foreground, #b0aea5);
 	}
 	.console-frame {
 		flex: 1;
@@ -103,17 +111,18 @@
 	.back {
 		padding: 5px 12px;
 		border-radius: 8px;
-		border: 1px solid #2f3550;
-		background: #1d2236;
-		color: #e6e8f0;
+		border: 1px solid var(--border, oklch(100% 0 0 / 0.24));
+		background: var(--card, oklch(28% 0.004 106.6));
+		color: var(--foreground, #faf9f5);
 		cursor: pointer;
 		font-size: 12px;
+		transition: border-color 0.2s, background 0.2s;
 	}
 	.back:hover {
-		border-color: #3b82f6;
+		border-color: var(--primary, #cc785c);
 	}
 	.back:focus-visible {
-		outline: 2px solid #3b82f6;
+		outline: 2px solid var(--primary, #cc785c);
 		outline-offset: 2px;
 	}
 	/* 手机端：外层返回条曾折成两行、把面板顶栏挤下去。

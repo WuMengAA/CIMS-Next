@@ -19,7 +19,7 @@
 		onReorder
 	}: {
 		items: Item[];
-		section: "posts" | "projects" | "docs";
+		section: "posts" | "projects" | "docs" | "pages";
 		editBase: string;
 		viewBase?: string;
 		onReorder: (ordered: string[]) => void;

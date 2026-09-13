@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at    TEXT    NOT NULL,
   last_login_at TEXT,
   last_login_ip TEXT,
-  login_count   INTEGER NOT NULL DEFAULT 0
+  login_count   INTEGER NOT NULL DEFAULT 0,
+  class_name    TEXT NOT NULL DEFAULT '',
+  grade_name    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -132,6 +134,9 @@ function ensureDb(): DatabaseSync {
 	if (!cols.has("verified")) db.exec("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0");
 	if (!cols.has("verify_token")) db.exec("ALTER TABLE users ADD COLUMN verify_token TEXT NOT NULL DEFAULT ''");
 	if (!cols.has("verify_token_expires")) db.exec("ALTER TABLE users ADD COLUMN verify_token_expires TEXT NOT NULL DEFAULT ''");
+	// 班级绑定（集控面板「新账号引导补充班级身份」字段）：仅面板/管理端可写，用户自填。
+	if (!cols.has("class_name")) db.exec("ALTER TABLE users ADD COLUMN class_name TEXT NOT NULL DEFAULT ''");
+	if (!cols.has("grade_name")) db.exec("ALTER TABLE users ADD COLUMN grade_name TEXT NOT NULL DEFAULT ''");
 	seed(db);
 	// 历史 active 账号（本就不经邮箱验证即可登录，含种子 admin）统一视为已验证；
 	// 新注册的 pending 用户不受影响（验证或管理员批准后才会变 active 且 verified=1）。

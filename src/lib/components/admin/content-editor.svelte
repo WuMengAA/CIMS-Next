@@ -14,7 +14,7 @@
 		slug = "new",
 		backUrl = "/admin/posts"
 	}: {
-		section?: "posts" | "projects" | "docs";
+		section?: "posts" | "projects" | "docs" | "pages";
 		slug?: string;
 		backUrl?: string;
 	} = $props();

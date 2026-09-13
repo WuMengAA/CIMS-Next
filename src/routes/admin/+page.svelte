@@ -10,6 +10,7 @@
 	let commentsCount = $state(0);
 	let announcementsCount = $state(0);
 	let feedbackCount = $state(0);
+	let pagesCount = $state(0);
 	let pvToday = $state(0);
 	let pvTotal = $state(0);
 	let loading = $state(false);
@@ -17,24 +18,26 @@
 	async function loadStats() {
 		loading = true;
 		try {
-			const [p, pr, d, m, c, a, f, s] = await Promise.all([
-				fetch("/api/posts"),
-				fetch("/api/projects"),
-				fetch("/api/docs"),
-				fetch("/api/media"),
-				fetch("/api/comments?all=1"),
-				fetch("/api/announcements?all=1"),
-				fetch("/api/feedback"),
-				fetch("/api/stats?days=7")
-			]);
-			postsCount = (await p.json()).length;
-			projectsCount = (await pr.json()).length;
-			docsCount = (await d.json()).length;
-			mediaCount = (await m.json()).length;
-			commentsCount = (await c.json()).length;
-			announcementsCount = (await a.json()).length;
-			feedbackCount = (await f.json()).length;
-			const stats = await s.json();
+		const [p, pr, d, m, c, a, f, pg, s] = await Promise.all([
+			fetch("/api/posts"),
+			fetch("/api/projects"),
+			fetch("/api/docs"),
+			fetch("/api/media"),
+			fetch("/api/comments?all=1"),
+			fetch("/api/announcements?all=1"),
+			fetch("/api/feedback"),
+			fetch("/api/pages"),
+			fetch("/api/stats?days=7")
+		]);
+		postsCount = (await p.json()).length;
+		projectsCount = (await pr.json()).length;
+		docsCount = (await d.json()).length;
+		mediaCount = (await m.json()).length;
+		commentsCount = (await c.json()).length;
+		announcementsCount = (await a.json()).length;
+		feedbackCount = (await f.json()).length;
+		pagesCount = (await pg.json()).length;
+		const stats = await s.json();
 			pvToday = stats.today || 0;
 			pvTotal = stats.total || 0;
 		} catch (e) {
@@ -79,6 +82,10 @@
 	<a href="/admin/feedback" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
 		<div class="text-2xl font-semibold">{feedbackCount}</div>
 		<div class="text-sm text-muted-foreground">反馈</div>
+	</a>
+	<a href="/admin/pages" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
+		<div class="text-2xl font-semibold">{pagesCount}</div>
+		<div class="text-sm text-muted-foreground">页面</div>
 	</a>
 	<div class="block rounded-lg border bg-card p-4">
 		<div class="text-2xl font-semibold">{pvToday}</div>

@@ -36,6 +36,9 @@ export interface User {
 	lastLoginAt?: string | null;
 	lastLoginIp?: string | null;
 	loginCount?: number;
+	/** 集控面板班级身份（新账号引导补充；用户自填）。 */
+	className?: string;
+	gradeName?: string;
 }
 
 /** 会话有效期：30 天。 */
@@ -66,6 +69,8 @@ interface UserRow {
 	last_login_at: string | null;
 	last_login_ip: string | null;
 	login_count: number;
+	class_name: string;
+	grade_name: string;
 }
 
 function rowToUser(r: UserRow): User {
@@ -87,12 +92,14 @@ function rowToUser(r: UserRow): User {
 		updatedAt: r.updated_at,
 		lastLoginAt: r.last_login_at,
 		lastLoginIp: r.last_login_ip,
-		loginCount: r.login_count ?? 0
+		loginCount: r.login_count ?? 0,
+		className: r.class_name || "",
+		gradeName: r.grade_name || ""
 	};
 }
 
 const SELECT_USER = `SELECT id, username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires,
-	password_hash, salt, created_at, updated_at, last_login_at, last_login_ip, login_count FROM users`;
+	password_hash, salt, created_at, updated_at, last_login_at, last_login_ip, login_count, class_name, grade_name FROM users`;
 
 export function getUsers(): User[] {
 	reconcileAdmin();
@@ -278,18 +285,20 @@ export function changePassword(username: string, newPassword: string): { ok: boo
 /** 更新资料（本人可改：昵称 / 邮箱 / 简介 / 头像 / 显示名）。 */
 export function updateProfile(
 	username: string,
-	patch: { displayName?: string; email?: string; bio?: string; avatar?: string }
+	patch: { displayName?: string; email?: string; bio?: string; avatar?: string; className?: string; gradeName?: string }
 ): { ok: boolean; error?: string } {
 	const user = getUser(username);
 	if (!user) return { ok: false, error: "用户不存在" };
 	const db = getDb();
 	db.prepare(
-		`UPDATE users SET display_name = ?, email = ?, bio = ?, avatar = ?, updated_at = ? WHERE id = ?`
+		`UPDATE users SET display_name = ?, email = ?, bio = ?, avatar = ?, class_name = ?, grade_name = ?, updated_at = ? WHERE id = ?`
 	).run(
 		(patch.displayName ?? user.displayName ?? "").trim() || user.username,
 		(patch.email ?? user.email ?? "").trim(),
 		patch.bio ?? user.bio ?? "",
 		patch.avatar ?? user.avatar ?? "",
+		(patch.className ?? user.className ?? "").trim(),
+		(patch.gradeName ?? user.gradeName ?? "").trim(),
 		nowIso(),
 		user.id ?? -1
 	);
@@ -299,7 +308,7 @@ export function updateProfile(
 /** 管理端更新（角色 / 状态 / 资料）。 */
 export function adminUpdateUser(
 	username: string,
-	patch: { displayName?: string; email?: string; bio?: string; role?: Role; status?: "active" | "disabled" }
+	patch: { displayName?: string; email?: string; bio?: string; role?: Role; status?: "active" | "disabled"; className?: string; gradeName?: string }
 ): { ok: boolean; error?: string } {
 	const user = getUser(username);
 	if (!user) return { ok: false, error: "用户不存在" };
@@ -311,13 +320,15 @@ export function adminUpdateUser(
 	}
 	const db = getDb();
 	db.prepare(
-		`UPDATE users SET display_name = ?, email = ?, bio = ?, role = ?, status = ?, updated_at = ? WHERE id = ?`
+		`UPDATE users SET display_name = ?, email = ?, bio = ?, role = ?, status = ?, class_name = ?, grade_name = ?, updated_at = ? WHERE id = ?`
 	).run(
 		(patch.displayName ?? user.displayName ?? "").trim() || user.username,
 		(patch.email ?? user.email ?? "").trim(),
 		patch.bio ?? user.bio ?? "",
 		patch.role ?? user.role,
 		patch.status ?? user.status ?? "active",
+		(patch.className ?? user.className ?? "").trim(),
+		(patch.gradeName ?? user.gradeName ?? "").trim(),
 		nowIso(),
 		user.id ?? -1
 	);
@@ -390,7 +401,8 @@ export function verifyToken(token: string | undefined | null): User | null {
 			.prepare(
 				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp,
 				        u.id, u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status,
-				        u.password_hash, u.salt, u.created_at, u.updated_at, u.last_login_at, u.last_login_ip, u.login_count
+				        u.password_hash, u.salt, u.created_at, u.updated_at, u.last_login_at, u.last_login_ip, u.login_count,
+				        u.class_name, u.grade_name
 				 FROM sessions s JOIN users u ON u.id = s.user_id
 				 WHERE s.token = ?`
 			)

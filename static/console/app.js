@@ -29,6 +29,10 @@
       role: q.get("role") || "",
       roleLabel: q.get("roleLabel") || "",
       user: q.get("user") || "",
+      email: q.get("email") || "",
+      avatar: q.get("avatar") || "",
+      className: q.get("className") || "",
+      gradeName: q.get("gradeName") || "",
       control: flag("control"),
       remote: flag("remote"),
       manage: flag("manage"),
@@ -86,11 +90,15 @@
     const todayStr = `${now.getMonth() + 1}月${now.getDate()}日 · 周${"日一二三四五六"[now.getDay()]}`;
     const goods = (scope) => ({ "本班": "ok", "全校": "warn", "年级": "accent", "广播": "err" }[scope] || "");
     const nextPeriod = courses[0];
+    // #71 完善信息：把真实绑定的班级/年级/身份落到总览，让信息「有实质价值」而非占位。
+    const bindTip = [PERM.gradeName, PERM.className].filter(Boolean).join(" ");
+    const heroScope = bindTip ? ` · ${esc(bindTip)}` : (PERM.embedded ? " · 尚未绑定班级，可在顶部卡片绑定" : "");
+    const who = PERM.displayName || PERM.user || (PERM.roleLabel || "电教委员");
     return `<!-- 主页视觉卡片 -->
-      <div class="db-hero herald">
+      <div class="db-hero herald ${PERM.embedded && !bindTip ? "hero-needs-bound" : ""}">
         <div>
-          <div class="hero-title">${esc(greet)}，${esc(PERM.user || (PERM.roleLabel || "电教委员"))} <span class="hero-wave">👋</span></div>
-          <div class="hero-sub">${todayStr} · 本班电教设备与课表速览</div>
+          <div class="hero-title">${esc(greet)}，${esc(who)} <span class="hero-wave">👋</span></div>
+          <div class="hero-sub">${todayStr}${heroScope}</div>
         </div>
         <div class="hero-badge">
           <div class="hero-big">${rate}%</div>
@@ -419,6 +427,8 @@
       toast("错误：" + e.message);
     }
     meta(`视图：${current} · ${API.state.demo ? "演示模式" : "后端模式"}`);
+    // 内嵌态：总览渲染后，若账号尚未绑定班级则显示补充信息引导卡
+    if (current === "dashboard") showDashboardOnboard();
   }
 
   document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
@@ -609,6 +619,78 @@
   $("#btn-login").addEventListener("click", doLogin);
   $("#btn-demo").addEventListener("click", enterDemo);
 
+  // ---- 全权接入 website 账号信息 ----
+  // 内嵌态与宿主同源：实时拉 /api/me 校准账号（邮箱/头像/班级/年级/最近登录），
+  // 更新顶栏身份区；若账号尚未绑定班级，则在总览顶部渲染「补充班级信息」引导卡。
+  function getClassBound() { return !!(PERM.className || PERM.gradeName); }
+  function renderTopbarIdentity() {
+    const chip = $("#user-chip");
+    if (!chip) return;
+    const label = PERM.displayName || PERM.user;
+    chip.textContent = label || (PERM.embedded ? "网站账号" : "未登录");
+    chip.title = [PERM.email, PERM.className || PERM.gradeName]
+      .filter(Boolean).join(" · ") || "当前账号";
+  }
+  async function syncAccount() {
+    if (!PERM.embedded) return;
+    try {
+      const me = await API.me();
+      if (!me) return; // 未登录/请求失败，保底用 query 注入的即值
+      const prevClassEmpty = !getClassBound();
+      if (me.displayName) PERM.displayName = me.displayName;
+      if (me.avatar) PERM.avatar = me.avatar;
+      if (me.email) PERM.email = me.email;
+      if (me.className) PERM.className = me.className;
+      if (me.gradeName) PERM.gradeName = me.gradeName;
+      if (me.bio) PERM.bio = me.bio;
+      renderTopbarIdentity();
+      // 账号资料从「无班级」变为「已绑定」（例如刚在引导卡里保存过），刷新总览去掉引导卡
+      if (prevClassEmpty && getClassBound() && current === "dashboard") go("dashboard");
+      else if (current === "dashboard") showDashboardOnboard();
+    } catch (_) { /* 拉不到就算了，不打断主流程 */ }
+  }
+  async function showDashboardOnboard() {
+    if (getClassBound()) return; // 已有班级绑定，不打扰
+    const view = $("#view");
+    if (!view) return;
+    // 仅在总览视图顶部插入引导卡（若还没插过）
+    if (view.querySelector("[data-onboard-class]")) return;
+    view.insertAdjacentHTML("afterbegin", `
+      <div class="onboard onboard-warn card-hover reveal" data-onboard-class>
+        <div class="onboard-icon">🏫</div>
+        <div class="onboard-txt">
+          <div class="onboard-title">补充班级信息</div>
+          <div class="onboard-sub">你的账号还没绑定班级/年级，绑定后设备控制、课表与通知会精确指向你所在班级。</div>
+          <div class="onboard-row">
+            <input id="in-class-name" placeholder="班级，如 高一(2)班" value="${esc(PERM.className || "")}" aria-label="班级" />
+            <input id="in-grade-name" placeholder="年级，如 高一" value="${esc(PERM.gradeName || "")}" aria-label="年级" />
+            <button id="btn-save-class" class="primary btn-shine" type="button">保存</button>
+          </div>
+          <div class="onboard-err" id="onboard-err"></div>
+        </div>
+      </div>
+    `);
+    $("#btn-save-class").addEventListener("click", async () => {
+      const c = $("#in-class-name").value.trim();
+      const g = $("#in-grade-name").value.trim();
+      const err = $("#onboard-err");
+      if (!c && !g) { err.textContent = "请至少填写班级或年级其中一个。"; return; }
+      err.textContent = "";
+      try {
+        await API.saveMe({ className: c, gradeName: g });
+        PERM.className = c; PERM.gradeName = g;
+        const card = view.querySelector("[data-onboard-class]");
+        if (card) card.remove();
+        renderTopbarIdentity();
+        toast("班级信息已保存");
+        if (c) API.setClass("classplan_" + c.replace(/[^0-9]/g, "")); // 联想班级课表名
+        go("dashboard");
+      } catch (e) {
+        err.textContent = "保存失败：" + (e.message || "请稍后重试");
+      }
+    });
+  }
+
   // 内嵌于网站 /admin/console：复用网站会话，经服务端代理访问 CIMS，跳过自身登录。
   // 三条数据通道：
   //   · CIMS 设备/课表/配置 → /api/console/cims（服务端持 CIMS 会话令牌）
@@ -630,6 +712,8 @@
     setConn(true, "网站代理");
     renderPermChip();
     applyGating();
+    renderTopbarIdentity();           // 先按 query 注入的身份渲染
+    syncAccount();                     // 再实时拉 /api/me 校准 + 触发班级引导
     loadClasses().then(() => go("dashboard"));
     return;
   }

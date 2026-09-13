@@ -555,6 +555,24 @@
         });
       } catch (e) { return { ok: false, error: e.message }; }
     },
+
+    // ---- 账号信息（全权接入 website 账号体系）----
+    // 嵌入网站（/admin/console）时 iframe 与宿主同源，siteFetch 带凭证 cookie 直连 /api/me，
+    // 拉取当前登录用户完整资料（含班级/年级绑定）。这就是「全权接入」——
+    // 面板不猜账号，直接读 website 真实账号存储；未登录/请求失败返回 null。
+    async me() {
+      if (state.demo) return null;
+      if (!state.embedded && !state.siteHost) return null;
+      try {
+        const r = await siteFetch("/api/me");
+        return (r && r.username) ? r : null;
+      } catch (_) { return null; }
+    },
+    /** 保存当前账号资料（含 className/gradeName），失败抛错。 */
+    async saveMe(patch) {
+      if (state.demo) return { ok: true, demo: true };
+      return siteFetch("/api/me", { method: "PUT", body: JSON.stringify(patch) });
+    },
   };
 
   global.API = API;
