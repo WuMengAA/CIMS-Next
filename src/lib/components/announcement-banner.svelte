@@ -48,9 +48,9 @@
 			<div class="flex items-start gap-3 rounded-lg border px-4 py-3 {s.cls}">
 				<Icon class="mt-0.5 size-4 shrink-0" />
 				<div class="min-w-0 flex-1">
-					<p class="text-sm font-medium">{a.title}</p>
+					<p class="text-sm font-medium break-words">{a.title}</p>
 					{#if a.content}
-						<p class="mt-0.5 whitespace-pre-wrap text-sm opacity-90">{a.content}</p>
+						<p class="mt-0.5 whitespace-pre-wrap text-sm break-words opacity-90">{a.content}</p>
 					{/if}
 				</div>
 				<button onclick={() => dismiss(a.id)} class="shrink-0 rounded p-1 opacity-70 transition-opacity hover:opacity-100" aria-label="关闭公告">

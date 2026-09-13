@@ -124,8 +124,8 @@
 						<h3 class="mb-3 font-heading font-medium">项目</h3>
 						<div class="flex flex-col gap-2">
 							{#each data.projects as project (project.slug)}
-								<a href="/projects/{project.slug}" class="group text-sm">
-									<span class="truncate group-hover:text-primary">{project.title}</span>
+								<a href="/projects/{project.slug}" class="group block min-w-0 text-sm">
+									<span class="block truncate group-hover:text-primary">{project.title}</span>
 								</a>
 							{/each}
 						</div>
@@ -136,8 +136,8 @@
 						<h3 class="mb-3 font-heading font-medium">文档</h3>
 						<div class="flex flex-col gap-2">
 							{#each data.docs as doc (doc.slug)}
-								<a href="/docs/{doc.slug}" class="group text-sm">
-									<span class="truncate group-hover:text-primary">{doc.title}</span>
+								<a href="/docs/{doc.slug}" class="group block min-w-0 text-sm">
+									<span class="block truncate group-hover:text-primary">{doc.title}</span>
 								</a>
 							{/each}
 						</div>

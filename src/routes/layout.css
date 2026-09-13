@@ -107,9 +107,32 @@
 	h4 {
 		@apply font-heading;
 	}
+
+	/* ───────────────────────────────────────────────────────────────────────────
+	   全尺寸适配：横向溢出防线
+	   ───────────────────────────────────────────────────────────────────────────
+	   症状：某些页面在某些宽度下整页可以左右拖动（出现横向滚动条），
+	   实测最集中在 **768–975px 的平板带**：正文最窄需要 ~711px，
+	   而 768px 减去 16rem 侧栏后只剩 ~504px。
+
+	   根因不是"某个元素写宽了"，而是 CSS 的默认值：
+	   flex / grid 子项的 `min-width` 默认是 `auto`，即"不得小于自身最小内容宽度"。
+	   于是只要有一处**不可换行的最小内容**——长 URL、长英文词、宽代码块、
+	   宽表格、写在行内元素上的 `truncate`——它会一路把父级撑宽，直到整页溢出。
+
+	   这里统一放开收缩权并让长串就地断行。两点刻意的设计：
+	   1. 写在 `@layer base` 内 —— 必须让 Tailwind 的 `min-w-*` / `break-*` 等
+	      工具类仍然优先，否则会成为"谁也叫不动的兜底规则"。
+	   2. 用 `:where()` 包住 —— 特异性归零，页面里显式写的类照旧生效。
+	   ────────────────────────────────────────────────────────────────────────── */
+	:where(.flex, .inline-flex, .grid, .inline-grid) > * {
+		min-width: 0;
+	}
+
+	:where(p, li, dd, dt, blockquote, figcaption, td, th, a, span, h1, h2, h3, h4, h5, h6) {
+		overflow-wrap: break-word;
+	}
 }
-
-
 /* --- Scrollbar utilities --- */
 
 /* Hide scrollbar while keeping scroll (used by sidebar) */
@@ -195,6 +218,23 @@
 	--tw-prose-hr: oklch(100% 0 0 / 0.15);
 	--tw-prose-th-borders: oklch(100% 0 0 / 0.2);
 	--tw-prose-td-borders: oklch(100% 0 0 / 0.12);
+	/* 长串（URL、长英文标识符、Git 哈希）就地断行；中文本身可断，不受影响。
+	   不限死在 .prose 上会让正文在手机上被撑出一条横向滚动条。 */
+	min-width: 0;
+	overflow-wrap: break-word;
+}
+/* 链接与行内代码常出现超长不可断的串，允许更激进地在任意位置断行 */
+.prose a,
+.prose code:not(pre code) {
+	overflow-wrap: anywhere;
+}
+/* 图片/视频永不超出正文宽度（含用户插入的宽图、B 站外链图） */
+.prose img,
+.prose video,
+.prose iframe,
+.prose svg {
+	max-width: 100%;
+	height: auto;
 }
 /* --- Vercel 排版基准：600 字重上限 / 负字间距 / 16-24 正文 / 13-20 代码 --- */
 .prose h1, .prose h2, .prose h3, .prose h4 {
@@ -504,27 +544,38 @@
 }
 
 
-/* Hero 视差：滚动时内容轻微上移（CSS 滚动驱动，不阻塞主线程） */
-.parallax-hero {
-	animation: parallax-up linear both;
-	animation-timeline: view();
-	animation-range: entry 0% entry 90%;
+/* Hero 视差：滚动离开首屏时内容轻微上移（CSS 滚动驱动，不阻塞主线程）
+   ────────────────────────────────────────────────────────────────────────────
+   这里有两个坑，都是实测踩到的：
+
+   1) 必须用 @supports 兜住。`animation-timeline` 不被支持时，
+      `animation: xxx linear both` 会退化成 **时长 0s** 的动画，而 `both` 的
+      forwards 填充会让元素永久停在 100% 关键帧（实测 hero 恒为 opacity:.75）。
+
+   2) **动画区间必须用 exit 而不是 entry**。用 `entry` 时，动画进度取决于
+      「元素高度 / 视口高度」——同一段 CSS，手机上和桌面上静止进度不同，
+      表现就是「不同尺寸的设备动画样式有差异」。
+      改用 `exit 0% → exit 100%`：元素静止时进度恒为 0，任何尺寸都一致，
+      只有真正开始滚出视口才产生位移。 */
+@supports (animation-timeline: view()) {
+	.parallax-hero {
+		animation: parallax-up linear both;
+		animation-timeline: view();
+		animation-range: exit 0% exit 100%;
+	}
+	/* 多速视差层：不同区块以不同速度随滚动漂移（进场阶段生效，静止时为 0 进度） */
+	.parallax-slow { animation: pslow linear both; animation-timeline: view(); animation-range: entry 0% entry 70%; }
+	.parallax-mid { animation: pmid linear both; animation-timeline: view(); animation-range: entry 0% entry 55%; }
 }
 @keyframes parallax-up {
-	from { transform: translateY(10px); opacity: 1; }
-	to { transform: translateY(-24px); opacity: 0.75; }
+	from { transform: translateY(0); opacity: 1; }
+	to { transform: translateY(-32px); opacity: 0.6; }
 }
-@media (prefers-reduced-motion: reduce) {
-	.parallax-hero { animation: none !important; }
-}
-
-
-/* 多速视差层：不同区块以不同速度随滚动漂移 */
-.parallax-slow { animation: pslow linear both; animation-timeline: view(); animation-range: entry 0% entry 70%; }
 @keyframes pslow { from { transform: translateY(26px); } to { transform: translateY(-10px); } }
-.parallax-mid { animation: pmid linear both; animation-timeline: view(); animation-range: entry 0% entry 55%; }
 @keyframes pmid { from { transform: translateY(18px); } to { transform: translateY(-22px); } }
-@media (prefers-reduced-motion: reduce) { .parallax-slow, .parallax-mid { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+	.parallax-hero, .parallax-slow, .parallax-mid { animation: none !important; }
+}
 
 /* --- 移动端触控区增强 --- */
 @media (max-width: 767px) {

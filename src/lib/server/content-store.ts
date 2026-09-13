@@ -176,6 +176,21 @@ export function getItem(section: "posts" | "projects" | "docs" | "pages", slug: 
 	};
 }
 
+/**
+ * 受管字段白名单。只有这些字段由调用方（编辑器 / 排序 / 审核）负责读写；
+ * 其余任何字段（updated、repoUrl、siteUrl、历史遗留的自定义字段……）
+ * 一律从磁盘上的原文件**原样继承**，绝不在保存或排序时被抹掉。
+ *
+ * 曾经的实现是「用白名单重建 frontmatter」，配合 reorderItems 只向下传部分字段，
+ * 导致一次「上移/下移」就会把 owner / folder / updated 等字段从文章里删掉——
+ * 属于静默数据丢失，必须避免。
+ */
+const MANAGED_FRONTMATTER_KEYS = [
+	"title", "date", "status", "updated",
+	"category", "tags", "excerpt", "cover",
+	"order", "pinned", "owner", "folder"
+] as const;
+
 export function saveItem(
 	section: "posts" | "projects" | "docs" | "pages",
 	item: Partial<ContentItem> & { title: string; body: string }
@@ -183,15 +198,39 @@ export function saveItem(
 	ensureDirs();
 	const slug = item.slug || item.title.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-").replace(/^-|-$/g, "");
 	const filePath = path.join(sections[section], slug + ".md");
-	const frontmatter: Record<string, unknown> = { title: item.title, date: item.date || new Date().toISOString().slice(0, 10), status: item.status || "published" };
-	if (item.category) frontmatter.category = item.category;
-	if (item.tags) frontmatter.tags = item.tags;
-	if (item.excerpt) frontmatter.excerpt = item.excerpt;
-	if (item.cover) frontmatter.cover = item.cover;
-	if (item.order !== undefined) frontmatter.order = item.order;
-	if (item.pinned !== undefined) frontmatter.pinned = item.pinned;
-	if (item.owner) frontmatter.owner = item.owner;
-	if (item.folder) frontmatter.folder = item.folder;
+
+	// 1) 读取磁盘上已有文件的 frontmatter 作为基线，保留全部未知字段
+	const existing: Record<string, unknown> = {};
+	let prevBody = "";
+	if (fs.existsSync(filePath)) {
+		const prev = matter(fs.readFileSync(filePath, "utf-8"));
+		Object.assign(existing, prev.data || {});
+		prevBody = (prev.content || "").trim();
+	}
+
+	// 2) 白名单字段按入参覆盖：
+	//    - 入参显式给出（且非空）→ 覆盖
+	//    - 入参显式给 null/""/undefined → 视为清空，删除该字段
+	//    - 入参完全没提到该字段 → 继承旧值（这样只改 order 的排序调用不会误伤其它字段）
+	const incoming = item as Record<string, unknown>;
+	const frontmatter: Record<string, unknown> = { ...existing };
+	for (const key of MANAGED_FRONTMATTER_KEYS) {
+		if (!(key in incoming)) continue;
+		const v = incoming[key];
+		if (v === undefined || v === null || v === "") delete frontmatter[key];
+		else frontmatter[key] = v;
+	}
+
+	// 3) 必填字段兜底（title/date/status 永远存在）
+	frontmatter.title = item.title;
+	if (!frontmatter.date) frontmatter.date = new Date().toISOString().slice(0, 10);
+	if (!frontmatter.status) frontmatter.status = "published";
+
+	// 4) 正文发生变化时自动刷新 updated（调用方显式指定则尊重调用方）
+	if (item.updated === undefined && fs.existsSync(filePath) && prevBody !== item.body.trim()) {
+		frontmatter.updated = new Date().toISOString().slice(0, 10);
+	}
+
 	const raw = matter.stringify(item.body, frontmatter);
 	fs.writeFileSync(filePath, raw, "utf-8");
 	// 写版本快照：每次保存都追加一条到 content/archive/[section]/[slug].jsonl
@@ -261,7 +300,8 @@ export function reorderItems(section: "posts" | "projects" | "docs" | "pages", o
 	ensureDirs();
 	for (let index = 0; index < orderedSlugs.length; index++) {
 		const item = getItem(section, orderedSlugs[index]);
-		if (item) saveItem(section, { slug: item.slug, title: item.title, body: item.body, date: item.date, category: item.category, tags: item.tags, excerpt: item.excerpt, cover: item.cover, status: item.status, order: index, pinned: item.pinned });
+		// 传全量字段再叠加 order：排序只应改变顺序，不应触碰 owner/folder/updated 等
+		if (item) saveItem(section, { ...item, order: index });
 	}
 }
 
