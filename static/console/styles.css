@@ -144,3 +144,171 @@ tbody tr:hover td.muted{background:transparent}
   /* 超窄屏：品牌让位给班级选择与连接状态（面板名在文档标题 / 外层返回条上已有） */
   .brand{display:none}
 }
+
+/* ==================== 移动端适配与动画（2026-09-13 增强） ====================
+   目标：手机/平板访问面板时布局不拥挤、交互有足够触控热区、切换有平滑过渡。
+   零依赖，纯 CSS + 少量 JS（视图淡入在 app.js）。
+   ----------------------------------------------------------------------------- */
+
+/* ---- 全局动画基底：尊重系统「减弱动态效果」 ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---- 视口/触控 ---- */
+html { -webkit-text-size-adjust: 100%; }
+body { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: contain; }
+
+button, select, input, textarea {
+  touch-action: manipulation; /* 取消双击缩放延迟/连点放大 */
+  min-height: 36px;           /* 触控热区下限：48px 对面板偏大，36px 折中 */
+}
+button { transition: background-color .18s ease, border-color .18s ease, transform .12s ease; }
+button:active, button:active.primary { transform: scale(.96); }
+.nav { min-height: 40px; transition: background-color .18s ease, color .18s ease; }
+.nav.active { transform: translateX(2px); } /* 高亮项轻微位移，提示位次 */
+
+/* ---- 视图切换淡入：由 app.js 在渲染完成后挂 .enter 触发 ---- */
+#view { position: relative; }
+#view > * { animation: viewIn .32s ease both; }
+#view.enter > * { transform-origin: top center; }
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* KPI 卡片 / 普通卡片逐格上浮（stagger），节奏轻快不滞重 */
+#view .kpi { animation: cardIn .34s cubic-bezier(.2,.7,.2,1) both; }
+#view .card { animation: cardIn .34s cubic-bezier(.2,.7,.2,1) both; }
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* 首排 KPI 依次错开，卡片组做少量延迟让"逐层浮现"感更顺 */
+#view > .grid:first-child .kpi:nth-child(1){animation-delay:.02s}
+#view > .grid:first-child .kpi:nth-child(2){animation-delay:.07s}
+#view > .grid:first-child .kpi:nth-child(3){animation-delay:.12s}
+#view > .grid:first-child .kpi:nth-child(4){animation-delay:.17s}
+#view > .grid:nth-child(2) .card:nth-child(1){animation-delay:.1s}
+#view > .grid:nth-child(2) .card:nth-child(2){animation-delay:.16s}
+
+/* 表格行淡入（数据刷新时的轻微出现感） */
+tbody tr { animation: rowIn .28s ease both; }
+@keyframes rowIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* 连接状态徽标过渡 */
+.conn { transition: background-color .25s ease, color .25s ease; }
+
+/* ---- 顶部栏：超窄屏自动收纳次要元素，避免挤爆 ---- */
+@media (max-width:520px){
+  #perm-chip{display:none}                    /* 权限写成 title，界面上为班级选择让位 */
+  #user-chip{max-width:64px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
+}
+@media (max-width:400px){
+  #user-chip{display:none}                    /* 再窄就干脆隐掉，保留班级与连接状态 */
+  .top-right{gap:4px}
+}
+
+/* ---- 登录卡片：自适应宽度，小屏不溢出 ---- */
+.login-card{ width:min(340px,100%); }
+
+/* ---- 窄屏表格：可滑动提示 + 横向滚动体验 ---- */
+@supports (scrollbar-width:none){
+  #main::-webkit-scrollbar{height:6px; width:6px}
+  #main::-webkit-scrollbar-thumb{background:var(--line); border-radius:3px}
+}
+@media (max-width:760px){
+  /* 表格可横向滑动：给可能溢出的表格上方标一个滑动引导 */
+  .card{scroll-margin-top:12px}
+  table{font-size:11.5px}
+  th,td{padding:6px 7px}
+}
+#main[data-scroll-hint="1"]::after{
+  content:"↔ 左右滑动查看";
+  display:block; position:sticky; left:0; bottom:-6px;
+  font-size:11px; color:var(--dim); text-align:center;
+  padding:2px 0; pointer-events:none; opacity:.85;
+}
+
+/* ---- 窄屏抽屉：加宽到 220px、加把手提示，遮罩淡入/淡出 ---- */
+@media (max-width:760px){
+  #sidebar{
+    width:220px; flex:0 0 220px;
+    padding-top:12px;
+  }
+  #sidebar .nav{ font-size:13.5px; }          /* 稍大字号利于触控 */
+}
+@media (max-width:380px){
+  #sidebar{width:200px; flex:0 0 200px}
+}
+
+/* ---- 内容区留出阅读舒适空间 ---- */
+@media (max-width:760px){
+  #main{padding:12px 10px 10px}
+  .grid{gap:8px}
+  .g4,.g3,.g2{grid-template-columns:1fr}       /* 窄屏全部单列，层层堆叠更易读 */
+}
+@media (min-width:761px) and (max-width:900px){
+  .g4{grid-template-columns:repeat(2,1fr)}     /* 平板：4 项 KPI 两两一组 */
+  .g3{grid-template-columns:repeat(2,1fr)}
+}
+
+/* ==================== 主页视觉卡片与动效（2026-09-13） ==================== */
+
+/* ---- 欢迎横幅 ---- */
+.db-hero{
+  display:flex; align-items:center; justify-content:space-between; gap:14px;
+  background:linear-gradient(135deg, var(--panel), #1e2a4a);
+  border:1px solid var(--line); border-radius:var(--r);
+  padding:16px 18px; margin-bottom:12px; overflow:hidden; position:relative;
+}
+.db-hero::after{ /* 右侧淡光晕，营造氛围 */
+  content:""; position:absolute; top:-40%; right:-6%; width:220px; height:180px;
+  background:radial-gradient(circle, rgba(59,130,246,.22), transparent 70%);
+  pointer-events:none;
+}
+.hero-title{font-size:17px; font-weight:500; position:relative; z-index:1}
+.hero-wave{display:inline-block; animation:wave 2.4s ease-in-out infinite; transform-origin:70% 70%}
+@keyframes wave{0%,60%,100%{transform:rotate(0)}10%{transform:rotate(14deg)}20%{transform:rotate(-8deg)}30%{transform:rotate(14deg)}40%{transform:rotate(-4deg)}}
+.hero-sub{color:var(--dim); font-size:12px; margin-top:3px; position:relative; z-index:1}
+.hero-badge{text-align:center; position:relative; z-index:1; flex:0 0 auto}
+.hero-big{font-size:28px; font-weight:600; color:var(--ok); line-height:1}
+.hero-small{color:var(--dim); font-size:11px; margin-top:2px}
+
+/* ---- 在线率进度条 ---- */
+.rate-bar{height:6px; background:var(--panel2); border-radius:3px; overflow:hidden; margin:8px 0 6px}
+.rate-bar span{display:block; height:100%; border-radius:3px;
+  background:linear-gradient(90deg, var(--ok), #4ade80);
+  transition:width .8s cubic-bezier(.2,.7,.2,1)}
+.rate-legend{display:flex; justify-content:space-between; color:var(--dim); font-size:11px; margin-bottom:8px}
+
+/* ---- 通用列表（设备/课表/通知）---- */
+.list{display:flex; flex-direction:column}
+.li{display:flex; align-items:center; gap:9px; padding:7px 6px; border-radius:8px;
+  animation:rowIn .3s ease both}
+.li:hover{background:var(--panel2)}
+.li-dot{width:8px; height:8px; border-radius:50%; flex:0 0 auto}
+.li-dot.on{background:var(--ok); box-shadow:0 0 6px rgba(34,197,94,.7)}
+.li-dot.off{background:var(--err)}
+.li-dot.ok{background:var(--ok)}
+.li-dot.warn{background:var(--warn)}
+.li-dot.accent{background:var(--accent)}
+.li-dot.err{background:var(--err)}
+.li-dot.dim{background:#4a5378}
+.li-name{font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:56vw}
+.li-time{color:var(--dim); font-size:11px; flex:0 0 auto}
+
+/* ---- 课表节次下标 ---- */
+.per-idx{width:26px; height:26px; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  border-radius:7px; background:var(--panel2); color:var(--muted); font-size:11px; font-family:ui-monospace,monospace}
+.li.per.now{background:linear-gradient(90deg, rgba(34,197,94,.12), transparent)}
+.li.per.now .per-idx{background:var(--ok); color:#fff}
+.li.per.now .li-name{color:var(--ok); font-weight:500}
+
+@media (max-width:560px){
+  .db-hero{padding:14px; flex-direction:column; align-items:flex-start}
+  .hero-badge{align-self:flex-end; margin-top:-44px} /* 横幅内右上角呼应 */
+  .hero-title{font-size:16px}
+  .li-name{max-width:46vw}
+}
+

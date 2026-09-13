@@ -78,28 +78,75 @@
   views.dashboard = async () => {
     const [devs, sched, notices] = await Promise.all([API.listDevices(), API.getSchedule(), API.listNotices()]);
     const online = devs.filter((d) => d.online).length;
-    return `
+    const offline = devs.length - online;
+    const rate = devs.length ? Math.round((online / devs.length) * 100) : 0;
+    const courses = ((sched.days[0] || {}).items || []);
+    const now = new Date();
+    const greet = now.getHours() < 12 ? "早上好" : now.getHours() < 18 ? "下午好" : "晚上好";
+    const todayStr = `${now.getMonth() + 1}月${now.getDate()}日 · 周${"日一二三四五六"[now.getDay()]}`;
+    const goods = (scope) => ({ "本班": "ok", "全校": "warn", "年级": "accent", "广播": "err" }[scope] || "");
+    const nextPeriod = courses[0];
+    return `<!-- 主页视觉卡片 -->
+      <div class="db-hero herald">
+        <div>
+          <div class="hero-title">${esc(greet)}，${esc(PERM.user || (PERM.roleLabel || "电教委员"))} <span class="hero-wave">👋</span></div>
+          <div class="hero-sub">${todayStr} · 本班电教设备与课表速览</div>
+        </div>
+        <div class="hero-badge">
+          <div class="hero-big">${rate}%</div>
+          <div class="hero-small">设备在线率</div>
+        </div>
+      </div>
+
       <div class="grid g4">
-        <div class="kpi"><div class="n">${online}/${devs.length}</div><div class="l">设备在线</div></div>
-        <div class="kpi"><div class="n">${(sched.days[0] || {}).items ? sched.days[0].items.length : "-"}</div><div class="l">今日课程</div></div>
-        <div class="kpi"><div class="n">${notices.length}</div><div class="l">通知</div></div>
-        <div class="kpi"><div class="n">${devs.filter(d=>!d.online).length}</div><div class="l">离线告警</div></div>
+        <div class="kpi"><div class="n" style="color:var(--ok)">${online}</div><div class="l">🖥 在线设备</div></div>
+        <div class="kpi"><div class="n" style="color:${offline ? "var(--err)" : "var(--muted)"}">${offline}</div><div class="l">⚠ 离线告警</div></div>
+        <div class="kpi"><div class="n" style="color:var(--accent)">${courses.length}</div><div class="l">📚 今日课程</div></div>
+        <div class="kpi"><div class="n" style="color:var(--warn)">${nextPeriod ? esc(nextPeriod) : "-"}</div><div class="l">🎯 下节课程</div></div>
       </div>
+
       <div class="grid g2">
-        <div class="card"><h3>设备状态</h3>
-          <table><thead><tr><th>名称</th><th>IP</th><th>版本</th><th>状态</th></tr></thead><tbody>
-          ${devs.map(d=>`<tr><td>${esc(d.name)}</td><td>${esc(d.ip)}</td><td>${esc(d.ver)}</td>
-            <td><span class="tag ${d.online?"ok":"err"}">${d.online?"在线":"离线"}</span></td></tr>`).join("")}
-          </tbody></table></div>
-        <div class="card"><h3>今日课表</h3>
-          <table><thead><tr><th>节次</th><th>课程</th></tr></thead><tbody>
-          ${((sched.days[0]||{}).items||[]).map((c,i)=>`<tr><td>第${i+1}节</td><td>${esc(c)}</td></tr>`).join("")}
-          </tbody></table></div>
+        <div class="card">
+          <h3>设备状态</h3>
+          <div class="rate-bar"><span style="width:${rate}%"></span></div>
+          <div class="rate-legend"><span>在线率 ${rate}%</span><span>${online}/${devs.length} 台</span></div>
+          <div class="list">
+            ${devs.slice(0, 10).map(d => `
+              <div class="li">
+                <span class="li-dot ${d.online ? "on" : "off"}"></span>
+                <span class="li-name">${esc(d.name)}</span>
+                <span class="grow"></span>
+                <span class="tag ${d.online ? "ok" : "err"}">${d.online ? "在线" : "离线"}</span>
+              </div>`).join("")}
+            ${devs.length > 10 ? `<div class="li muted">… 还有 ${devs.length - 10} 台设备</div>` : ""}
+          </div>
+        </div>
+        <div class="card">
+          <h3>今日课表</h3>
+          <div class="list">
+            ${courses.length ? courses.map((c, i) => `
+              <div class="li per${i === 0 ? " now" : ""}">
+                <span class="per-idx">${String(i + 1).padStart(2, "0")}</span>
+                <span class="li-name">${esc(c)}</span>
+                ${i === 0 ? `<span class="tag ok">进行中</span>` : ""}
+              </div>`).join("") : `<div class="li muted">今日无课</div>`}
+          </div>
+        </div>
       </div>
-      <div class="card"><h3>最近通知</h3>
-        <table><thead><tr><th>标题</th><th>范围</th><th>时间</th></tr></thead><tbody>
-        ${notices.map(n=>`<tr><td>${esc(n.title)}</td><td>${esc(n.scope)}</td><td>${esc(n.at)}</td></tr>`).join("")}
-        </tbody></table></div>`;
+
+      <div class="card">
+        <h3>最近通知</h3>
+        ${notices.length ? `<div class="list">
+          ${notices.slice(0, 6).map(n => `
+            <div class="li">
+              <span class="li-dot ${goods(n.scope) || "dim"}"></span>
+              <span class="li-name">${esc(n.title)}</span>
+              ${n.scope ? `<span class="tag ${goods(n.scope) || "dim"}">${esc(n.scope)}</span>` : ""}
+              <span class="grow"></span>
+              <span class="li-time">${esc(n.at || "")}</span>
+            </div>`).join("")}
+        </div>` : `<p class="muted">暂无通知</p>`}
+      </div>`;
   };
 
   views.schedule = async () => {
