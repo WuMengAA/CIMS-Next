@@ -3,7 +3,7 @@ title: DeepSeek Harness（dsh）本地 AI 运行底座
 date: '2026-09-07'
 updated: '2026-09-13'
 status: published
-category: 本地项目
+category: 生态组件
 tags:
   - AI
   - 插件

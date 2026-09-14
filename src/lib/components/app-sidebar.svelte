@@ -25,7 +25,8 @@
 		Rss,
 		MessagesSquare,
 		LogIn,
-		FileText
+		FileText,
+		Search
 	} from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
@@ -56,19 +57,18 @@
 	);
 
 	// Default nav arrays (used when nav config absent)
+	// 注意：不要在这里放「只有标题、没有内容」的占位页（AI 绘图 / 交互小说 / 追番 / 游戏 / 钱包），
+	// 它们会让导航显得又散又空。待功能真正落地后再在此处与 content/nav.json 同步挂出。
 	const defaultWorkspace = [
 		{ title: "首页", url: "/", icon: "home" },
 		{ title: "博客", url: "/posts", icon: "blog" },
 		{ title: "项目", url: "/projects", icon: "projects" },
-		{ title: "文档", url: "/docs", icon: "docs" },
+		{ title: "教程", url: "/docs", icon: "docs" },
 		{ title: "页面", url: "/pages", icon: "pages" },
-		{ title: "AI 绘图", url: "/create", icon: "create" },
-		{ title: "交互小说", url: "/novels", icon: "novels" },
-		{ title: "追番", url: "/anime", icon: "anime" },
-		{ title: "游戏", url: "/games", icon: "games" },
 		{ title: "工具集", url: "/tools", icon: "tools" }
 	];
 	const defaultMore = [
+		{ title: "搜索", url: "/search", icon: "search" },
 		{ title: "公告", url: "/announcements", icon: "announcements" },
 		{ title: "连接", url: "/links", icon: "links" },
 		{ title: "旧站归档", url: "/archives", icon: "archives" },
@@ -76,7 +76,6 @@
 	];
 	const defaultBottom = [
 		{ title: "管理后台", url: "/admin", icon: "admin" },
-		{ title: "钱包", url: "/wallet", icon: "wallet" },
 		{ title: "账号", url: "/account", icon: "account" }
 	];
 
@@ -88,7 +87,8 @@
 		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
 		"archive": Archive, "archives": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
 		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
-		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss, "pages": FileText
+		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss, "pages": FileText,
+		"search": Search, "layoutdashboard": FileText
 	};
 
 	const workspace = $derived(

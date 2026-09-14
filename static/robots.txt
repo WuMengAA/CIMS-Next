@@ -1,3 +1,20 @@
-# allow crawling everything by default
 User-agent: *
-Disallow:
+Allow: /
+
+# 后台、账号与接口不参与索引
+Disallow: /admin
+Disallow: /account
+Disallow: /api/
+Disallow: /search
+Disallow: /u/
+Disallow: /verify
+Disallow: /register
+
+# 未上线的占位页（页面内另有 noindex）
+Disallow: /wallet
+Disallow: /games
+Disallow: /anime
+Disallow: /novels
+Disallow: /create
+
+Sitemap: https://www.245959623.xyz/sitemap.xml

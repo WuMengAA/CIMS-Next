@@ -7,4 +7,4 @@
 	<title>交互小说 | Stelarith</title>
 </svelte:head>
 
-<PageHero icon={BookMarked} title="交互小说" desc="可以选择的剧情，由你书写结局。" />
+<PageHero icon={BookMarked} title="交互小说" desc="可以选择的剧情，由你书写结局。" note="功能建设中" />

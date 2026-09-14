@@ -31,16 +31,16 @@
 
 	<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
 		{#each versions as v (v.tag)}
-			<a href="/archives/" class="group flex items-center gap-4 p-5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+			<div class="flex items-center gap-4 p-5">
 				<Badge variant="secondary" class="shrink-0 font-mono">{v.tag}</Badge>
 				<div class="min-w-0 flex-1">
-					<p class="truncate font-heading text-base font-medium group-hover:text-primary">
+					<p class="truncate font-heading text-base font-medium">
 						{v.title}
 					</p>
 					<p class="truncate text-xs text-muted-foreground">{v.tech} · {v.year}</p>
 				</div>
-				<ChevronRight class="size-4 shrink-0 text-muted-foreground" />
-			</a>
+				<ChevronRight class="size-4 shrink-0 text-muted-foreground/40" />
+			</div>
 		{/each}
 	</div>
 </Container>

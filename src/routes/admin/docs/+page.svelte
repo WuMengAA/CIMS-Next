@@ -60,8 +60,8 @@
 
 <div class="mb-6 flex items-center justify-between">
 	<div>
-		<h1 class="text-2xl font-heading font-semibold">文档资料</h1>
-		<p class="text-sm text-muted-foreground">Wiki 模式文档库 · 拖动或按钮调整排序</p>
+		<h1 class="text-2xl font-heading font-semibold">教程</h1>
+		<p class="text-sm text-muted-foreground">Wiki 模式教程库 · 拖动或按钮调整排序</p>
 	</div>
 	<div class="flex items-center gap-2">
 		<Select.Root type="single" bind:value={folderFilter}>
@@ -72,14 +72,14 @@
 			</Select.Content>
 		</Select.Root>
 		<Button href="/admin/docs/new?folder=新建文件夹"><Plus class="h-4 w-4 mr-2" /> 新建文件夹</Button>
-		<Button href="/admin/docs/new"><Plus class="h-4 w-4 mr-2" /> 新建文档</Button>
+		<Button href="/admin/docs/new"><Plus class="h-4 w-4 mr-2" /> 新建教程</Button>
 	</div>
 </div>
 
 {#if visibleDocs.length === 0}
 	<div class="rounded-lg border border-dashed p-8 text-center text-muted-foreground">
-		<p>暂无文档</p>
-		<a href="/admin/docs/new" class="text-primary hover:underline">创建第一篇文档</a>
+		<p>暂无教程</p>
+		<a href="/admin/docs/new" class="text-primary hover:underline">创建第一篇教程</a>
 	</div>
 {:else}
 	<SortableList
@@ -93,5 +93,5 @@
 
 <div class="mt-8 flex items-start gap-2 rounded-lg border border-border/60 p-4 text-xs text-muted-foreground">
 	<BookMarked class="mt-0.5 h-4 w-4 shrink-0" />
-	<p>文档采用 Wiki 模式：前台页面左侧展示全部文档的目录树，点击切换内容。可在编辑器中直接编写 Markdown。</p>
+	<p>教程采用 Wiki 模式：前台页面左侧展示全部教程的目录树，点击切换内容。可在编辑器中直接编写 Markdown。</p>
 </div>

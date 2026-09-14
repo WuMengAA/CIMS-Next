@@ -3,7 +3,7 @@ title: 星璃音乐·中转服务器
 date: '2026-09-07'
 updated: '2026-09-13'
 status: published
-category: 本地项目
+category: 生态组件
 tags:
   - 中继
   - WebSocket

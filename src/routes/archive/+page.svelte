@@ -19,7 +19,7 @@
 	let busy = $state(false);
 	let msg = $state("");
 
-	const sectionLabel: Record<string, string> = { posts: "博客", projects: "项目", docs: "文档" };
+	const sectionLabel: Record<string, string> = { posts: "博客", projects: "项目", docs: "教程", pages: "页面" };
 
 	async function load() {
 		loading = true;
@@ -83,6 +83,7 @@
 					<div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
 						{#if it.section === "posts"}<FileText class="size-5" />
 						{:else if it.section === "projects"}<Rocket class="size-5" />
+						{:else if it.section === "pages"}<FileText class="size-5" />
 						{:else}<BookMarked class="size-5" />{/if}
 					</div>
 					<div class="min-w-0 flex-1">

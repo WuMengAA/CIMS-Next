@@ -3,7 +3,7 @@ title: Fonscape 风景声景站
 date: '2026-09-07'
 updated: '2026-09-13'
 status: published
-category: 云端项目
+category: 生态组件
 tags:
   - 风景
   - 声景

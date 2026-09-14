@@ -19,7 +19,7 @@
 		{ title: "仪表盘", url: "/admin", icon: LayoutDashboard },
 		{ title: "博客文章", url: "/admin/posts", icon: BookOpen },
 		{ title: "项目管理", url: "/admin/projects", icon: Rocket },
-		{ title: "文档资料", url: "/admin/docs", icon: BookMarked },
+		{ title: "教程管理", url: "/admin/docs", icon: BookMarked },
 		{ title: "页面管理", url: "/admin/pages", icon: FileText },
 		{ title: "媒体库", url: "/admin/media", icon: Image },
 		{ title: "友情链接", url: "/admin/links", icon: Link },

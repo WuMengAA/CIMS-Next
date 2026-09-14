@@ -7,4 +7,4 @@
 	<title>游戏 | Stelarith</title>
 </svelte:head>
 
-<PageHero icon={Gamepad2} title="游戏" desc="游戏收藏与游玩记录。" />
+<PageHero icon={Gamepad2} title="游戏" desc="游戏收藏与游玩记录。" note="功能建设中" />

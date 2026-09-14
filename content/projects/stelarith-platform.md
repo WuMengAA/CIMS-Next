@@ -3,7 +3,7 @@ title: Stelarith 内容平台
 date: '2026-09-06'
 updated: '2026-09-13'
 status: published
-category: 云端项目
+category: 星璃品牌
 tags:
   - SvelteKit
   - 多用户

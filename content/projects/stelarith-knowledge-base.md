@@ -3,7 +3,7 @@ title: 星璃知识库
 date: '2026-09-05'
 updated: '2026-09-13'
 status: published
-category: 云端项目
+category: 星璃品牌
 tags:
   - 文档
   - 知识库

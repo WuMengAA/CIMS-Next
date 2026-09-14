@@ -7,10 +7,10 @@
 
 	let { data }: {
 		data: {
-			profile: { username: string; displayName: string; role: string; bio?: string; createdAt: string };
-			content: { posts: any[]; projects: any[]; docs: any[] };
-		};
-	} = $props();
+		profile: { username: string; displayName: string; role: string; bio?: string; createdAt: string };
+		content: { posts: any[]; projects: any[]; docs: any[]; pages: any[] };
+	};
+} = $props();
 </script>
 
 <svelte:head>
@@ -69,7 +69,7 @@
 
 		<!-- 文档 -->
 		<section>
-			<h2 class="mb-3 flex items-center gap-2 font-heading text-lg font-semibold"><BookMarked class="size-5 text-primary" /> 文档（{data.content.docs.length}）</h2>
+			<h2 class="mb-3 flex items-center gap-2 font-heading text-lg font-semibold"><BookMarked class="size-5 text-primary" /> 教程（{data.content.docs.length}）</h2>
 			{#if data.content.docs.length}
 				<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60">
 					{#each data.content.docs as d (d.slug)}
@@ -81,5 +81,20 @@
 				</div>
 			{:else}<p class="text-sm text-muted-foreground">暂无发布。</p>{/if}
 		</section>
+
+		<!-- 页面 -->
+		{#if data.content.pages.length}
+			<section>
+				<h2 class="mb-3 flex items-center gap-2 font-heading text-lg font-semibold"><BookMarked class="size-5 text-primary" /> 页面（{data.content.pages.length}）</h2>
+				<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60">
+					{#each data.content.pages as pg (pg.slug)}
+						<a href="/pages/{pg.slug}" class="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-accent/40">
+							<span class="truncate text-sm font-medium">{pg.title}</span>
+							<span class="shrink-0 text-xs text-muted-foreground">{pg.date}</span>
+						</a>
+					{/each}
+				</div>
+			</section>
+		{/if}
 	</div>
 </Container>

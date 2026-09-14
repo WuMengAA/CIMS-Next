@@ -19,18 +19,18 @@
 </script>
 
 <svelte:head>
-	<title>文档 | Stelarith</title>
+	<title>教程 | Stelarith</title>
 </svelte:head>
 
 <Container>
-	<PageHeader title="文档" description="Wiki 模式的文档资料库，用于记录知识、指南与笔记。" />
+	<PageHeader title="教程" description="AI 与大模型入门教程，以及 DeepSeek Harness 的使用指南。" />
 
 	{#if data.docs.length === 0}
 		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
 			<BookMarked class="size-8" />
-		<p class="text-sm">还没有文档，去后台创建第一篇吧。</p>
+		<p class="text-sm">还没有教程，去后台创建第一篇吧。</p>
 		{#if data.canEdit}
-			<a href="/admin/docs/new" class="text-primary hover:underline">创建文档</a>
+			<a href="/admin/docs/new" class="text-primary hover:underline">创建教程</a>
 		{/if}
 		</div>
 {:else}

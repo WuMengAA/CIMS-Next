@@ -7,4 +7,4 @@
 	<title>钱包 | Stelarith</title>
 </svelte:head>
 
-<PageHero icon={Wallet} title="钱包" desc="余额、账单与赞助记录。" />
+<PageHero icon={Wallet} title="钱包" desc="余额、账单与赞助记录。" note="功能建设中" />

@@ -74,7 +74,7 @@
 		<div class="mb-3 flex items-center justify-between">
 			<a href="/docs" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
 				<BookMarked class="size-4" />
-				文档库
+				教程库
 			</a>
 			{#if data.canEdit}
 				<a href="/admin/docs/{data.doc.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
@@ -137,13 +137,13 @@
 					</div>
 				{/if}
 			{:else}
-				<a href="/admin/login" class="text-xs text-muted-foreground hover:text-primary">登录后可纠错文档</a>
+				<a href="/admin/login" class="text-xs text-muted-foreground hover:text-primary">登录后可纠错教程</a>
 			{/if}
 			{#if correctionMsg}<p class="mt-2 text-xs text-primary">{correctionMsg}</p>{/if}
 		</section>
 
 		<footer class="mt-8 border-t border-border/40 pt-6">
-			<a href="/docs" class="text-xs text-muted-foreground hover:text-primary">← 返回文档库</a>
+			<a href="/docs" class="text-xs text-muted-foreground hover:text-primary">← 返回教程库</a>
 		</footer>
 	</article>
 

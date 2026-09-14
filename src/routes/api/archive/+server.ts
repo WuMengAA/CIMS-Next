@@ -4,7 +4,7 @@ import { getVersions, getVersionRaw, restoreVersion, listItems } from "$lib/serv
 import { verifyToken } from "$lib/server/auth.js";
 import { can } from "$lib/permissions.js";
 
-const SECTIONS = ["posts", "projects", "docs"] as const;
+const SECTIONS = ["posts", "projects", "docs", "pages"] as const;
 
 export const GET: RequestHandler = async ({ url }) => {
 	const section = url.searchParams.get("section") as (typeof SECTIONS)[number] | null;

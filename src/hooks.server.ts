@@ -6,6 +6,13 @@ import { recordActivity } from "$lib/server/activity.js";
 /** 这些前缀不参与「页面浏览」活动记录（API / 静态资源 / 文件）。 */
 const SKIP_PREFIX = ["/api", "/_app", "/uploads", "/favicon", "/rss.xml", "/.well-known", "/robots.txt"];
 
+/**
+ * 这些前缀的页面是「因人而异 / 不该被共享缓存」的，不套用公共缓存头。
+ * 其余公开页面（博客、项目、教程、列表页…）对匿名访客是确定性的，
+ * 可以放心给公共缓存，减少重复渲染压力。
+ */
+const NO_PUBLIC_CACHE = ["/admin", "/account", "/api", "/verify", "/register", "/u/"];
+
 export async function handle({ event, resolve }) {
 	const url = event.url;
 	let user = null;
@@ -37,6 +44,16 @@ export async function handle({ event, resolve }) {
 		try {
 			user = verifyToken(event.cookies.get("admin_token"));
 		} catch { /* noop */ }
+	}
+
+	// 匿名访客访问公开内容页时套用公共缓存头：
+	// 登录用户（含编辑/管理员）不缓存，避免把「带后台入口的个性化 HTML」缓存出去。
+	const cacheablePublicPage =
+		!user && isHtmlNav && !NO_PUBLIC_CACHE.some((p) => url.pathname.startsWith(p));
+	if (cacheablePublicPage) {
+		event.setHeaders({
+			"Cache-Control": "public, max-age=30, s-maxage=120, stale-while-revalidate=600"
+		});
 	}
 
 	const response = await resolve(event);

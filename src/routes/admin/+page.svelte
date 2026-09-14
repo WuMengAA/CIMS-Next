@@ -65,7 +65,7 @@
 	</a>
 	<a href="/admin/docs" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
 		<div class="text-2xl font-semibold">{docsCount}</div>
-		<div class="text-sm text-muted-foreground">文档</div>
+		<div class="text-sm text-muted-foreground">教程</div>
 	</a>
 	<a href="/admin/media" class="block rounded-lg border bg-card p-4 hover:border-primary transition-colors">
 		<div class="text-2xl font-semibold">{mediaCount}</div>
@@ -99,7 +99,7 @@
 		<div class="flex flex-col gap-2">
 			<a href="/admin/posts" class="text-sm hover:text-primary">新建博客文章</a>
 			<a href="/admin/projects" class="text-sm hover:text-primary">新建项目</a>
-			<a href="/admin/docs" class="text-sm hover:text-primary">新建文档</a>
+			<a href="/admin/docs" class="text-sm hover:text-primary">新建教程</a>
 			<a href="/admin/media" class="text-sm hover:text-primary">上传媒体文件</a>
 		</div>
 	</div>

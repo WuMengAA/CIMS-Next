@@ -8,6 +8,7 @@ import katexPlugin from "markdown-it-katex";
 import taskLists from "markdown-it-task-lists";
 import footnote from "markdown-it-footnote";
 import { applyMarkdownExtensions } from "./markdown-extensions.js";
+import { getUser as getSqlUser } from "./auth.js";
 
 // ── 运行时 .env 加载 ──────────────────────────────────────────────────────────
 // adapter-node 的 `node build/index.js` 不会自动读取 .env（vite 只在构建期注入）。
@@ -724,7 +725,7 @@ export function getNav(): NavConfig {
 	ensureDirs();
 	const defaults: NavConfig = {
 		workspace: [
-			{ title: "首页", url: "/" }, { title: "博客", url: "/posts" }, { title: "项目", url: "/projects" }, { title: "文档", url: "/docs" }, { title: "页面", url: "/pages" }
+			{ title: "首页", url: "/" }, { title: "博客", url: "/posts" }, { title: "项目", url: "/projects" }, { title: "教程", url: "/docs" }, { title: "页面", url: "/pages" }
 		],
 		more: [],
 		bottom: [{ title: "管理后台", url: "/admin" }]
@@ -795,23 +796,30 @@ const USERS_FILE = path.join(CONTENT_DIR, "users.json");
 export interface PublicUserProfile { username: string; displayName: string; role: string; bio?: string; createdAt: string; }
 
 export function getUserPublic(username: string): PublicUserProfile | null {
+	// 真实账号已迁到 SQLite（stelarith.db），优先从这里取。
+	const u = getSqlUser(username);
+	if (u) {
+		return { username: u.username, displayName: u.displayName, role: u.role, bio: u.bio, createdAt: u.createdAt };
+	}
+	// 回退：兼容尚未迁移进 SQLite 的遗留 users.json 记录。
 	ensureDirs();
 	if (!fs.existsSync(USERS_FILE)) return null;
 	try {
 		const users: any[] = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8")).users || [];
-		const u = users.find(x => x.username === username);
-		if (!u) return null;
-		return { username: u.username, displayName: u.displayName, role: u.role, bio: u.bio, createdAt: u.createdAt };
+		const legacy = users.find(x => x.username === username);
+		if (!legacy) return null;
+		return { username: legacy.username, displayName: legacy.displayName, role: legacy.role, bio: legacy.bio, createdAt: legacy.createdAt };
 	} catch { return null; }
 }
 
-/** 按 owner/author 聚合某用户发布的已发布内容。 */
-export function getAuthorContent(username: string): { posts: any[]; projects: any[]; docs: any[] } {
+/** 按 owner/author 聚合某用户发布的已发布内容（含 posts/projects/docs/pages）。 */
+export function getAuthorContent(username: string): { posts: any[]; projects: any[]; docs: any[]; pages: any[] } {
 	const match = (it: ContentItem) => it.status === "published" && (it.owner === username || (it as any).author === username);
 	const posts = listItems("posts").filter(match).map(toSummary);
 	const projects = listItems("projects").filter(match).map(toSummary);
 	const docs = listItems("docs").filter(match).map(toSummary);
-	return { posts, projects, docs };
+	const pages = listItems("pages").filter(match).map(toSummary);
+	return { posts, projects, docs, pages };
 }
 
 // ── 项目专页申请 ─────────────────────────────────────────────────────────────

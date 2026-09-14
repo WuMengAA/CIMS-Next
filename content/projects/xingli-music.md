@@ -3,7 +3,7 @@ title: 星璃·无限音乐画布
 date: '2026-09-07'
 updated: '2026-09-13'
 status: published
-category: 本地项目
+category: 星璃品牌
 tags:
   - Flutter
   - 音乐

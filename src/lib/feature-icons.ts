@@ -43,7 +43,7 @@ export const FEATURE_ICON_OPTIONS: { value: FeatureIconName; label: string }[] =
 	{ value: "rocket", label: "极速" },
 	{ value: "sparkles", label: "精选" },
 	{ value: "zap", label: "性能" },
-	{ value: "book-open", label: "文档" },
+	{ value: "book-open", label: "教程" },
 	{ value: "layers", label: "分层" },
 	{ value: "wrench", label: "工具" },
 	{ value: "cpu", label: "技术" },

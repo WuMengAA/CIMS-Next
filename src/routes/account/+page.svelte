@@ -182,7 +182,7 @@
 	<!-- Backup -->
 	<div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-6">
 		<h2 class="flex items-center gap-2 font-heading text-lg font-medium"><Download class="size-4 text-primary" /> 数据备份</h2>
-		<p class="text-sm text-muted-foreground">导出你有权访问的全部内容（文章、项目、文档）为 JSON 文件。</p>
+		<p class="text-sm text-muted-foreground">导出你有权访问的全部内容（文章、项目、教程）为 JSON 文件。</p>
 		<div><Button variant="outline" onclick={exportBackup}><Download class="h-4 w-4 mr-2" />导出我的数据</Button></div>
 	</div>
 {/if}

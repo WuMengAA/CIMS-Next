@@ -6,6 +6,22 @@
 	import PageHeader from "$lib/components/page-header.svelte";
 
 	let { data }: { data: { projects: any[]; canEdit?: boolean; user?: { username: string; role: string } | null } } = $props();
+
+	// 按 category 分组，使「星璃品牌」在前、「生态组件」在后，立起核心叙事
+	const categoryOrder = ["星璃品牌", "生态组件"];
+	const groups = (() => {
+		const map = new Map<string, any[]>();
+		for (const p of data.projects) {
+			const key = p.category || "未分类";
+			if (!map.has(key)) map.set(key, []);
+			map.get(key)!.push(p);
+		}
+		return [...map.entries()].sort((a, b) => {
+			const ia = categoryOrder.indexOf(a[0]);
+			const ib = categoryOrder.indexOf(b[0]);
+			return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+		});
+	})();
 </script>
 
 <svelte:head>
@@ -32,29 +48,39 @@
 		{/if}
 		</div>
 	{:else}
-	<div class="grid gap-4 sm:grid-cols-2">
-		{#each data.projects as project (project.slug)}
-			<a href="/projects/{project.slug}" class="group flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-5 transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
-				<div class="flex items-center justify-between">
-					<div class="flex size-10 items-center justify-center rounded-md bg-primary/15 text-primary">
-						<Rocket class="size-5" />
-					</div>
-					{#if project.category}
-						<Badge variant="outline">{project.category}</Badge>
-					{/if}
+	<div class="flex flex-col gap-10">
+		{#each groups as [category, items] (category)}
+			<section class="flex flex-col gap-4">
+				<div class="flex items-center gap-3">
+					<h2 class="font-heading text-xl font-semibold">{category}</h2>
+					<span class="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{items.length}</span>
 				</div>
-				<h2 class="font-heading text-lg font-medium group-hover:text-primary">{project.title}</h2>
-				<p class="line-clamp-3 text-sm text-muted-foreground">{project.excerpt}</p>
-				<div class="mt-auto flex items-center gap-3 text-xs text-muted-foreground">
-					<span>{project.date}</span>
-					{#if project.repoUrl}
-						<span class="inline-flex items-center gap-1"><Github class="size-3" /> GitHub</span>
-					{/if}
-					{#if project.siteUrl}
-						<span class="inline-flex items-center gap-1"><Globe class="size-3" /> 在线</span>
-					{/if}
+				<div class="grid gap-4 sm:grid-cols-2">
+					{#each items as project (project.slug)}
+						<a href="/projects/{project.slug}" class="group flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-5 transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+							<div class="flex items-center justify-between">
+								<div class="flex size-10 items-center justify-center rounded-md bg-primary/15 text-primary">
+									<Rocket class="size-5" />
+								</div>
+								{#if project.category}
+									<Badge variant="outline">{project.category}</Badge>
+								{/if}
+							</div>
+							<h2 class="font-heading text-lg font-medium group-hover:text-primary">{project.title}</h2>
+							<p class="line-clamp-3 text-sm text-muted-foreground">{project.excerpt}</p>
+							<div class="mt-auto flex items-center gap-3 text-xs text-muted-foreground">
+								<span>{project.date}</span>
+								{#if project.repoUrl}
+									<span class="inline-flex items-center gap-1"><Github class="size-3" /> GitHub</span>
+								{/if}
+								{#if project.siteUrl}
+									<span class="inline-flex items-center gap-1"><Globe class="size-3" /> 在线</span>
+								{/if}
+							</div>
+						</a>
+					{/each}
 				</div>
-			</a>
+			</section>
 		{/each}
 	</div>
 {/if}

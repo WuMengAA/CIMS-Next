@@ -93,7 +93,7 @@
 		</div>
 		<div class="min-w-28 flex-1 rounded-xl border border-border/60 bg-card/60 p-5 text-center">
 			<div class="font-heading text-3xl font-semibold text-primary"><CountUp value={(data.docs || []).length} duration={1200} /></div>
-			<div class="mt-1 text-xs text-muted-foreground">篇文档</div>
+			<div class="mt-1 text-xs text-muted-foreground">篇教程</div>
 		</div>
 	</section>
 	<!-- Recent content -->
@@ -133,7 +133,7 @@
 				{/if}
 				{#if data.docs.length > 0}
 					<div class="rounded-xl border border-border/60 bg-card p-5">
-						<h3 class="mb-3 font-heading font-medium">文档</h3>
+						<h3 class="mb-3 font-heading font-medium">教程</h3>
 						<div class="flex flex-col gap-2">
 							{#each data.docs as doc (doc.slug)}
 								<a href="/docs/{doc.slug}" class="group block min-w-0 text-sm">

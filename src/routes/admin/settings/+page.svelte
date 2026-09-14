@@ -227,7 +227,7 @@
 
 	<div class="flex flex-col gap-3">
 		<h2 class="font-heading text-lg font-medium">数据备份</h2>
-		<p class="text-sm text-muted-foreground">导出你有权访问的全部内容（文章/项目/文档）。可选择加密导出，仅持有密码者可解密。</p>
+		<p class="text-sm text-muted-foreground">导出你有权访问的全部内容（文章/项目/教程）。可选择加密导出，仅持有密码者可解密。</p>
 		<div class="flex items-center gap-2">
 			<Input type="password" bind:value={backupPass} placeholder="加密密码（留空则不加密）" class="max-w-xs" />
 			<Button onclick={exportBackup} variant="outline"><Download class="h-4 w-4 mr-2" />导出备份</Button>
