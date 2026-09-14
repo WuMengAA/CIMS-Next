@@ -187,12 +187,47 @@ public sealed class StelarithCommandPollerService : BackgroundService
             var handler = logger is null
                 ? new StelarithCommandHandler(Microsoft.Extensions.Logging.Abstractions.NullLogger<StelarithCommandPollerService>.Instance)
                 : new StelarithCommandHandler(logger);
-            await handler.HandleAsync(cmd.Type, cmd.Payload, CancellationToken.None);
+            try
+            {
+                await handler.HandleAsync(cmd.Type, cmd.Payload, CancellationToken.None);
+                await AckCommandAsync(opt, cmd.Id, "done");
+            }
+            catch (Exception ex)
+            {
+                PollerDiag($"process cmd={cmd.Id} FAILED: {ex.Message}");
+                logger?.LogWarning(ex, "Stelarith poller: 执行命令 {id} 失败", cmd.Id);
+                await AckCommandAsync(opt, cmd.Id, "failed");
+            }
         }
 
         if (batch.Count > 0)
         {
             logger?.LogInformation("Stelarith poller: 本轮取走并处理 {n} 条命令", batch.Count);
+        }
+    }
+
+    /// <summary>向服务端上报单条命令的执行结果（done/failed）。POST /command/ack。</summary>
+    private static async Task AckCommandAsync(StelarithSyncOptions opt, long cmdId, string status)
+    {
+        try
+        {
+            var url = $"{opt.ClientAppBase}/api/v1/client/{opt.ClientUid}/command/ack";
+            var payload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                command_ids = new[] { cmdId },
+                status,
+            });
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Headers = { Host = $"{opt.Slug}.{opt.BaseDomain}" },
+                Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
+            };
+            using var resp = await Http.SendAsync(req, CancellationToken.None);
+            PollerDiag($"ack cmd={cmdId} -> HTTP {(int)resp.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            PollerDiag($"ack cmd={cmdId} failed: {ex.Message}");
         }
     }
 
