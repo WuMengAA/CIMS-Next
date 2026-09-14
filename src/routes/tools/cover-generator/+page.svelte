@@ -69,8 +69,11 @@
 <PageHero icon={Palette} title="封面生成器" desc="确定性模板封面：深色品牌底 + 陶土橙强调 + lucide 图标。实时预览，可导出 SVG（矢量）或 PNG（位图，适合 og:image）。" />
 
 <div class="grid gap-6 lg:grid-cols-[1fr_360px]">
-	<!-- 预览 -->
-	<div class="rounded-2xl border border-white/10 bg-black/30 p-4">
+	<!-- 预览台：**刻意固定深色**，不跟随主题。
+	     这里展示的就是深色品牌封面的成品效果，底色若跟着主题变亮，
+	     预览与真实导出图就不一致了。所以用固定深色底，配白系文字，
+	     两种主题下都读得清。 -->
+	<div class="rounded-2xl border border-border bg-[#141413] p-4">
 		<div class="mx-auto max-w-3xl overflow-hidden rounded-xl shadow-2xl ring-1 ring-white/10">
 			{@html svg}
 		</div>
@@ -82,7 +85,9 @@
 	</div>
 
 	<!-- 控制 -->
-	<div class="space-y-5 rounded-2xl border border-white/10 bg-black/20 p-5">
+	<!-- 控制面板贴在页面底色上，原先写死 border-white/10 bg-black/20 ——
+	     亮色主题下会退化成浅灰卡片，里面的白字全部看不见。改为语义令牌。 -->
+	<div class="space-y-5 rounded-2xl border border-border bg-card p-5">
 		<label class="block">
 			<span class="label">标题</span>
 			<input class="field" bind:value={title} placeholder="文章标题" />
@@ -101,9 +106,9 @@
 			<div class="mt-2 grid grid-cols-6 gap-2">
 				{#each COVER_ICON_NAMES as name}
 					<button
-						class="grid h-10 place-items-center rounded-lg border text-white/80 transition {icon === name
-							? 'border-[var(--accent)] bg-[var(--accent)]/15 text-[var(--accent)]'
-							: 'border-white/10 bg-white/5 hover:border-white/30'}"
+						class="grid h-10 place-items-center rounded-lg border text-muted-foreground transition {icon === name
+							? 'border-primary bg-primary/15 text-primary'
+							: 'border-border bg-muted hover:border-primary/40'}"
 						title={name}
 						onclick={() => (icon = name)}
 					>
@@ -138,7 +143,7 @@
 			</label>
 		</div>
 
-		<p class="text-xs leading-relaxed text-white/40">
+		<p class="text-xs leading-relaxed text-muted-foreground">
 			提示：全站 10 篇文章的封面已用本工具风格批量生成（<code>scripts/gen-covers.mjs</code>），位于
 			<code>static/covers/</code>。需要重新生成时改脚本里的图标映射后运行即可。
 		</p>
@@ -146,37 +151,42 @@
 </div>
 
 <style>
+	/* .label / .field / .swatch 只出现在控制面板（跟随主题）里，
+	   原先写死白系 rgba —— 亮色下等于隐形。改用令牌。
+	   注意 .btn-primary 原来用的是 var(--accent)：那是**面/背景色**令牌，
+	   不是品牌色，渲染出来是一枚灰按钮；而且硬编码了深色文字。
+	   改回 --primary / --primary-foreground。 */
 	.label {
 		display: block;
 		margin-bottom: 6px;
 		font-size: 13px;
-		color: rgba(255, 255, 255, 0.6);
+		color: var(--muted-foreground);
 	}
 	.field {
 		width: 100%;
 		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid var(--input);
+		background: var(--background);
 		padding: 9px 11px;
-		color: #f5f3ef;
+		color: var(--foreground);
 		font-size: 14px;
 		outline: none;
 	}
 	.field:focus {
-		border-color: var(--accent);
+		border-color: var(--ring);
 	}
 	.swatch {
 		width: 100%;
 		height: 38px;
 		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		border: 1px solid var(--input);
 		background: transparent;
 		cursor: pointer;
 	}
 	.btn-primary {
 		border-radius: 10px;
-		background: var(--accent);
-		color: #1b1b19;
+		background: var(--primary);
+		color: var(--primary-foreground);
 		font-weight: 600;
 		padding: 9px 16px;
 		font-size: 14px;

@@ -5,11 +5,17 @@
 	interface Ann { id: string; title: string; content: string; level: string; }
 	let items = $state<Ann[]>([]);
 
+	/* 文字色必须分主题给。
+	   原先只有 text-*-100（近乎白的浅色），那是**深色专用**：底是 *-500/10，
+	   深色主题下是一层极淡的色块，浅色文字刚好读得清；换成亮色主题，
+	   同一层 10% 色块落在 #faf9f5 上仍是浅底 —— 浅字压浅底，整条公告等于隐形。
+	   做法：亮色用 700 档（深），深色保留 100 档，靠 dark: 变体切换。
+	   边框 500/40 在两种底色上都够显眼，不用改。 */
 	const LEVEL_STYLE: Record<string, { cls: string; Icon: any }> = {
-		info: { cls: "border-sky-500/40 bg-sky-500/10 text-sky-100", Icon: Info },
-		success: { cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-100", Icon: CheckCircle2 },
-		warning: { cls: "border-amber-500/40 bg-amber-500/10 text-amber-100", Icon: AlertTriangle },
-		danger: { cls: "border-rose-500/40 bg-rose-500/10 text-rose-100", Icon: AlertOctagon }
+		info: { cls: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-100", Icon: Info },
+		success: { cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-100", Icon: CheckCircle2 },
+		warning: { cls: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-100", Icon: AlertTriangle },
+		danger: { cls: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-100", Icon: AlertOctagon }
 	};
 
 	function dismissed(id: string): boolean {

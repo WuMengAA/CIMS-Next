@@ -5,8 +5,76 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-	/* Claude/Stelarith design tokens (dark-only site) */
+	/* ───────────────────────────────────────────────────────────────────────────
+	   Stelarith 设计令牌 —— 亮色（默认）
+	   ───────────────────────────────────────────────────────────────────────────
+	   全站原为「dark-only」。改为双主题时，把深色值整体下沉到 .dark，
+	   :root 让给亮色——这样「没有 .dark 类」就等于亮色，
+	   与 app.html 的 SSR 兜底（<html class="dark">）配合：
+	   首屏给深色，脚本按用户选择增删类名，两条路径同一套令牌。
+
+	   亮色取值遵循同一套暖灰审美（背景用原深色主题的前景色 #faf9f5 反转），
+	   primary 由 #cc785c 加深到 #a8482b —— 原橙在浅底上只有 ~3.4:1，
+	   作为链接/行内代码文字不达 AA（对比度已用脚本实测，全部 ≥4.5:1）。
+	   ─────────────────────────────────────────────────────────────────────────── */
 	--radius: 0.5rem;
+	--background: #faf9f5;
+	--foreground: #1b1b19;
+	--card: #ffffff;
+	--card-nested: #f4f3ee;
+	--card-foreground: #1b1b19;
+	--popover: #ffffff;
+	--popover-foreground: #1b1b19;
+	--primary: #a8482b;
+	--primary-foreground: #ffffff;
+	--secondary: #eceae3;
+	--secondary-foreground: #1b1b19;
+	--muted: #f0eee8;
+	/* 次要文字色：#6b6a62 在侧栏选中底（#e8e6df）上只有 4.35:1，差一点点到 AA。
+	   压深到 #63625a 后，页面底/卡片/侧栏底/侧栏选中/嵌套卡 五种底色上最低 4.91:1。 */
+	--muted-foreground: #63625a;
+	--accent: #f0eee8;
+	--accent-foreground: #1b1b19;
+	--destructive: #b3261e;
+	--destructive-solid: #8c1d18;
+	--destructive-foreground: #ffffff;
+	--success: #3f6212;
+	--success-foreground: #ffffff;
+	--warning: #7a4f00;
+	--warning-foreground: #ffffff;
+	--border: oklch(0% 0 0 / 0.14);
+	--input: oklch(0% 0 0 / 0.10);
+	--ring: #a8482b;
+
+	--sidebar: #f2f1ec;
+	--sidebar-foreground: #1b1b19;
+	--sidebar-primary: #a8482b;
+	--sidebar-primary-foreground: #ffffff;
+	--sidebar-accent: #e8e6df;
+	--sidebar-accent-foreground: #1b1b19;
+	--sidebar-border: oklch(0% 0 0 / 0.14);
+	--sidebar-ring: #a8482b;
+
+	/* --- 语义补充令牌：给 layout.css 里原本写死的"白/黑 alpha"用 ---
+	   深色下这些是"加白"，亮色下必须变成"加黑"，否则分隔线、代码块底、
+	   表格斑马纹在浅底上会整体消失（原实现全是 oklch(100% 0 0 / x)）。 */
+	--hairline: oklch(0% 0 0 / 0.10);
+	--hairline-strong: oklch(0% 0 0 / 0.16);
+	--tint-1: oklch(0% 0 0 / 0.03);
+	--tint-2: oklch(0% 0 0 / 0.05);
+	--tint-3: oklch(0% 0 0 / 0.07);
+	--code-bg: #f6f8fa;
+	--prose-body: #3a3a35;
+	--scrollbar-thumb: oklch(0% 0 0 / 0.18);
+	--scrollbar-thumb-hover: oklch(0% 0 0 / 0.30);
+	--sheen: rgba(255, 255, 255, 0.55);
+	--shadow-card: rgba(0, 0, 0, 0.12);
+	/* 背景特效（极光/网格/粒子）在浅底上过强会发脏，按主题缩放强度 */
+	--bg-mode-scale: 0.55;
+}
+
+.dark {
+	/* Claude/Stelarith 设计令牌 —— 深色（原 dark-only 取值，逐字保留） */
 	--background: #1b1b19;
 	--foreground: #faf9f5;
 	--card: oklch(28% 0.004 106.6);
@@ -41,6 +109,19 @@
 	--sidebar-accent-foreground: #faf9f5;
 	--sidebar-border: oklch(100% 0 0 / 0.24);
 	--sidebar-ring: #cc785c;
+
+	--hairline: oklch(100% 0 0 / 0.12);
+	--hairline-strong: oklch(100% 0 0 / 0.2);
+	--tint-1: oklch(100% 0 0 / 0.04);
+	--tint-2: oklch(100% 0 0 / 0.06);
+	--tint-3: oklch(100% 0 0 / 0.08);
+	--code-bg: oklch(20% 0.004 106.6);
+	--prose-body: oklch(95% 0.01 90);
+	--scrollbar-thumb: oklch(100% 0 0 / 0.15);
+	--scrollbar-thumb-hover: oklch(100% 0 0 / 0.25);
+	--sheen: rgba(255, 255, 255, 0.35);
+	--shadow-card: rgba(0, 0, 0, 0.5);
+	--bg-mode-scale: 1;
 }
 
 @theme inline {
@@ -96,7 +177,16 @@
 		@apply border-border outline-ring/50;
 	}
 	html {
+		color-scheme: light;
+	}
+	html.dark {
 		color-scheme: dark;
+	}
+	/* 主题切换后给一次短暂的颜色过渡，避免整屏硬切；
+	   但尊重 reduced-motion，且只在 mode 变化后 200ms 内生效（由切换组件加类）。 */
+	html.theme-switching,
+	html.theme-switching * {
+		transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease !important;
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
@@ -153,11 +243,11 @@
 	background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-	background: oklch(100% 0 0 / 0.15);
+	background: var(--scrollbar-thumb);
 	border-radius: 4px;
 }
 *::-webkit-scrollbar-thumb:hover {
-	background: oklch(100% 0 0 / 0.25);
+	background: var(--scrollbar-thumb-hover);
 }
 @media (max-width: 768px) {
 	*::-webkit-scrollbar {
@@ -208,16 +298,16 @@
 
 /* --- Prose (Markdown rendered content) theme adjustments --- */
 .prose {
-	--tw-prose-body: oklch(0.95 0.01 90);
+	--tw-prose-body: var(--prose-body);
 	--tw-prose-headings: var(--foreground);
 	--tw-prose-links: var(--primary);
 	--tw-prose-bold: var(--foreground);
 	--tw-prose-code: var(--primary);
 	--tw-prose-quotes: var(--foreground);
 	--tw-prose-bullets: var(--primary);
-	--tw-prose-hr: oklch(100% 0 0 / 0.15);
-	--tw-prose-th-borders: oklch(100% 0 0 / 0.2);
-	--tw-prose-td-borders: oklch(100% 0 0 / 0.12);
+	--tw-prose-hr: var(--hairline);
+	--tw-prose-th-borders: var(--hairline-strong);
+	--tw-prose-td-borders: var(--hairline);
 	/* 长串（URL、长英文标识符、Git 哈希）就地断行；中文本身可断，不受影响。
 	   不限死在 .prose 上会让正文在手机上被撑出一条横向滚动条。 */
 	min-width: 0;
@@ -271,8 +361,8 @@
 	margin-top: 0.5rem;
 }
 .prose pre {
-	background: oklch(20% 0.004 106.6);
-	border: 1px solid oklch(100% 0 0 / 0.1);
+	background: var(--code-bg);
+	border: 1px solid var(--hairline);
 	border-radius: 0.375rem; /* rounded.sm 6px */
 	font-size: 0.8125rem; /* code 13 / 20 */
 	line-height: 1.25rem;
@@ -280,7 +370,7 @@
 	overflow-x: auto;
 }
 .prose code:not(pre code) {
-	background: oklch(100% 0 0 / 0.08);
+	background: var(--tint-3);
 	border-radius: 0.25rem;
 	padding: 0.1em 0.35em;
 	font-size: 0.8125rem; /* code 13px */
@@ -305,25 +395,25 @@
 	border-collapse: collapse;
 	font-size: 0.875rem;
 	margin: 1.25rem 0;
-	border: 1px solid oklch(100% 0 0 / 0.12);
+	border: 1px solid var(--hairline);
 	border-radius: 0.5rem;
 }
 .prose th,
 .prose td {
-	border: 1px solid oklch(100% 0 0 / 0.12);
+	border: 1px solid var(--hairline);
 	padding: 0.5rem 0.75rem;
 	text-align: left;
 	vertical-align: top;
 }
 .prose thead th {
-	background: oklch(100% 0 0 / 0.06);
+	background: var(--tint-2);
 	font-weight: 600;
 }
 .prose tbody tr:nth-child(even) {
-	background: oklch(100% 0 0 / 0.03);
+	background: var(--tint-1);
 }
 .prose tbody tr:hover {
-	background: oklch(100% 0 0 / 0.06);
+	background: var(--tint-2);
 }
 
 
@@ -340,19 +430,30 @@
 .prose sub { bottom: -0.25em; }
 
 .prose mark {
-	background: oklch(85% 0.14 90 / 0.28);
+	background: color-mix(in oklab, var(--primary) 20%, transparent);
 	color: var(--foreground);
 	border-radius: 0.2rem;
 	padding: 0.05em 0.25em;
 }
 
+/* callout 配色按「色相」定义，明度随主题走。
+   原实现把边框/标题写成固定的 oklch(78~85% …)——那是为深色底选的白亮色，
+   照搬到浅色底上就是白字压白底（隐形）。所以拆成：
+   --callout-l / --callout-c 由主题决定，--callout-h 由类型决定。 */
 .prose blockquote.md-callout {
-	border-inline-start: 3px solid var(--primary);
-	background: oklch(100% 0 0 / 0.04);
+	--callout-l: 45%;   /* 亮色：压暗才可读 */
+	--callout-c: 0.12;
+	--callout-h: 22;
+	border-inline-start: 3px solid oklch(var(--callout-l) var(--callout-c) var(--callout-h));
+	background: var(--tint-1);
 	border-radius: 0.5rem;
 	padding: 0.85rem 1rem;
 	margin: 1.25rem 0;
 	font-style: normal;
+}
+.dark .prose blockquote.md-callout {
+	--callout-l: 80%;   /* 深色：沿用原来的白亮色 */
+	--callout-c: 0.14;
 }
 .prose blockquote.md-callout > :last-child { margin-bottom: 0; }
 .prose .md-callout-title {
@@ -361,33 +462,24 @@
 	font-size: 0.9rem;
 	letter-spacing: 0.01em;
 	margin-bottom: 0.35rem;
+	color: oklch(var(--callout-l) var(--callout-c) var(--callout-h));
 }
 .prose .md-callout-title + * { margin-top: 0; }
 
-.prose blockquote.md-callout-tip { border-inline-start-color: oklch(78% 0.15 165); }
+.prose blockquote.md-callout-tip { --callout-h: 165; }
 .prose blockquote.md-callout-note,
-.prose blockquote.md-callout-info { border-inline-start-color: oklch(78% 0.13 245); }
-.prose blockquote.md-callout-success { border-inline-start-color: oklch(80% 0.16 150); }
+.prose blockquote.md-callout-info { --callout-h: 245; }
+.prose blockquote.md-callout-success { --callout-h: 150; }
 .prose blockquote.md-callout-warning,
-.prose blockquote.md-callout-caution { border-inline-start-color: oklch(83% 0.15 80); }
+.prose blockquote.md-callout-caution { --callout-h: 80; }
 .prose blockquote.md-callout-danger,
-.prose blockquote.md-callout-important { border-inline-start-color: oklch(70% 0.19 22); }
-.prose blockquote.md-callout-question { border-inline-start-color: oklch(80% 0.14 55); }
+.prose blockquote.md-callout-important { --callout-h: 22; }
+.prose blockquote.md-callout-question { --callout-h: 55; }
 .prose blockquote.md-callout-example,
 .prose blockquote.md-callout-quote,
 .prose blockquote.md-callout-abstract,
 .prose blockquote.md-callout-summary,
-.prose blockquote.md-callout-todo { border-inline-start-color: oklch(72% 0.11 305); }
-
-.prose .md-callout-tip .md-callout-title { color: oklch(80% 0.14 165); }
-.prose .md-callout-note .md-callout-title,
-.prose .md-callout-info .md-callout-title { color: oklch(80% 0.12 245); }
-.prose .md-callout-success .md-callout-title { color: oklch(82% 0.15 150); }
-.prose .md-callout-warning .md-callout-title,
-.prose .md-callout-caution .md-callout-title { color: oklch(85% 0.14 80); }
-.prose .md-callout-danger .md-callout-title,
-.prose .md-callout-important .md-callout-title { color: oklch(74% 0.18 22); }
-.prose .md-callout-question .md-callout-title { color: oklch(82% 0.13 55); }
+.prose blockquote.md-callout-todo { --callout-h: 305; }
 
 
 /* --- 页面跳转动画（View Transitions） ---
@@ -504,7 +596,7 @@
 	position: absolute;
 	top: 0; left: -80%;
 	width: 50%; height: 100%;
-	background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+	background: linear-gradient(90deg, transparent, var(--sheen), transparent);
 	transform: skewX(-20deg);
 	transition: left 0.5s ease;
 	pointer-events: none;
@@ -525,7 +617,7 @@
 }
 .card-hover:hover {
 	transform: translateY(-4px);
-	box-shadow: 0 12px 34px -12px rgba(0,0,0,0.5), 0 0 0 1px rgba(204,120,92,0.18);
+	box-shadow: 0 12px 34px -12px var(--shadow-card), 0 0 0 1px rgba(204,120,92,0.18);
 	border-color: rgba(204,120,92,0.45) !important;
 }
 
@@ -584,3 +676,62 @@
 		min-height: 2.75rem;
 	}
 }
+
+
+/* --- 代码高亮（highlight.js）双主题 ---
+   ────────────────────────────────────────────────────────────────────────────
+   原先只 import github-dark.css，深色底写死在主题文件里。
+   双主题下不能同时 import 两套主题的 CSS：它们的 .hljs 规则特异性完全相同，
+   后加载的那份会无条件压过前者，跟当前主题毫无关系。
+
+   做法：全局只 import 亮色的 github.css，深色调色板在这里以 `.dark .hljs`
+   （特异性 0,2,0 > 主题文件的 0,1,0）重写一份 —— 因此**不依赖样式表加载顺序**，
+   Vite 把 CSS 打进不同 chunk 时也不会失效。色值逐条对应 github-dark.css。 */
+.prose .hljs {
+	/* 底色统一交给 --code-bg，避免主题文件自带的背景与卡片层次打架 */
+	background: transparent;
+}
+.dark .hljs {
+	color: #c9d1d9;
+	background: transparent;
+}
+.dark .hljs-doctag,
+.dark .hljs-keyword,
+.dark .hljs-meta .hljs-keyword,
+.dark .hljs-template-tag,
+.dark .hljs-template-variable,
+.dark .hljs-type,
+.dark .hljs-variable.language_ { color: #ff7b72; }
+.dark .hljs-title,
+.dark .hljs-title.class_,
+.dark .hljs-title.class_.inherited__,
+.dark .hljs-title.function_ { color: #d2a8ff; }
+.dark .hljs-attr,
+.dark .hljs-attribute,
+.dark .hljs-literal,
+.dark .hljs-meta,
+.dark .hljs-number,
+.dark .hljs-operator,
+.dark .hljs-variable,
+.dark .hljs-selector-attr,
+.dark .hljs-selector-class,
+.dark .hljs-selector-id { color: #79c0ff; }
+.dark .hljs-regexp,
+.dark .hljs-string,
+.dark .hljs-meta .hljs-string { color: #a5d6ff; }
+.dark .hljs-built_in,
+.dark .hljs-symbol { color: #ffa657; }
+.dark .hljs-comment,
+.dark .hljs-code,
+.dark .hljs-formula { color: #8b949e; }
+.dark .hljs-name,
+.dark .hljs-quote,
+.dark .hljs-selector-tag,
+.dark .hljs-selector-pseudo { color: #7ee787; }
+.dark .hljs-subst { color: #c9d1d9; }
+.dark .hljs-section { color: #1f6feb; font-weight: bold; }
+.dark .hljs-bullet { color: #f2cc60; }
+.dark .hljs-emphasis { color: #c9d1d9; font-style: italic; }
+.dark .hljs-strong { color: #c9d1d9; font-weight: bold; }
+.dark .hljs-addition { color: #aff5b4; background-color: #033a16; }
+.dark .hljs-deletion { color: #ffdcd7; background-color: #67060c; }

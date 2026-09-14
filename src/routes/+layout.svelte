@@ -1,15 +1,20 @@
 <script lang="ts">
-	import "./layout.css";
-	import "highlight.js/styles/github-dark.css";
+	// 样式加载顺序：第三方在前、本站 layout.css 压轴 —— 让本站令牌与覆盖
+	// （尤其 `.dark .hljs` 这份代码高亮深色改写）稳落在最后。
+	// 双主题下只 import 亮色的 highlight 主题，深色见 layout.css 末尾。
 	import "katex/dist/katex.min.css";
 	import "@fontsource-variable/inter";
 	import "@fontsource-variable/lora";
+	import "highlight.js/styles/github.css";
+	import "./layout.css";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
 	import { Separator } from "$lib/components/ui/separator/index.js";
 	import { Toaster } from "$lib/components/ui/sonner/index.js";
 	import { PanelLeft } from "@lucide/svelte";
 	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
+	import ThemeToggle from "$lib/components/theme-toggle.svelte";
+	import { ModeWatcher } from "mode-watcher";
 	import AnnouncementBanner from "$lib/components/announcement-banner.svelte";
 	import favicon from "$lib/assets/favicon.svg";
 	import { afterNavigate } from "$app/navigation";
@@ -94,7 +99,9 @@
 <svelte:head>
 	<link rel="icon" href={favicon} />
 	<meta name="description" content={data.settings.description} />
-	<meta name="color-scheme" content="dark" />
+	<!-- color-scheme 由 mode-watcher 在运行时写 html 的 inline style（随主题变），
+	     这里不再写死 content="dark" —— 写死会让亮色模式下浏览器仍按深色渲染
+	     原生控件与滚动条。theme-color 保留为 SSR 深色兜底，运行时被改写。 -->
 	<meta name="theme-color" content="#1b1b19" />
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content={data.settings.title} />
@@ -105,6 +112,16 @@
 	<meta name="twitter:card" content="summary_large_image" />
 	<link rel="alternate" type="application/rss+xml" title={data.settings.title + " · 博客 RSS"} href="/rss.xml" />
 </svelte:head>
+
+	<!-- 主题：亮色 / 暗色 / 跟随系统。
+	     defaultMode="dark" 是刻意的 —— 本站原本就是深色站，把默认值定成 dark
+	     才不会让现有访客在刷新后「被动变亮」。注入到 <head> 的脚本在首帧绘制前
+	     就写好类名，所以刷新时不会先亮后暗闪一下。 -->
+	<ModeWatcher
+		defaultMode="dark"
+		disableTransitions={false}
+		themeColors={{ dark: "#1b1b19", light: "#faf9f5" }}
+	/>
 
 	<!-- 全局动画背景 -->
 	<BgEffects config={(data as any).settings?.background} />
@@ -153,7 +170,10 @@
 					<span class="sr-only">Toggle Sidebar</span>
 				</Sidebar.Trigger>
 				<Separator orientation="vertical" class="h-4" />
-				<span class="text-sm text-muted-foreground">{data.settings.title}</span>
+				<span class="min-w-0 truncate text-sm text-muted-foreground">{data.settings.title}</span>
+				<div class="ml-auto shrink-0 pl-2">
+					<ThemeToggle />
+				</div>
 			</header>
 			<AnnouncementBanner />
 		{/if}

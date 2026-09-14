@@ -4,6 +4,7 @@
 	import { page } from "$app/state";
 	import ConfirmHost from "$lib/components/admin/confirm-host.svelte";
 	import ViewSwitch from "$lib/components/view-switch.svelte";
+	import ThemeToggle from "$lib/components/theme-toggle.svelte";
 	import { pageIn } from "$lib/transition.js";
 	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText } from "@lucide/svelte";
 
@@ -125,7 +126,11 @@
 				<Sidebar.Trigger class="-ml-1 size-11 md:size-9" />
 				<h2 class="truncate font-heading text-base font-semibold md:text-lg">管理后台</h2>
 			</div>
-			<a href="/" target="_blank" class="shrink-0 text-xs text-muted-foreground hover:text-foreground">查看前台</a>
+			<div class="flex shrink-0 items-center gap-3">
+				<!-- 后台同样可切主题：ModeWatcher 挂在根布局，这里只是给个入口 -->
+				<ThemeToggle />
+				<a href="/" target="_blank" class="text-xs text-muted-foreground hover:text-foreground">查看前台</a>
+			</div>
 		</div>
 	</Sidebar.Header>
 	<Sidebar.Content class="p-4 md:p-6">

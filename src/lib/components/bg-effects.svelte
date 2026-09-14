@@ -27,6 +27,8 @@
 			pointer-events: none;
 			overflow: hidden;
 		}
+		/* 强度统一乘 --bg-mode-scale：亮色主题下这些暖色光晕叠在浅底上会发脏，
+		   由主题令牌把整体强度压到 ~55%（深色主题为 1，保持原观感）。 */
 		.bg-stage .aurora {
 			position: absolute;
 			inset: -20%;
@@ -35,7 +37,7 @@
 				radial-gradient(32% 36% at 78% 22%, var(--bg-c2) 0%, transparent 60%),
 				radial-gradient(44% 46% at 55% 80%, var(--bg-c3) 0%, transparent 65%);
 			animation: aurora-drift calc(var(--bg-speed) * 22s) ease-in-out infinite alternate;
-			opacity: var(--bg-alpha);
+			opacity: calc(var(--bg-alpha) * var(--bg-mode-scale, 1));
 			will-change: transform;
 		}
 		@keyframes aurora-drift {
@@ -50,15 +52,18 @@
 				linear-gradient(var(--bg-c1) 1px, transparent 1px),
 				linear-gradient(90deg, var(--bg-c1) 1px, transparent 1px);
 			background-size: 52px 52px;
-			opacity: calc(var(--bg-alpha) * 0.28);
+			opacity: calc(var(--bg-alpha) * 0.28 * var(--bg-mode-scale, 1));
 			mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 75%);
 			animation: grid-pan calc(var(--bg-speed) * 26s) linear infinite;
 		}
 		@keyframes grid-pan { from { background-position: 0 0; } to { background-position: 52px 52px; } }
+		.bg-stage :global(canvas) {
+			opacity: var(--bg-mode-scale, 1);
+		}
 		.bg-stage .particles {
 			position: absolute;
 			inset: 0;
-			opacity: calc(var(--bg-alpha) * 0.5);
+			opacity: calc(var(--bg-alpha) * 0.5 * var(--bg-mode-scale, 1));
 			background-image:
 				radial-gradient(2px 2px at 20% 30%, var(--bg-c1) 50%, transparent 51%),
 				radial-gradient(1.6px 1.6px at 65% 70%, var(--bg-c2) 50%, transparent 51%),
@@ -76,7 +81,7 @@
 			inset: 0;
 			background: linear-gradient(120deg, var(--bg-c1), var(--bg-c2), var(--bg-c3), var(--bg-c1));
 			background-size: 300% 300%;
-			opacity: calc(var(--bg-alpha) * 0.14);
+			opacity: calc(var(--bg-alpha) * 0.14 * var(--bg-mode-scale, 1));
 			animation: rainbow-flow calc(var(--bg-speed) * 18s) ease-in-out infinite;
 		}
 		@keyframes rainbow-flow { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
