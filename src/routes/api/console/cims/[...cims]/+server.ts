@@ -18,8 +18,10 @@ import { can, type Action } from "$lib/permissions.js";
 
 const CIMS = (env.CIMS_MANAGEMENT_URL ?? "http://127.0.0.1:8097").replace(/\/$/, "");
 // CIMS 管理接口用「会话令牌」鉴权（Redis session:{token}），需先用管理员账号登录换取。
-const ADMIN_EMAIL = env.CIMS_ADMIN_EMAIL ?? "***REMOVED-SEE-DOTENV***";
-const ADMIN_PASSWORD = env.CIMS_ADMIN_PASSWORD ?? "***REMOVED-SEE-DOTENV***";
+// 凭据只从环境变量读取，不留源码兜底值——写死会把服务账号带进公开仓库。
+const ADMIN_EMAIL = env.CIMS_ADMIN_EMAIL ?? "";
+const ADMIN_PASSWORD = env.CIMS_ADMIN_PASSWORD ?? "";
+const CREDS_READY = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD);
 // CIMS 客户端应用（教室端配置拉取）端口：课表/组件配置的真实读取点。
 // 它挂载在 prefix="/api" 且 TenantMiddleware 要求 Host 头为 <slug>.<BASE_DOMAIN>，否则 403。
 const CLIENT_URL = (env.CIMS_CLIENT_URL ?? "http://127.0.0.1:8096").replace(/\/$/, "");
@@ -49,6 +51,10 @@ let renewing = false;
 async function acquireToken(): Promise<string | null> {
 	if (sessionToken) return sessionToken;
 	if (renewing) return null;
+	if (!CREDS_READY) {
+		console.warn("[console] CIMS_ADMIN_EMAIL / CIMS_ADMIN_PASSWORD 未配置，集控代理不可用");
+		return null;
+	}
 	renewing = true;
 	try {
 		const r = await fetch(`${CIMS}/user/auth`, {

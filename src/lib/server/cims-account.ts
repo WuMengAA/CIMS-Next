@@ -10,8 +10,14 @@ export async function getCimsAccount(): Promise<{ id: string; slug: string } | n
 	if (inflight) return inflight;
 	inflight = (async () => {
 		const mgmt = (env.CIMS_MANAGEMENT_URL ?? "http://127.0.0.1:8097").replace(/\/$/, "");
-		const email = env.CIMS_ADMIN_EMAIL ?? "***REMOVED-SEE-DOTENV***";
-		const password = env.CIMS_ADMIN_PASSWORD ?? "***REMOVED-SEE-DOTENV***";
+		// 凭据只从环境变量读取（.env，未入库），此处刻意不留字面量兜底：
+		// 一旦在这里写死，服务账号就会随源码进入公开仓库（本站曾因此泄漏过一次）。
+		const email = env.CIMS_ADMIN_EMAIL ?? "";
+		const password = env.CIMS_ADMIN_PASSWORD ?? "";
+		if (!email || !password) {
+			console.warn("[cims] CIMS_ADMIN_EMAIL / CIMS_ADMIN_PASSWORD 未配置，跳过账户解析（面板自动降级）");
+			return null;
+		}
 		try {
 			const r = await fetch(`${mgmt}/user/auth`, {
 				method: "POST",
