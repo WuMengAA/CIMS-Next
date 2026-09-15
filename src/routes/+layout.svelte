@@ -14,6 +14,11 @@
 	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
 	import ThemeToggle from "$lib/components/theme-toggle.svelte";
+	import SearchButton from "$lib/components/search-button.svelte";
+	import SearchPalette from "$lib/components/search-palette.svelte";
+	import SidebarMemory from "$lib/components/sidebar-memory.svelte";
+	import ListScrollMemory from "$lib/components/list-scroll-memory.svelte";
+	import VisitRecorder from "$lib/components/visit-recorder.svelte";
 	import { ModeWatcher } from "mode-watcher";
 	import AnnouncementBanner from "$lib/components/announcement-banner.svelte";
 	import favicon from "$lib/assets/favicon.svg";
@@ -79,6 +84,9 @@
 			showSkeleton = false;
 		}
 	});
+	// 搜索面板开关：顶栏按钮与快捷键都能改它（SearchPalette 内 bind:open 双向）
+	let searchOpen = $state(false);
+
 	// 阅读进度条：滚动即更新
 	$effect(() => {
 		const bar = document.getElementById("reading-progress") as HTMLDivElement | null;
@@ -129,6 +137,15 @@
 	<!-- 全局通知 toast -->
 	<Toaster richColors position="top-center" />
 
+	<!-- 浏览轨迹记录：客户端导航时记下路径与标题，供「最近浏览」使用 -->
+	<VisitRecorder />
+
+	<!-- 列表页滚动位置记忆：返回列表时回到原处，而不是被弹回顶部 -->
+	<ListScrollMemory />
+
+	<!-- 搜索面板：Ctrl/⌘+K 或 / 唤起；由顶栏按钮与自身快捷键共同控制 -->
+	<SearchPalette bind:open={searchOpen} />
+
 	<!-- 登录态在线心跳（多用户在线判定） -->
 	{#if data.user}
 		<PresenceHeartbeat />
@@ -154,6 +171,9 @@
 	<!-- 移动端抽屉：导航后自动收起（必须在 Provider 内才能拿到 sidebar context） -->
 	<SidebarAutoClose />
 
+	<!-- 侧栏滚动位置记忆：前台/后台共用同一份键，切换过去不会"重置" -->
+	<SidebarMemory />
+
 	<!-- 后台自带一套侧边栏与顶栏；此处不能再叠加前台外壳，
 	     否则 /admin 会出现「站点侧栏 + 后台侧栏」两列导航（实测 data-slot="sidebar" 出现两次），
 	     既挤压内容区也让导航语义混乱。 -->
@@ -171,7 +191,9 @@
 				</Sidebar.Trigger>
 				<Separator orientation="vertical" class="h-4" />
 				<span class="min-w-0 truncate text-sm text-muted-foreground">{data.settings.title}</span>
-				<div class="ml-auto shrink-0 pl-2">
+				<div class="ml-auto flex shrink-0 items-center gap-2 pl-2">
+					<!-- 右上角搜索：点开即搜，不离开当前页 -->
+					<SearchButton bind:open={searchOpen} />
 					<ThemeToggle />
 				</div>
 			</header>

@@ -99,8 +99,16 @@
     const online = devs.filter((d) => d.online).length;
     const offline = devs.length - online;
     const rate = devs.length ? Math.round((online / devs.length) * 100) : 0;
-    const courses = ((sched.days[0] || {}).items || []);
     const now = new Date();
+    // 防御式取用：即便后端返回非预期结构（例如资源缺失、信封形态变更），
+    // 也只让「今日课程」这一块降级为 0，而不是让 `sched.days[0]` 抛
+    // 「Cannot read properties of undefined (reading '0')」把整页替换成错误卡。
+    const allDays = (sched && sched.days) || [];
+    // 取「今天」的课：days[].day 与 Date.getDay() 同为 0=周日…6=周六。
+    // 今天无课（或该天不在课表里）时回退到课表第一天，保证卡片不空。
+    const todayDow = now.getDay();
+    const todayPlan = allDays.find((d) => d && d.day === todayDow) || allDays[0];
+    const courses = (todayPlan && todayPlan.items) || [];
     const greet = now.getHours() < 12 ? "早上好" : now.getHours() < 18 ? "下午好" : "晚上好";
     const todayStr = `${now.getMonth() + 1}月${now.getDate()}日 · 周${"日一二三四五六"[now.getDay()]}`;
     const goods = (scope) => ({ "本班": "ok", "全校": "warn", "年级": "accent", "广播": "err" }[scope] || "");
@@ -174,14 +182,17 @@
 
   views.schedule = async () => {
     const s = await API.getSchedule();
+    // 同上：days 可能是空数组（合法空信封）或后端结构异常，用 (s.days||[]) 兜底，
+    // 不要直接 s.days.map —— 空信封会让整页变成「加载失败」。
+    const days = (s && s.days) || [];
     return `
       <div class="card"><h3>课表 · ${esc(API.state.classId)}</h3>
         <p class="muted">直接编辑后点击「保存并下发」，配置将推送到本班所有设备。</p>
-        ${s.days.map(d=>`
+        ${days.length ? days.map(d=>`
           <div class="row" style="margin:6px 0">
             <span style="width:44px" class="muted">${esc(d.name)}</span>
-            ${d.items.map((c,i)=>`<input data-day="${d.day}" data-i="${i}" value="${esc(c)}" style="width:78px"/>`).join("")}
-          </div>`).join("")}
+            ${(d.items || []).map((c,i)=>`<input data-day="${d.day}" data-i="${i}" value="${esc(c)}" style="width:78px"/>`).join("")}
+          </div>`).join("") : `<p class="muted">该课表暂无内容（可能是尚未导入班级课表）。</p>`}
         <div class="row" style="margin-top:10px">
           <button class="primary" data-act="save-schedule">保存并下发</button>
           <button data-act="reload">重新拉取</button>
@@ -438,8 +449,17 @@
       applyGating();
       toast("就绪");
     } catch (e) {
-      view.innerHTML = `<div class="card"><h3>加载失败</h3><p class="muted">${esc(e.message)}</p></div>`;
-      toast("错误：" + e.message);
+      // 把真实抛错与视图名一起打出来：像「Cannot read properties of undefined
+      // (reading '0')」这类错误本身不指明是哪个视图/哪块数据出的问题，
+      // 只显示 e.message 会让人完全无从下手（本次 cp_class08 课表信封
+      // 不匹配就是这么被误报成「操作日志加载失败」的）。
+      const where = `视图「${current}」渲染失败`;
+      console.error(where, e);
+      view.innerHTML = `<div class="card"><h3>加载失败</h3>
+        <p class="muted">${esc(where)}：${esc(e && e.message || e)}</p>
+        <p class="muted" style="font-size:12px">可在浏览器控制台查看完整堆栈；其他页面不受影响，可点左侧其它菜单继续。</p>
+      </div>`;
+      toast("错误：" + where);
     }
     meta(`视图：${current} · ${API.state.demo ? "演示模式" : "后端模式"}`);
     // 内嵌态：总览渲染后，若账号尚未绑定班级则显示补充信息引导卡

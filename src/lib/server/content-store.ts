@@ -173,7 +173,18 @@ export function getItem(section: "posts" | "projects" | "docs" | "pages", slug: 
 		...(data.owner ? { owner: data.owner } : {}),
 		...(data.folder ? { folder: data.folder } : {}),
 		...(data.repoUrl ? { repoUrl: data.repoUrl } : {}),
-		...(data.siteUrl ? { siteUrl: data.siteUrl } : {})
+		...(data.siteUrl ? { siteUrl: data.siteUrl } : {}),
+		// ---- 页面设计字段（pages 用）----
+		// 布尔字段从 frontmatter 读回来可能是字符串 "true"（编辑器写入时统一转成字符串），
+		// 这里归一为布尔，避免模板里 "true" 被当成 falsy 之外的真值而语义混乱。
+		...(data.layout ? { layout: data.layout } : {}),
+		...(data.hero ? { hero: data.hero } : {}),
+		...(data.aside !== undefined ? { aside: data.aside === true || data.aside === "true" } : {}),
+		...(data.toc !== undefined ? { toc: data.toc === true || data.toc === "true" } : {}),
+		...(data.hideTitle !== undefined ? { hideTitle: data.hideTitle === true || data.hideTitle === "true" } : {}),
+		...(data.noindex !== undefined ? { noindex: data.noindex === true || data.noindex === "true" } : {}),
+		...(data.accent ? { accent: data.accent } : {}),
+		...(data.navTitle ? { navTitle: data.navTitle } : {})
 	};
 }
 
@@ -189,7 +200,17 @@ export function getItem(section: "posts" | "projects" | "docs" | "pages", slug: 
 const MANAGED_FRONTMATTER_KEYS = [
 	"title", "date", "status", "updated",
 	"category", "tags", "excerpt", "cover",
-	"order", "pinned", "owner", "folder"
+	"order", "pinned", "owner", "folder",
+	// ---- 页面编辑器的设计字段（仅对 pages 有意义，其它 section 写了也无害） ----
+	// layout  版心宽度：narrow | standard | wide | full
+	// aside   是否带侧栏目录
+	// hero    页头样式：none | plain | banner（banner 用 cover 做背景）
+	// accent  主题色（十六进制），覆盖该页主色
+	// toc     是否显示目录
+	// hideTitle 是否隐藏正文大标题（内容里已手写标题时用）
+	// navTitle 侧栏/导航里显示的短标题
+	// noindex 搜索引擎不索引
+	"layout", "aside", "hero", "accent", "toc", "hideTitle", "navTitle", "noindex"
 ] as const;
 
 export function saveItem(

@@ -12,7 +12,7 @@
 	import { ArrowUpDown, Plus, Trash2, KeyRound, Users, Search, Pencil, ShieldOff, Circle, X, Check } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { confirmDelete } from "$lib/components/admin/confirm.svelte";
-	import { ROLE_LABELS, type Role } from "$lib/permissions.js";
+	import { ROLE_LABELS, ASSIGNABLE_ROLES, roleLevelLabel, type Role } from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -196,7 +196,14 @@
 		return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 	}
 
-	const ROLE_OPTIONS: Role[] = ["user", "moderator", "editor", "techrep", "viewer", "admin"];
+	// 角色选项来自权限模型（按等级从高到低）。避免在此硬编码 ——
+	// 权限模型演进时这里漏改，就会出现"能选中但服务端不认"的角色。
+	const ROLE_OPTIONS: Role[] = ASSIGNABLE_ROLES;
+
+	/** 下拉里显示「站长 · L5」这类带等级的标签，便于按等级选人。 */
+	function roleOptionLabel(r: Role): string {
+		return `${ROLE_LABELS[r]} · ${roleLevelLabel(r).replace(/^L(\d) .*$/, "L$1")}`;
+	}
 </script>
 
 <div class="mb-6 flex items-center justify-between">
@@ -219,10 +226,10 @@
 			<div class="grid gap-2"><Label>邮箱</Label><Input bind:value={newEmail} placeholder="邮箱（可选）" /></div>
 			<div class="grid gap-2"><Label>密码（至少 6 位）</Label><Input type="password" bind:value={newPassword} placeholder="密码" /></div>
 			<div class="grid gap-2"><Label>角色</Label><Select.Root type="single" bind:value={newRole}>
-				<Select.Trigger class="w-full">{ROLE_LABELS[newRole as Role] || newRole}</Select.Trigger>
+				<Select.Trigger class="w-full">{ROLE_LABELS[newRole as Role] || newRole} · {roleLevelLabel(newRole as Role)}</Select.Trigger>
 				<Select.Content>
 					{#each ROLE_OPTIONS as r (r)}
-						<Select.Item value={r} label={ROLE_LABELS[r]} />
+						<Select.Item value={r} label={roleOptionLabel(r)} />
 					{/each}
 				</Select.Content>
 			</Select.Root></div>
@@ -241,10 +248,10 @@
 			<div class="grid gap-2"><Label>显示名称</Label><Input bind:value={editDisplay} /></div>
 			<div class="grid gap-2"><Label>邮箱</Label><Input bind:value={editEmail} /></div>
 			<div class="grid gap-2"><Label>角色</Label><Select.Root type="single" bind:value={editRole}>
-				<Select.Trigger class="w-full">{ROLE_LABELS[editRole as Role] || editRole}</Select.Trigger>
+				<Select.Trigger class="w-full">{ROLE_LABELS[editRole as Role] || editRole} · {roleLevelLabel(editRole as Role)}</Select.Trigger>
 				<Select.Content>
 					{#each ROLE_OPTIONS as r (r)}
-						<Select.Item value={r} label={ROLE_LABELS[r]} />
+						<Select.Item value={r} label={roleOptionLabel(r)} />
 					{/each}
 				</Select.Content>
 			</Select.Root></div>
@@ -331,7 +338,7 @@
 									<div class="flex min-w-0 flex-col">
 										<div class="flex items-center gap-2">
 											<span class="truncate font-medium">{u.displayName || u.username}</span>
-											<Badge variant={u.role === "admin" ? "default" : "outline"}>{ROLE_LABELS[u.role as Role] || u.role}</Badge>
+											<Badge variant={u.role === "admin" || u.role === "owner" ? "default" : "outline"}>{ROLE_LABELS[u.role as Role] || u.role} · {roleLevelLabel(u.role as Role).replace(/^L(\d) .*$/, "L$1")}</Badge>
 											{#if u.username === current}<Badge variant="secondary">当前</Badge>{/if}
 											{#if u.online}<span class="text-[11px] text-emerald-400">在线</span>{/if}
 										</div>
@@ -340,7 +347,7 @@
 								</div>
 							</TableCell>
 							<TableCell class="text-muted-foreground">@{u.username}</TableCell>
-							<TableCell class="text-muted-foreground">{u.role}</TableCell>
+							<TableCell class="text-muted-foreground">{roleLevelLabel(u.role as Role)}</TableCell>
 							<TableCell>
 								{#if (u.status || "active") === "active"}
 									<Badge variant="outline">正常</Badge>

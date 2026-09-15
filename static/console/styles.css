@@ -285,6 +285,17 @@ code { background: var(--panel2); border: 1px solid var(--line); border-radius: 
 button:disabled { opacity: .4; cursor: not-allowed; border-color: var(--line); }
 button:disabled:hover { border-color: var(--line); }
 .nav.hidden { display: none !important; }
+
+/* ===== 只读观看态的收敛 =====
+   当 PERM.readonly 时 <html> 带 readonly-mode：所有写操作入口即使在 DOM 里存在
+   （可能因 select/card 由 JS 渲染而漏挂 data-need），也在视觉上明确"不可用"。
+   这是纵深防御的最后一层 —— 服务端仍会拒绝，前端这里只是不让用户白点。 */
+.readonly-mode .nav[data-need]:not([data-need="issue"]) { display: none !important; }
+.readonly-mode #perm-chip.readonly {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+}
 button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--ring); outline-offset: 2px;
 }

@@ -4,6 +4,7 @@
 	import { Heart, Send, MessageCircle, Rocket, Globe } from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import CountUp from "$lib/components/count-up.svelte";
+	import ContinueReading from "$lib/components/continue-reading.svelte";
 	import { resolveFeatureIcon } from "$lib/feature-icons.js";
 	import { reveal } from "$lib/actions/reveal.js";
 	import { page } from "$app/state";
@@ -53,6 +54,11 @@
 	</section>
 
 	<!-- Brand statement -->
+	<!-- 继续阅读 / 最近浏览：兑现本地阅读记忆。
+	     放在 Hero 之后：首访用户（无历史）这块整体不渲染，位置自然让给下面的介绍；
+	     回访用户一进站就能直接续读上次内容，不必再翻列表。 -->
+	<ContinueReading />
+
 	<section use:reveal class="reveal flex flex-col items-center gap-4 text-center" style="--reveal-delay:1">
 		<div
 			class="flex size-16 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-semibold text-primary-foreground"

@@ -4,6 +4,7 @@
 	import { BookMarked, FileText, ListTree, Pencil, MessageSquareWarning } from "@lucide/svelte";
 	import Comments from "$lib/components/comments.svelte";
 	import ViewTracker from "$lib/components/view-tracker.svelte";
+	import ReadingTracker from "$lib/components/reading-tracker.svelte";
 
 	let { data }: {
 		data: {
@@ -67,6 +68,8 @@
 </svelte:head>
 
 <ViewTracker target={"docs:" + data.doc.slug} />
+<!-- 阅读进度：滚动时记录位置，下次进入可续读；同时写入浏览轨迹 -->
+<ReadingTracker target={"docs:" + data.doc.slug} title={data.doc.title} section="docs" />
 
 <div class="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
 	<!-- Left: docs nav grouped by folder -->

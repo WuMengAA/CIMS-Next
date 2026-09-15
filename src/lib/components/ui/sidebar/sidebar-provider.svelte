@@ -8,6 +8,7 @@
 		SIDEBAR_WIDTH_ICON,
 	} from "./constants.js";
 	import { setSidebar } from "./context.svelte.js";
+	import { setCookie } from "$lib/prefs.js";
 	import type { HTMLAttributes } from "svelte/elements";
 
 	let {
@@ -29,8 +30,13 @@
 			open = value;
 			onOpenChange(value);
 
-			// This sets the cookie to keep the sidebar state.
-			document.cookie = `${SIDEBAR_COOKIE_NAME}=${open}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
+			// 持久化侧栏折叠态。
+			// 走统一下沉到 prefs 的 setCookie：默认带 SameSite=Lax，
+			// 并按协议自动决定是否加 Secure —— 原先裸写 document.cookie
+			// 既缺 SameSite（CSRF 面）又会因跨域跳转丢值。
+			setCookie(SIDEBAR_COOKIE_NAME, String(open), {
+				maxAge: SIDEBAR_COOKIE_MAX_AGE
+			});
 		},
 	});
 </script>

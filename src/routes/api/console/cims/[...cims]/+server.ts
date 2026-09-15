@@ -3,7 +3,7 @@ import { env } from "$env/dynamic/private";
 import type { RequestEvent } from "@sveltejs/kit";
 import http from "node:http";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, type Action } from "$lib/permissions.js";
+import { can, canDevice, type DeviceTier } from "$lib/permissions.js";
 
 // 集控面板（/admin/console 内嵌）对 CIMS 的服务端代理。
 // 浏览器只与同源网站通信；CIMS 地址与令牌仅在服务端配置，绝不下发前端。
@@ -30,18 +30,20 @@ const BASE_DOMAIN = env.CIMS_BASE_DOMAIN ?? "localhost";
 const ALLOW = [/^\/account\//, /^\/user\/auth/, /^\/v1\/client\//, /^\/api\/v1\/client\//];
 
 /**
- * 按「方法 + 路径 + 载荷」判定所需权限，力求最小必要：
- *  - 读（GET）                     -> viewConsole
- *  - /user/auth（换取令牌，非变更） -> viewConsole
- *  - 设备指令 command/*             -> controlDevice
- *  - 带 stelarith_task 的通知       -> remoteControl（远程屏幕控制，更敏感）
- *  - 其余写（资源 write 等）         -> manageDevices
+ * 按「方法 + 路径 + 载荷」判定所需**设备权限档位**，力求最小必要：
+ *  - 读（GET）                     -> watch（仅需进入面板）
+ *  - /user/auth（换取令牌，非变更） -> watch
+ *  - 设备指令 command/*             -> control
+ *  - 带 stelarith_task 的通知       -> remote（远程屏幕控制，更敏感）
+ *  - 其余写（资源 write 等）         -> manage
+ *
+ * 返回 null 表示这是纯读请求，只校验 viewConsole（等级轴）。
  */
-function requiredAction(rel: string, method: string, body: string | undefined): Action {
-	if (method === "GET" || rel === "/user/auth") return "viewConsole";
-	if (body && body.includes("stelarith_task")) return "remoteControl";
-	if (/^\/account\/[^/]+\/client\/[^/]+\/command\//.test(rel)) return "controlDevice";
-	return "manageDevices";
+function requiredTier(rel: string, method: string, body: string | undefined): DeviceTier | null {
+	if (method === "GET" || rel === "/user/auth") return null;
+	if (body && body.includes("stelarith_task")) return "remote";
+	if (/^\/account\/[^/]+\/client\/[^/]+\/command\//.test(rel)) return "control";
+	return "manage";
 }
 
 // 进程内缓存的 CIMS 会话令牌；过期/失效时自动重新登录换取。
@@ -168,8 +170,12 @@ async function forward(event: RequestEvent) {
 	// ---- 鉴权（必须在放行路径检查之前，避免匿名用户探测可用路径）----
 	const u = verifyToken(event.cookies.get("admin_token"));
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
-	const need = requiredAction(rel, method, body);
-	if (!can(u.role, "viewConsole") || !can(u.role, need)) {
+	// 等级轴：进得了集控面板（L1+）。设备轴：写操作另需对应档位。
+	if (!can(u.role, "viewConsole")) {
+		return json({ error: "无权限" }, { status: 403 });
+	}
+	const tier = requiredTier(rel, method, body);
+	if (tier && !canDevice(u.role, tier)) {
 		return json({ error: "无权限" }, { status: 403 });
 	}
 

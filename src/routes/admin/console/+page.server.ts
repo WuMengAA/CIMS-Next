@@ -1,6 +1,6 @@
 import { redirect } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, canDevice, isConsoleReadOnly, roleLevelLabel } from "$lib/permissions.js";
 import { getCimsAccount } from "$lib/server/cims-account.js";
 import type { PageServerLoad } from "./$types";
 
@@ -14,8 +14,15 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	// 取 CIMS 首个账户的 id，注入面板作为操作上下文（否则内嵌态 accountId 为空、
 	// canUseBackend() 恒 false，所有 cims() 静默降级演示数据）。
 	const account = await getCimsAccount();
+	// 权限位分两条轴解算：
+	//  - 内容轴（levelLabel / canEditContent）走 can()，决定面板里"内容/治理"入口；
+	//  - 设备轴（control/remote/manage）走 canDevice()，与等级正交 ——
+	//    电教委员内容等级只有 L2，但 remote 为真；站长等级最高，设备位仍单独判定。
+	// 只读态（readonly）单独下发，让面板能整体切换为"观看模式"（隐藏所有写按钮）。
 	return {
 		role: u.role,
+		levelLabel: roleLevelLabel(u.role),
+		readonly: isConsoleReadOnly(u.role),
 		user: u.displayName || u.username,
 		// 全权接入 website 账号信息：把当前登录用户完整资料下发面板。
 		// 面板内嵌态与宿主同源，还会实时拉一次 /api/me 校准；这里先给一批即时的，
@@ -26,9 +33,9 @@ export const load: PageServerLoad = async ({ cookies }) => {
 		className: u.className || "",
 		gradeName: u.gradeName || "",
 		can: {
-			control: can(u.role, "controlDevice"),
-			remote: can(u.role, "remoteControl"),
-			manage: can(u.role, "manageDevices"),
+			control: canDevice(u.role, "control"),
+			remote: canDevice(u.role, "remote"),
+			manage: canDevice(u.role, "manage"),
 			issue: can(u.role, "submitIssue")
 		},
 		accountId: account?.id ?? ""

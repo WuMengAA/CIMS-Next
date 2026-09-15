@@ -41,7 +41,10 @@
 			data-slot="sidebar"
 			data-mobile="true"
 			class={cn(
-				"w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground",
+				// 移动抽屉宽度以侧栏自身宽度为准（--sidebar-width 由本组件注入），
+				// 且必须写成 w-(--sidebar-width) **并**用 ! 压过 Sheet 默认的 w-3/4 ——
+				// 否则抽屉只有屏宽 3/4，"点开侧栏"看起来像半截浮层。
+				"!w-(--sidebar-width) max-w-[86vw] bg-sidebar p-0 text-sidebar-foreground",
 				className
 			)}
 			style="--sidebar-width: {SIDEBAR_WIDTH_MOBILE};"

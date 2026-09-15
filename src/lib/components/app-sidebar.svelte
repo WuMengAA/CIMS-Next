@@ -33,6 +33,7 @@
 	import { ChevronDown, ChevronUp } from "lucide";
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import { can } from "$lib/permissions.js";
+	import { readMoreOpen, writeMoreOpen } from "$lib/sidebar-memory.js";
 	
 	import { page } from "$app/state";
 
@@ -104,7 +105,10 @@
 			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || Globe }))
 	);
 
+	// 「更多」展开态从本地记忆恢复（前后台共用），并在切换时写回 ——
+	// 否则用户每次刷新都要重新点开「更多」找同一批入口。
 	let moreOpen = $state(false);
+	let moreHydrated = $state(false);
 	// 管理类入口（后台/钱包/账号）仅登录用户可见：登录态由根 layout 的 load 同步下发
 	// （data.user），服务端已判定，无需客户端再发请求，侧边栏零闪烁、彻底常驻。
 	const authed = $derived(!!(data?.user));
@@ -120,6 +124,14 @@
 					? "/admin/console"
 					: null
 	);
+
+	// 首帧后再读记忆：SSR 阶段没有 localStorage，且若在初始化时读会导致
+	// 服务端渲染的 HTML 与客户端不一致（hydration mismatch）。
+	$effect(() => {
+		if (moreHydrated) return;
+		moreHydrated = true;
+		moreOpen = readMoreOpen();
+	});
 
 	const path = $derived(page.url.pathname);
 
@@ -161,7 +173,7 @@
 						</Sidebar.MenuItem>
 					{/each}
 					<Sidebar.MenuItem>
-						<Sidebar.MenuButton onclick={() => (moreOpen = !moreOpen)} aria-expanded={moreOpen} tooltipContent="更多">
+						<Sidebar.MenuButton onclick={() => { moreOpen = !moreOpen; writeMoreOpen(moreOpen); }} aria-expanded={moreOpen} tooltipContent="更多">
 							<MorphIcon icon={moreOpen ? ChevronUp : ChevronDown} spring="snappy" reducedMotion="user" size={16} aria-hidden="true" />
 							<span>更多</span>
 						</Sidebar.MenuButton>
