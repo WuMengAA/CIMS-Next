@@ -60,10 +60,20 @@
 		}
 
 		function loop(t: number) { draw(t); raf = requestAnimationFrame(loop); }
+		function start() { if (raf === 0 && !reduce) raf = requestAnimationFrame(loop); }
+		function stop() { if (raf !== 0) { cancelAnimationFrame(raf); raf = 0; } }
 		resize();
 		window.addEventListener("resize", resize);
+		// 后台标签页暂停动画：页面不可见时继续跑 rAF 只是空耗 CPU/电量，
+		// 回到前台再恢复。reduce 模式本就只静态画一次，无需此调度。
+		const onVis = () => { if (document.hidden) stop(); else start(); };
+		document.addEventListener("visibilitychange", onVis);
 		if (reduce) { draw(0); } else { raf = requestAnimationFrame(loop); }
-		return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+		return () => {
+			cancelAnimationFrame(raf);
+			window.removeEventListener("resize", resize);
+			document.removeEventListener("visibilitychange", onVis);
+		};
 	});
 </script>
 

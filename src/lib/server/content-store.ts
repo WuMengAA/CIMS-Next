@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import matter from "gray-matter";
 import markdownIt from "markdown-it";
 import markdownItAnchor from "markdown-it-anchor";
@@ -96,10 +97,65 @@ function ensureDirs() {
 	fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 进程内缓存层（adapter-node 单进程长驻，模块级 Map 跨请求复用）
+//
+// 解决的核心问题：公开流量下，每次请求都要「整段 section 全量读盘 + matter 解析」
+// （listItems），以及「markdown-it + highlight.js 重渲染」（renderMarkdown）。
+// 二者原本都没有缓存，列表页/RSS/搜索/详情页每次都重算，CPU 与磁盘 IO 浪费严重。
+//
+// 失效策略：
+//   - 列表 listCache：由写入函数（saveItem/deleteItem/restoreVersion）显式失效。
+//     不依赖目录 mtime——改写已有文件只刷新文件 mtime 而非目录 mtime，会误判为未变。
+//     外部改动（git pull）一般在部署重启时自然失效，属可接受边界。
+//   - JSON jsonCache：整文件重写 → 文件 mtime 必变，以 mtime 为准（可靠）。
+//   - 渲染 mdCache：以 markdown 内容 sha1 为键，内容变即新键自然 miss，旧键惰性淘汰。
+// ───────────────────────────────────────────────────────────────────────────
+
+/** 轻量 mtime 读取（不存在返回 -1）。 */
+function statMtime(p: string): number {
+	try {
+		return fs.statSync(p).mtimeMs;
+	} catch {
+		return -1;
+	}
+}
+
+const listCache = new Map<string, { items: ContentItem[] }>();
+const jsonCache = new Map<string, { mtime: number; data: unknown }>();
+const mdCache = new Map<string, RenderedContent>();
+const MD_CACHE_MAX = 512;
+
+/**
+ * 读取并缓存一个 JSON 文件。mtime 命中则直接返回缓存对象，避免每次请求 JSON.parse。
+ * 写入方在改写文件后须使对应缓存失效（writeJsonArray / saveSettings / saveNav 已处理）。
+ */
+function cachedJsonFile<T>(filePath: string, fallback: T): T {
+	const m = statMtime(filePath);
+	const hit = jsonCache.get(filePath);
+	if (hit && hit.mtime === m) return hit.data as T;
+	try {
+		const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+		jsonCache.set(filePath, { mtime: m, data });
+		return data;
+	} catch {
+		return fallback;
+	}
+}
+
+/** 显式失效列表缓存（某 section 写入后调用；不传则清空全部）。 */
+export function invalidateContentCache(section?: "posts" | "projects" | "docs" | "pages"): void {
+	if (section) listCache.delete(section);
+	else listCache.clear();
+}
+
 export function listItems(section: "posts" | "projects" | "docs" | "pages"): ContentItem[] {
 	ensureDirs();
 	const dir = sections[section];
 	if (!fs.existsSync(dir)) return [];
+	// 进程内缓存：列表结果跨请求复用，仅在写入函数显式失效后才重读。
+	const cached = listCache.get(section);
+	if (cached) return cached.items;
 	const files = fs.readdirSync(dir).filter(f => f.endsWith(".md"));
 	const items: ContentItem[] = [];
 	for (const file of files) {
@@ -121,15 +177,17 @@ export function listItems(section: "posts" | "projects" | "docs" | "pages"): Con
 		if (data.order !== undefined) base.order = data.order;
 		if (data.pinned !== undefined) base.pinned = data.pinned;
 		if (data.owner) base.owner = data.owner;
-		if (data.folder) base.folder = data.folder;
+			if (data.folder) base.folder = data.folder;
 		items.push(base);
 	}
-	return items.sort((a, b) => {
+	const sorted = items.sort((a, b) => {
 		if (a.pinned && !b.pinned) return -1;
 		if (!a.pinned && b.pinned) return 1;
 		if (a.order !== undefined && b.order !== undefined) return a.order - b.order;
 		return b.date.localeCompare(a.date);
 	});
+	listCache.set(section, { items: sorted });
+	return sorted;
 }
 
 /**
@@ -257,6 +315,8 @@ export function saveItem(
 	fs.writeFileSync(filePath, raw, "utf-8");
 	// 写版本快照：每次保存都追加一条到 content/archive/[section]/[slug].jsonl
 	appendVersionSnapshot(section, slug, raw, (item.editor as string) || "system");
+	// 内容已变 → 该 section 列表缓存失效，下次读取重新聚合（标题/日期/order/cover 等）。
+	invalidateContentCache(section);
 	return getItem(section, slug)!;
 }
 
@@ -308,13 +368,18 @@ export function restoreVersion(section: "posts" | "projects" | "docs" | "pages",
 	if (!raw) return false;
 	// 写入当前文件（会再次触发快照，形成历史链）
 	fs.writeFileSync(path.join(sections[section], slug + ".md"), raw, "utf-8");
+	invalidateContentCache(section);
 	return true;
 }
 
 export function deleteItem(section: "posts" | "projects" | "docs" | "pages", slug: string): boolean {
 	ensureDirs();
 	const filePath = path.join(sections[section], slug + ".md");
-	if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return true; }
+	if (fs.existsSync(filePath)) {
+		fs.unlinkSync(filePath);
+		invalidateContentCache(section);
+		return true;
+	}
 	return false;
 }
 
@@ -349,6 +414,11 @@ function fixTableBlocks(src: string): string {
 }
 
 export function renderMarkdown(mdContent: string): RenderedContent {
+	// 渲染缓存：markdown 内容 sha1 为键。highlight.js 语法高亮是该路径最贵的部分，
+	// 缓存后同一篇文章的重复访问（含 SWR 重渲染）直接命中，省去整段重解析+高亮。
+	const key = crypto.createHash("sha1").update(mdContent).digest("hex");
+	const hit = mdCache.get(key);
+	if (hit) return hit;
 	// Images render progressively: off-screen content images load lazily.
 	// referrerpolicy="no-referrer"：正文图片常引用 B 站图床（i*.hdslb.com）等有防盗链的站点，
 	// 带本站 Referer 会被 403 变成裂图；去掉 Referer 后正常显示。对本站图片无副作用。
@@ -363,7 +433,18 @@ export function renderMarkdown(mdContent: string): RenderedContent {
 		if (text) toc.push({ id: m[2], text, level: parseInt(m[1], 10) });
 	}
 	const words = mdContent.replace(/[#*`\[\]()!>\-\s]/g, "").length;
-	return { html, toc, words };
+	const result: RenderedContent = { html, toc, words };
+	mdCache.set(key, result);
+	// 惰性淘汰最旧的一半，避免长文站点内存无限增长（Map 保持插入序 → 旧键在前）。
+	if (mdCache.size > MD_CACHE_MAX) {
+		let i = 0;
+		const drop = Math.floor(MD_CACHE_MAX / 2);
+		for (const k of mdCache.keys()) {
+			if (i++ >= drop) break;
+			mdCache.delete(k);
+		}
+	}
+	return result;
 }
 
 export function uploadFile(filename: string, data: Buffer): { url: string; error?: string } {
@@ -471,7 +552,7 @@ export function getSiteUrl(fallback?: string): string {
 export function getSettings(): SiteSettings {
 	const filePath = path.join(CONTENT_DIR, "settings.json");
 	if (!fs.existsSync(filePath)) return getDefaultSettings();
-	const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Partial<SiteSettings>;
+	const data = cachedJsonFile<Partial<SiteSettings>>(filePath, {} as Partial<SiteSettings>);
 	const defaults = getDefaultSettings();
 	return {
 		...defaults, ...data,
@@ -488,6 +569,7 @@ export function getSettings(): SiteSettings {
 export function saveSettings(settings: SiteSettings): void {
 	ensureDirs();
 	fs.writeFileSync(path.join(CONTENT_DIR, "settings.json"), JSON.stringify(settings, null, 2), "utf-8");
+	jsonCache.delete(path.join(CONTENT_DIR, "settings.json"));
 }
 
 export interface FriendLink { name: string; url: string; description?: string; avatar?: string; verified?: boolean; }
@@ -594,16 +676,15 @@ export interface NavConfig { workspace: NavItem[]; more: NavItem[]; bottom: NavI
 function readJsonArray<T>(filePath: string): T[] {
 	ensureDirs();
 	if (!fs.existsSync(filePath)) return [];
-	try {
-		const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-		return Array.isArray(data) ? data : data.items || [];
-	} catch {
-		return [];
-	}
+	const data = cachedJsonFile<any>(filePath, null);
+	if (data == null) return [];
+	return Array.isArray(data) ? data : data.items || [];
 }
 function writeJsonArray<T>(filePath: string, items: T[]): void {
 	ensureDirs();
 	fs.writeFileSync(filePath, JSON.stringify({ items: items }, null, 2), "utf-8");
+	// 整文件重写 → mtime 变化，但立刻清掉缓存，规避亚秒级分辨率窗口。
+	jsonCache.delete(filePath);
 }
 function genId(prefix: string): string {
 	return prefix + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -752,15 +833,18 @@ export function getNav(): NavConfig {
 		bottom: [{ title: "管理后台", url: "/admin" }]
 	};
 	if (!fs.existsSync(NAV_FILE)) return defaults;
-	try {
-		const data = JSON.parse(fs.readFileSync(NAV_FILE, "utf-8"));
-		return { workspace: data.workspace || defaults.workspace, more: data.more || defaults.more, bottom: data.bottom || defaults.bottom };
-	} catch { return defaults; }
+	const data = cachedJsonFile<Partial<NavConfig>>(NAV_FILE, {} as Partial<NavConfig>);
+	return {
+		workspace: data.workspace || defaults.workspace,
+		more: data.more || defaults.more,
+		bottom: data.bottom || defaults.bottom
+	};
 }
 
 export function saveNav(nav: NavConfig): void {
 	ensureDirs();
 	fs.writeFileSync(NAV_FILE, JSON.stringify(nav, null, 2), "utf-8");
+	jsonCache.delete(NAV_FILE);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -775,7 +859,7 @@ export type StatsData = Record<string, StatsEntry>;
 export function getStats(): StatsData {
 	ensureDirs();
 	if (!fs.existsSync(STATS_FILE)) return {};
-	try { return JSON.parse(fs.readFileSync(STATS_FILE, "utf-8")); } catch { return {}; }
+	return cachedJsonFile<StatsData>(STATS_FILE, {});
 }
 
 /** 记录一次 PV。客户端用 sessionStorage 做“同 tab 同日只发一次”，服务端只负责累加。 */
@@ -788,6 +872,8 @@ export function recordView(target: string): number {
 	entry.daily[today] = (entry.daily[today] || 0) + 1;
 	stats[target] = entry;
 	fs.writeFileSync(STATS_FILE, JSON.stringify(stats), "utf-8");
+	// 计数写后立刻清缓存，避免下一读命中旧 mtime（亚秒窗口）而漏算。
+	jsonCache.delete(STATS_FILE);
 	return entry.total;
 }
 
