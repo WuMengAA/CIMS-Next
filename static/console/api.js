@@ -499,7 +499,13 @@
     },
 
     // ---- 班级交流（站点侧 SQLite，支持房间/班级隔离，跨班互通）----
-    // room 缺省 "techrep-global"（全校电教委员群）；各班级用自身 classId 作房间。
+    // room 约定：
+    //   "techrep-global"      全校电教委员群
+    //   "<classId>"           某班房间（如 class_03）
+    //   "grade:高一" / "grade:高二"  年级电教委员群（同年级跨班互助）
+    // 正文含 @全体 / @all 时，服务端会自动把这条升级为教室大屏广播（见
+    // src/routes/api/console/ext/[...path]/+server.ts 的 chat 分支）——
+    // 即「不要把重要消息只留在群里」，喊一句就上屏幕，不必再切页手工重发。
     listChat: async (room) => normChat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
     sendChat: async (text, from, room) => {
       const me = from || (state.classId || "电教委员");
@@ -510,6 +516,8 @@
       return r;
     },
     CHAT_ROOM_GLOBAL: "techrep-global",
+    // 年级房间 id 约定：grade:<年级名>。面板用它拼房间名，服务端按房间隔离存储。
+    gradeRoom: (grade) => "grade:" + (grade || "").trim(),
 
     // ---- 故障上报 / Bug（实名站：stelarith-website /api/feedback，复用反馈模型）----
     // 嵌入网站（/admin/console）或配置了 siteHost 时走网站；否则演示降级 / 扩展网关。

@@ -17,17 +17,21 @@
   }
 
   // ============ 权限（由网站后台经 iframe query 下发）============
-  // 网站 /admin/console 已按角色算好 can(control/remote/manage/issue)，经 iframe src 的
-  // query 传入；独立打开面板（非内嵌）时不做限制。**内嵌时为 fail-closed**：
-  // 没拿到明确授权即视为无权限，避免「前端忘了传 → 谁都全权限」的危险默认。
+  // 网站 /admin/console 按「两条轴」算好下发的权限位：
+  //   - 设备轴 control/remote/manage（canDevice，与内容等级正交）；
+  //   - 内容轴 issue（submitIssue，L2 参与能力）。
+  // 经 iframe src 的 query 传入；独立打开面板（非内嵌）时不做限制。
+  // **内嵌时为 fail-closed**：没拿到明确授权即视为无权限，
+  // 避免「前端忘了传 → 谁都全权限」的危险默认。
   const PERM = (function () {
     const q = new URLSearchParams(location.search);
     const embedded = q.get("embed") === "1" || location.pathname.startsWith("/admin/console");
     const flag = (k) => q.get(k) === "1";
-    return {
+    const p = {
       embedded,
       role: q.get("role") || "",
       roleLabel: q.get("roleLabel") || "",
+      levelLabel: q.get("levelLabel") || "",
       user: q.get("user") || "",
       email: q.get("email") || "",
       avatar: q.get("avatar") || "",
@@ -38,7 +42,14 @@
       manage: flag("manage"),
       issue: flag("issue"),
     };
+    // readonly 有两种来源：宿主显式下发的 readonly=1（只读观看态），
+    // 或内嵌但一个设备写权限位都没有 —— 两者归一，避免各自为政。
+    p.readonly = embedded && (flag("readonly") || (!p.control && !p.remote && !p.manage));
+    return p;
   })();
+
+  // 只读观看态：整体套一层标记，供 CSS 收敛一切写操作入口的样式。
+  if (PERM.readonly) document.documentElement.classList.add("readonly-mode");
   const NEED_LABEL = { control: "设备控制", remote: "远程控制", manage: "设备管理", issue: "提交上报" };
   const allow = (need) => !need || !PERM.embedded || !!PERM[need];
   /** 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。 */
@@ -57,7 +68,11 @@
     if (PERM.control) parts.push("设备控制");
     if (PERM.remote) parts.push("远程控制");
     if (PERM.issue) parts.push("上报");
-    el.textContent = (PERM.roleLabel || PERM.role || "只读") + " · " + (parts.length ? parts.join(" / ") : "仅查看");
+    // 等级标签（L1–L5）单独前置：它属于内容轴，与后面的设备档位是两个维度。
+    const level = PERM.levelLabel ? PERM.levelLabel + " · " : "";
+    el.textContent = level + (PERM.roleLabel || PERM.role || "只读") + " · " + (parts.length ? parts.join(" / ") : "仅查看");
+    el.classList.toggle("readonly", !!PERM.readonly);
+    if (PERM.readonly) el.title = "当前为只读观看，所有设备写操作已隐藏";
     el.classList.remove("hidden");
   }
 
@@ -484,7 +499,22 @@
       }
       else if (act === "send-chat") {
         const t = $("#chat-text").value.trim(); if (!t) return;
-        await API.sendChat(t, API.state.classId || "电教委员", chatRoom); toast("已发送"); go("chat");
+        // 含 @全体 / @all 时服务端会自动升级为教室大屏广播，这里给个即刻反馈，
+        // 免得发完不知道「到底推没推」。返回体里的 broadcast 字段是真实送达数。
+        // 这里的判定必须与服务端 [...path]/+server.ts 的 AT_ALL **完全一致**：
+        // 不能用统一尾随 `\b`（CJK 不构成 ASCII 词边界，会让「@全体」永不命中），
+        // 且要排除邮箱（a@all.com）。两边不一致会出现「提示已广播但实际没推」。
+        const wantAll = /(?<![A-Za-z0-9._%+-])(?:@全体|@all\b)/i.test(t);
+        const r = await API.sendChat(t, API.state.classId || "电教委员", chatRoom);
+        if (wantAll) {
+          const b = r && r.broadcast;
+          toast(b && b.delivered > 0
+            ? `已发送，并广播到 ${b.delivered}/${b.total} 台教室大屏`
+            : "已发送（广播未送达：集控不可达或设备离线）");
+        } else {
+          toast("已发送");
+        }
+        go("chat");
       }
       else if (act === "submit-report") {
         const t = $("#rp-title").value.trim(); if (!t) return toast("请输入标题");
