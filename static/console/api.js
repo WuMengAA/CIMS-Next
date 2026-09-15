@@ -318,6 +318,81 @@
     });
   }
 
+  // ---- 课表归一化：官方 Profile 信封 → 面板的 {name, days:[{day,name,items}]} ----
+  //
+  // 为什么必须有这一层：CIMS 下发的 ClassPlan 是**官方「Profile 信封」**——
+  //   { Name, ClassPlans:{<planGuid>:{TimeRule:{WeekDay},Classes:[{SubjectId,...}]}},
+  //     ClassPlanGroups:{...} }
+  // 而面板视图（dashboard/schedule）读的是 `sched.days[0].items`。
+  // 两者结构完全不同：直接透传时 `sched.days` 为 undefined，
+  // `sched.days[0]` 立刻抛
+  //   TypeError: Cannot read properties of undefined (reading '0')
+  // 症状是「总览/操作日志整页显示『加载失败』」——因为 dashboard 与 audit
+  // 同属一次 go() 渲染链，dashboard 先炸就把 view 整块替换成错误卡。
+  //
+  // 关键映射：
+  //   · 一个 ClassPlan = 一天（信封里 6 个 plan 对应周一~周六）；
+  //     天序取 `TimeRule.WeekDay`（0=周日 … 6=周六），不能靠对象键顺序。
+  //   · `Classes[].SubjectId` 是 GUID，必须用 Subjects 资源
+  //     （{Subjects:{<guid>:{Name}}}) 反查成「语文/数学」这类可读名。
+  //     查不到就退回短 GUID，绝不显示空白。
+  //   · 科目表取不到不应让整页失败 —— 降级为「显示 GUID」，课表仍可用。
+  const WEEK_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+  /** 把官方 Subjects 信封压成 {guid: 名称} 映射；任何异常都退化为空表。 */
+  function subjectNameMap(subEnvelope) {
+    const map = {};
+    const s = subEnvelope && subEnvelope.Subjects;
+    if (s && typeof s === "object") {
+      for (const [guid, v] of Object.entries(s)) {
+        const nm = v && (v.Name || v.name);
+        if (guid && nm) map[guid] = String(nm);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * 官方 Profile 信封 → 面板课表形态。
+   * @param {any} env  ClassPlan 资源（可能是官方信封，也可能已是面板形态）
+   * @param {any} subEnv Subjects 资源（官方信封），可为空
+   */
+  function normSchedule(env, subEnv) {
+    // 已经是面板形态（含 days 数组）→ 原样返回，兼容演示数据与旧契约
+    if (env && Array.isArray(env.days)) return env;
+    const nameMap = subjectNameMap(subEnv);
+    const plans = (env && env.ClassPlans) || {};
+    const entries = Object.entries(plans);
+    if (!entries.length) {
+      // 合法空信封（例如未绑定班级的 default_classplan）：给空周，而不是让调用方炸
+      return { name: (env && env.Name) || "", days: [] };
+    }
+    const days = entries.map(([guid, cp]) => {
+      const rule = (cp && cp.TimeRule) || {};
+      // WeekDay: 0=周日 … 6=周六；缺字段时退化为 0，排序后仍在
+      const wd = Number.isFinite(rule.WeekDay) ? rule.WeekDay : 0;
+      const items = ((cp && cp.Classes) || [])
+        .filter((c) => c && c.IsEnabled !== false)
+        .map((c) => {
+          const sid = c.SubjectId || c.subjectId || "";
+          return nameMap[sid] || (sid ? String(sid).slice(0, 8) : "");
+        })
+        .filter((x) => x);
+      return {
+        day: wd,
+        // 优先用课表自带的 Name（学校数据里就是「周一」「周二」这类权威标签），
+        // 缺失时才用 WeekDay 折算；两者都不依赖对象键顺序。
+        name: (cp && cp.Name) || WEEK_NAMES[wd] || `第${wd}天`,
+        items,
+        planId: guid,
+        planName: (cp && cp.Name) || "",
+      };
+    });
+    // 按周序排序，保证「今日课表」取到的是周一而非对象键里的随机一个
+    days.sort((a, b) => a.day - b.day);
+    return { name: (env && env.Name) || (env && env.name) || "", days };
+  }
+
   // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
   // 与 ext/stelarith-agent 的 verify() 对齐：token = hex(HMAC_SHA256(action + "|" + ts, secret))。
   // 生产环境：secret 为「网站—设备」共享密钥；更高安全用网站私钥 Ed25519 签名（见 sync/sign-task.mjs），
@@ -365,9 +440,20 @@
     },
 
     // ---- 课表（ClassPlan 资源）----
+    // 必须经 normSchedule：CIMS 下发的是官方 Profile 信封（无 days 字段），
+    // 直接透传会让 dashboard/schedule 在读 sched.days[0] 时抛
+    // 「Cannot read properties of undefined (reading '0')」。
+    // 科目表（Subjects）单独取一次用于把 SubjectId 翻成人话；取失败不影响课表可用。
     getSchedule: async (cls) => {
       const name = cls || state.classId || "default_classplan";
-      return cli(`/v1/client/ClassPlan?name=${encodeURIComponent(name)}`, {}, "schedule");
+      const env = await cli(`/v1/client/ClassPlan?name=${encodeURIComponent(name)}`, {}, "schedule");
+      // 演示模式 / 未配后端：cli 已回退演示数据（本身即面板形态），直接返回
+      if (state.demo || !state.clientHost) return env;
+      let subEnv = null;
+      try {
+        subEnv = await cli(`/v1/client/Subjects?name=sub_school`, {}, null);
+      } catch (_) { /* 科目表缺失：退化为显示短 GUID，不阻断课表 */ }
+      return normSchedule(env, subEnv);
     },
     putSchedule: async (cls, payload) => {
       const name = cls || state.classId || "default_classplan";
