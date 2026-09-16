@@ -253,9 +253,19 @@ REM 只是服务端地址被改乱了
 <ul>
   <li><b>校内一台常开机器（推荐）</b> —— 延迟低、不依赖外网、数据在校内。</li>
   <li><b>装在某一间教室的电脑上</b> —— 只适合一两个班；这台机器一关，其他班也失去集控。</li>
-  <li><b>公网云主机</b> —— 需要额外的反向代理来改写 Host 头，详见
-      <span class="file">docs\02-服务端落地.md</span>。</li>
+  <li><b>公网（多校共用，可带容灾）</b> —— 走 Cloudflare Tunnel：<b>不需要公网 IP、不需要自己申请证书、
+      不需要开放任何入站端口</b>，源站只监听 127.0.0.1。此时地址改成租户自己的子域名
+      （<code>https://&lt;slug&gt;.&lt;基域&gt;</code>），并用泛域名一条规则覆盖所有租户。
+      详见 <span class="file">docs\07-公网接入与容灾双实例.md</span>。</li>
 </ul>
+
+<div class="callout warn">
+  <b>公网部署有两个必须确认的点</b>
+  ① 服务端 <code>.env</code> 里的 <code>CIMS_TRUSTED_PROXIES</code> 必须配上（cloudflared 在本机则填
+  <code>127.0.0.1</code>），否则限流中间件会把全网设备看成同一个 IP ——
+  任意一个人打满阈值，<b>全校设备一起被封 60 秒</b>。
+  ② 数据库不能和主实例装在同一个台机器上，否则「主机挂了切备用」是假容灾。
+</div>
 
 <div class="callout warn">
   <b>服务端不可用时会怎样（有意的降级设计）</b>

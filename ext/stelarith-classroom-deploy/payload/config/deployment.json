@@ -1,9 +1,9 @@
 {
   "_readme": "教室端部署配置。部署前请改本文件（也可以不改，脚本会逐项询问）。",
   "_字段说明": {
-    "ServerBase": "★必填。学校集控服务端的 CIMS 客户端地址，形如 http://10.0.0.10:8096（不要带结尾斜杠）",
-    "ServerPanel": "电教委员面板地址。留空则按 ServerBase 的主机名自动推导为 http://<主机>:8090/admin/console",
-    "BaseDomain": "租户基域，必须等于服务端 .env 里的 CIMS_BASE_DOMAIN。默认 localhost，一般不用改",
+    "ServerBase": "★必填。学校集控服务端的 CIMS 客户端地址。内网部署填 http://10.0.0.10:8096（不要带结尾斜杠）；公网部署填租户自己的子域名 https://<slug>.<基域>，详见 docs/07",
+    "ServerPanel": "电教委员面板地址。留空则按 ServerBase 的主机名自动推导为 http://<主机>:8090/admin/console。公网部署填 https://panel.example.com/admin/console",
+    "BaseDomain": "租户基域。必须等于服务端 .env 里的 CIMS_BASE_DOMAIN。内网部署用默认 localhost；公网部署改成真实基域，如 cims.example.com",
     "Slug": "租户标识，必须等于服务端 CIMS 的账户 slug。星璃演示环境为 demo-class",
     "ClientUid": "★本机唯一标识。留空则自动取计算机名（小写化）。同一租户下不可重复",
     "ClassName": "班级名（仅用于面板显示与运维识别，可留空）",

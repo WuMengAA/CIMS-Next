@@ -26,9 +26,22 @@ stelarith-classroom-deploy\
 │   │   ├── preflight.ps1    ← 环境自检（只读）
 │   │   ├── upgrade.ps1      ← 升级 / 降级 / 卸自启
 │   │   └── rollback.ps1     ← 回滚
-│   └── docs\                ← 六份文档
+│   └── docs\                ← 七份文档（01~06 教室端，07 公网与容灾）
 └── （产出）D:\Stelarith\_deploy\ClassroomDeploy-<日期>\
 ```
+
+### 内网 vs 公网：同一套包，两种配置
+
+包本身不分内网/公网版，差别只在三个字段。判据只有一条：
+**插件的 `BaseDomain` 必须等于服务端 `.env` 的 `CIMS_BASE_DOMAIN`**。
+
+| | 内网（默认） | 公网（多校 + 容灾） |
+|---|---|---|
+| `ServerBase` | `http://10.0.0.10:8096` | `https://<slug>.<基域>` |
+| `BaseDomain` | `localhost` | 真实域名，如 `cims.example.com` |
+| 需要一个真实域名 | 不需要 | 需要（泛域名，一条规则覆盖全部租户） |
+| 服务端 `CIMS_TRUSTED_PROXIES` | 留空 | **必须配**，否则全网设备会被限流连坐 |
+| 详见 | `docs/02` §1 | **`docs/07-公网接入与容灾双实例.md`** |
 
 ## 2. 出包
 
