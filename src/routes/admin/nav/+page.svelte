@@ -4,6 +4,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import * as Select from "$lib/components/ui/select/index.js";
+	import IconPicker from "$lib/components/icon-picker.svelte";
 	import { Plus, Trash2, ArrowUp, ArrowDown, GripVertical, Save, LayoutList } from "@lucide/svelte";
 
 	interface NavItem { title: string; url: string; icon?: string; }
@@ -109,7 +110,7 @@
 	</Select.Root>
 	<Input bind:value={newTitle} placeholder="名称（必填）" class="w-full max-w-none sm:max-w-[200px]" />
 	<Input bind:value={newUrl} placeholder="/路径" class="w-full max-w-none sm:max-w-[200px]" />
-	<Input bind:value={newIcon} placeholder="图标键(home/blog/…)" class="w-full max-w-none sm:max-w-[180px]" />
+	<IconPicker value={newIcon} onpick={(n) => (newIcon = n)} triggerLabel="图标" class="shrink-0" />
 	<Button onclick={addItem} disabled={!newTitle.trim() || !newUrl.trim()}>
 		<Plus class="h-4 w-4 mr-1" /> 添加
 	</Button>
@@ -131,10 +132,11 @@
 						<p class="px-4 py-4 text-sm text-muted-foreground">暂无项目</p>
 					{/if}
 					{#each group.items as item, i (group.key + i)}
-						<div class="flex items-center gap-2 px-3 py-2">
+						<div class="flex flex-wrap items-center gap-2 px-3 py-2">
 							<GripVertical class="size-4 shrink-0 cursor-grab text-muted-foreground" />
-							<Input bind:value={item.title} oninput={(e: Event) => updateItem(group.key, i, "title", (e.target as HTMLInputElement).value)} placeholder="名称" class="h-8 max-w-[160px]" />
-							<Input bind:value={item.url} oninput={(e: Event) => updateItem(group.key, i, "url", (e.target as HTMLInputElement).value)} placeholder="/路径" class="h-8 flex-1" />
+							<Input bind:value={item.title} oninput={(e: Event) => updateItem(group.key, i, "title", (e.target as HTMLInputElement).value)} placeholder="名称" class="h-8 max-w-[150px]" />
+							<Input bind:value={item.url} oninput={(e: Event) => updateItem(group.key, i, "url", (e.target as HTMLInputElement).value)} placeholder="/路径" class="h-8 min-w-[120px] flex-1" />
+							<IconPicker value={item.icon || ""} onpick={(n) => updateItem(group.key, i, "icon", n)} triggerLabel="图标" />
 							<Button variant="ghost" size="icon" class="h-8 w-8" onclick={() => moveItem(group.key, i, -1)} disabled={i === 0}><ArrowUp class="h-3.5 w-3.5" /></Button>
 							<Button variant="ghost" size="icon" class="h-8 w-8" onclick={() => moveItem(group.key, i, 1)} disabled={i === group.items.length - 1}><ArrowDown class="h-3.5 w-3.5" /></Button>
 							<Button variant="ghost" size="icon" class="h-8 w-8 text-destructive hover:text-destructive" onclick={() => removeItem(group.key, i)}><Trash2 class="h-3.5 w-3.5" /></Button>

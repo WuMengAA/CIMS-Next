@@ -23,6 +23,8 @@
 			gradeName: string;
 			accountId: string;
 			can: { control: boolean; remote: boolean; manage: boolean; issue: boolean };
+			broadcastScopes: string[];
+			userId: number;
 		};
 	}>();
 
@@ -44,7 +46,11 @@
 			remote: data.can.remote ? "1" : "0",
 			manage: data.can.manage ? "1" : "0",
 			issue: data.can.issue ? "1" : "0",
-			readonly: data.readonly ? "1" : "0"
+			readonly: data.readonly ? "1" : "0",
+			// 广播可达范围（class/grade/school）逗号分隔：面板据此只列可选范围
+			bscopes: (data.broadcastScopes || []).join(","),
+			// 当前用户 id：面板拼一对一私聊房间名用（dm:<小id>:<大id>）
+			uid: String(data.userId ?? "")
 		});
 		return "/console/index.html?" + q.toString();
 	});

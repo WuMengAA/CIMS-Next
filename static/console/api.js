@@ -282,6 +282,13 @@
       title: n.title != null ? n.title : "",
       scope: n.scope != null ? n.scope : "",
       author: n.author || "",
+      // 目标班级（服务端存逗号串或数组，这里统一成数组），用于「历史通知分班级」展示
+      classes: Array.isArray(n.classes)
+        ? n.classes
+        : String(n.classes || "").split(",").map((s) => s.trim()).filter(Boolean),
+      // 来源通道：notice / chat / announcement —— 让同一条内容走过多条通道时一眼可辨
+      channel: n.channel || "",
+      sent: Number.isFinite(n.sent) ? n.sent : (n.sent != null ? Number(n.sent) || 0 : 0),
       at: n.at || fmtTime(n.createdAt),
     }));
   }
@@ -318,7 +325,90 @@
     });
   }
 
-  // ---- 课表归一化：官方 Profile 信封 → 面板的 {name, days:[{day,name,items}]} ----
+  // ---- 星璃功能模块目录（面板展示用） ----
+  //
+  // 与插件端 `StelarithModules.All` 一一对应（id 必须完全一致 —— 三处共用同一套字符串：
+  // 插件 C#、本文件、面板渲染）。这里冗余一份 label/描述 是因为心跳上报为了省带宽
+  // 只发 `{moduleId: bool}`，不含文案；若面板依赖插件发文案，插件旧版本就会渲染出空白。
+  // 未知 id 一律按「未登记模块」展示，不隐藏 —— 新插件加了模块但面板没更新时，
+  // 用户仍能看到并操控它，而不是"开关神秘消失"。
+  const MODULE_CATALOG = [
+    { id: "heartbeat", label: "状态心跳上报", core: true, desc: "定期上报在线状态、插件清单与模块开关。关闭后面板将看不到这台设备。" },
+    { id: "command_poll", label: "集控指令通道", core: true, desc: "轮询并执行集控下发的指令（锁屏/截图/切班/广播）。关闭后本机将失去远程控制能力。" },
+    { id: "sync", label: "资源主动同步", core: false, desc: "定时从集控拉取课表 / 作息 / 科目 / 组件配置。" },
+    { id: "writeback", label: "写回 ClassIsland 档案", core: false, desc: "把同步到的资源写入本机档案，使大屏真正显示新配置。" },
+    { id: "notification", label: "集控播报", core: false, desc: "把集控广播落到 ClassIsland 官方提醒系统，在大屏播放遮罩播报。" },
+    { id: "os_actions", label: "本机动作（锁屏 / 截图）", core: false, desc: "允许集控对这台机器执行锁屏与截屏。" },
+    { id: "remote_control", label: "远程控制转发", core: false, desc: "允许集控经本地代理发起远程控制（VNC）会话。" },
+    { id: "message_feed", label: "岛内消息中心", core: false, desc: "在 ClassIsland 设置页 / 托盘里查看本机最近的广播与通知。" },
+  ];
+  const MODULE_BY_ID = MODULE_CATALOG.reduce((m, x) => (m[x.id] = x, m), {});
+
+  /** 秒 → 人话（心跳间隔通常是几十秒，粒度到"刚刚/分钟"即可）。 */
+  function ago(sec) {
+    if (sec == null || isNaN(sec)) return "从未上报";
+    if (sec < 60) return "刚刚";
+    if (sec < 3600) return Math.floor(sec / 60) + " 分钟前";
+    if (sec < 86400) return Math.floor(sec / 3600) + " 小时前";
+    return Math.floor(sec / 86400) + " 天前";
+  }
+
+  /**
+   * `/class/device-status` 的一条 → 面板统一设备结构。
+   *
+   * 关键语义：
+   *   · `reported=false` 与 `online=false` 是**两件事** ——
+   *     前者="从未接上集控"，后者="接上过但现在掉线"。混为一谈会让
+   *     "端点配错"和"教室断电"看起来一样，排查时没有方向。
+   *   · `ver` 为空时显示 "—" 而不是空字符串：空表格单元格看起来像渲染失败。
+   */
+  function normDevice(d) {
+    const online = !!d.online;
+    const reported = !!d.reported;
+    return {
+      id: d.client_id,
+      name: d.host || d.client_id,
+      host: d.host || "",
+      online,
+      reported,
+      ageSec: typeof d.age_seconds === "number" ? d.age_seconds : null,
+      // last 是**真实心跳**推导出的相对时间，不再是"注册时间"冒充
+      last: reported ? ago(d.age_seconds) : "从未上报",
+      reportedAt: d.reported_at || "",
+      ip: d.ip || "",
+      ver: d.version || "—",
+      classId: d.class_id || "",
+      className: d.class_name || "",
+      activeGroup: d.active_class_group || "",
+      modules: d.modules && typeof d.modules === "object" ? d.modules : {},
+      plugins: Array.isArray(d.plugins) ? d.plugins : [],
+      extra: d.extra && typeof d.extra === "object" ? d.extra : {},
+      // 状态文案三分：未接入 / 在线 / 离线
+      stateLabel: !reported ? "尚未接入" : online ? "在线" : "离线",
+      stateKind: !reported ? "warn" : online ? "ok" : "err",
+    };
+  }
+
+  /** 演示设备补齐新字段（无后端时面板结构仍完整，不报 undefined）。 */
+  function demoDevice(d) {
+    return Object.assign({
+      host: d.name, reported: true, ageSec: 12, reportedAt: "", classId: "", className: "",
+      activeGroup: "", modules: {}, plugins: [], extra: {}, stateLabel: d.online ? "在线" : "离线",
+      stateKind: d.online ? "ok" : "err",
+    }, d, { online: !!d.online });
+  }
+
+  /** 模块快照（{id:bool}）→ 有序数组，带上目录里的文案；未知 id 也保留。 */
+  function normModules(snap) {
+    const map = snap && typeof snap === "object" ? snap : {};
+    const known = MODULE_CATALOG.map((m) => Object.assign({}, m, { enabled: !!map[m.id] }));
+    const extra = Object.keys(map)
+      .filter((k) => !MODULE_BY_ID[k])
+      .map((k) => ({ id: k, label: k + "（未登记）", core: false, desc: "插件上报了本面板不认识的模块。", enabled: !!map[k] }));
+    return known.concat(extra);
+  }
+
+
   //
   // 为什么必须有这一层：CIMS 下发的 ClassPlan 是**官方「Profile 信封」**——
   //   { Name, ClassPlans:{<planGuid>:{TimeRule:{WeekDay},Classes:[{SubjectId,...}]}},
@@ -390,7 +480,98 @@
     });
     // 按周序排序，保证「今日课表」取到的是周一而非对象键里的随机一个
     days.sort((a, b) => a.day - b.day);
-    return { name: (env && env.Name) || (env && env.name) || "", days };
+    // `__raw` / `__subjectIds` 是为**回写**准备的（见 denormSchedule）：
+    // 面板形态只有科目中文名，而 CIMS 要的是 SubjectId GUID + 完整 TimeRule/Classes 结构，
+    // 没有原始信封就重建不出来。这两个字段不参与渲染，仅随面板对象一起流转。
+    const subjectIds = {};
+    for (const [guid, nm] of Object.entries(nameMap)) subjectIds[nm] = guid;
+    return {
+      name: (env && env.Name) || (env && env.name) || "",
+      days,
+      __raw: env || null,
+      __subjectIds: subjectIds,
+    };
+  }
+
+  /**
+   * 面板课表形态 → 官方 Profile 信封（**回写方向的归一化**）。
+   *
+   * 为什么必须有这一半：课表读取曾经因为「面板形态 vs 官方信封」不匹配而整页崩，
+   * 修复时只补了读取方向；**写入方向**当时是把面板对象原样 POST 回去 ——
+   * 于是保存的课表里没有 `Classes[].SubjectId`，客户端反序列化后就是空课表，
+   * 表现为「面板显示保存成功，但教室端什么都没变」。两个方向必须成对修。
+   *
+   * 做法：以原始信封为骨架（保留 TimeRule/TimeLayoutId/类群等我们没编辑的字段），
+   * 只按顺序把每个格的科目**名**换回 SubjectId GUID。拿不到 raw 时退化重建最小信封。
+   *
+   * @returns {{ envelope: any, dropped: string[] }} dropped = 无法识别成科目的格子文本
+   */
+  function denormSchedule(panel) {
+    const days = (panel && panel.days) || [];
+    const subjectIds = (panel && panel.__subjectIds) || {};
+    const raw = panel && panel.__raw;
+    const dropped = [];
+
+    // 没有原始信封（演示数据/空课表）→ 重建一个符合官方形状的最小信封
+    const envelope = raw && raw.ClassPlans
+      ? JSON.parse(JSON.stringify(raw))
+      : {
+          Name: (panel && panel.name) || "",
+          ClassPlans: {},
+          ClassPlanGroups: (raw && raw.ClassPlanGroups) || {},
+        };
+
+    for (const d of days) {
+      const planId = d.planId || `day-${d.day}`;
+      const exist = envelope.ClassPlans[planId] || {};
+      // 原始 Classes 按索引对齐，用来继承 IsEnabled 等我们没编辑的字段
+      const rawClasses = Array.isArray(exist.Classes) ? exist.Classes : [];
+
+      const classes = [];
+      (d.items || []).forEach((txt, i) => {
+        const label = String(txt == null ? "" : txt).trim();
+        const prev = rawClasses[i] || {};
+        if (!label) {
+          // 空格子 → 保留一个「禁用」占位记录，而不是直接跳过。
+          // 直接跳过会让后面的节次整体前移（第 3 节变成第 2 节），
+          // 课表的节次位置是有意义的，不能因为某个格子没填就塌缩。
+          classes.push({ SubjectId: "", IsEnabled: false });
+          return;
+        }
+        let sid = subjectIds[label];
+        if (!sid) {
+          // 兜底：原格子本身就是 GUID（后端没给 Subjects 时 normSchedule 会退化成短 GUID）
+          const base = prev.SubjectId || prev.subjectId;
+          if (base && String(base).startsWith(label)) sid = base;
+        }
+        if (!sid) {
+          dropped.push(`${d.name || d.day} 第${i + 1}节「${label}」`);
+          classes.push({ SubjectId: "", IsEnabled: false });
+          return;
+        }
+        classes.push({
+          SubjectId: sid,
+          IsEnabled: prev.IsEnabled !== false,
+          ...(prev.AttachedObjects ? { AttachedObjects: prev.AttachedObjects } : {}),
+        });
+      });
+
+      const wd = Number.isFinite(d.day) ? d.day : 0;
+      envelope.ClassPlans[planId] = {
+        ...exist,
+        Name: exist.Name || d.name || WEEK_NAMES[wd] || `第${wd}天`,
+        TimeLayoutId: exist.TimeLayoutId || (raw && raw.__timeLayoutId) || "",
+        TimeRule: exist.TimeRule || {
+          WeekDay: wd,
+          WeekCountDiv: 0,
+          WeekCountDivTotal: 2,
+          IsActive: true,
+        },
+        Classes: classes,
+      };
+      // 已存在的计划保留其类群关联；不覆盖 AssociatedGroup
+    }
+    return { envelope, dropped };
   }
 
   // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
@@ -410,6 +591,8 @@
 
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
+    // 展示层辅助（面板渲染设备状态/模块开关直接用，避免在 app.js 里各写一套格式化）
+    normModules, ago, MODULE_CATALOG,
     // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest / voicehubPush）。
     // 曾经写成 `voicehubList, voicehubRequest, voicehubPush,` 的简写属性：这几个标识符并不存在，
     // 对象字面量一求值就抛 ReferenceError，导致 global.API 从未赋值、整个面板 API 层全废。
@@ -455,10 +638,21 @@
       } catch (_) { /* 科目表缺失：退化为显示短 GUID，不阻断课表 */ }
       return normSchedule(env, subEnv);
     },
-    putSchedule: async (cls, payload) => {
+    putSchedule: async (cls, panelOrEnvelope) => {
       const name = cls || state.classId || "default_classplan";
-      return cims(`/account/${acct()}/ClassPlan/write?name=${encodeURIComponent(name)}`,
+      // 回写方向归一化：面板形态必须转回官方信封（Classes[].SubjectId），
+      // 否则客户端读到的是一张空课表 —— 而面板会显示「保存成功」，最难查的一类问题。
+      let payload = panelOrEnvelope;
+      let dropped = [];
+      if (panelOrEnvelope && Array.isArray(panelOrEnvelope.days)) {
+        const r = denormSchedule(panelOrEnvelope);
+        payload = r.envelope;
+        dropped = r.dropped;
+      }
+      const out = await cims(`/account/${acct()}/ClassPlan/write?name=${encodeURIComponent(name)}`,
         { method: "POST", body: JSON.stringify(payload) }, "schedule");
+      // 把「没能落地的格子」一并回给调用方，由 UI 明确提示，而不是静默丢弃
+      return { ...(out && typeof out === "object" ? out : { result: out }), dropped };
     },
 
     // ---- ClassIsland 组件配置（Components 资源）----
@@ -483,23 +677,91 @@
     },
 
     // ---- 设备（客户端控制，CIMS 原生）----
-    listDevices: async () => {
-      if (!canUseBackend()) return D.devices();
+    //
+    // 【设备状态真实显示】数据源是 `/class/device-status`（CIMS management）：
+    // 它把「管理端指派的班级」与「设备自己上报的心跳遥测」合到一处 ——
+    //   online/reported/age_seconds ← client_status.reported_at 与 90s 新鲜度阈值
+    //   host/ip/version            ← 设备上报的机器名、来源 IP、插件版本
+    //   modules/plugins/extra      ← 星璃模块开关、ClassIsland 插件清单、同步遥测
+    //
+    // 为什么不再走 `/account/{acct}/client/list` + 逐台 `/{uid}`：
+    //   那条老路只返回「配置侧」信息（mac/registered_at），**没有任何在线信号** ——
+    //   面板只能拿"注册时间"冒充"最后心跳"，设备关了一个月照样显示在线。
+    //   逐台串行请求在几十台设备的学校里还会打满超时。
+    //   新接口一次拿全部，且 online 是真实心跳推导出来的。
+    deviceStatus: async () => {
+      if (!canUseBackend()) return { fresh: 90, devices: D.devices().map(demoDevice) };
       try {
-        const uids = await reqTo(state.mgmtHost, `/account/${acct()}/client/list`);
-        if (!Array.isArray(uids)) return D.devices();
-        const details = await Promise.all(uids.map((uid) =>
-          reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}`).catch(() => ({ uid, status: "offline" }))
-        ));
-        return details.map((d) => ({
-          id: d.uid,
-          name: d.name || d.uid,
-          online: d.status === "online",
-          ip: d.mac || "",
-          ver: "",
-          last: d.registered_at || "",
-        }));
-      } catch (e) { return D.devices(); }
+        const r = await reqTo(state.mgmtHost, "/class/device-status");
+        const list = Array.isArray(r && r.devices) ? r.devices : [];
+        return {
+          fresh: Number((r && r.fresh_seconds) || 90) || 90,
+          devices: list.map(normDevice),
+        };
+      } catch (_) {
+        return { fresh: 90, devices: D.devices().map(demoDevice), error: true };
+      }
+    },
+    /** 兼容旧调用方：只要设备数组。 */
+    listDevices: async () => (await API.deviceStatus()).devices,
+    /**
+     * 下发「星璃功能模块」开关。
+     *
+     * 通道：命令队列（stelarith_task: set_module）。之所以不走 CIMS 原生端点 ——
+     * CIMS 不认识"星璃模块"这个概念，它只会转发 NotificationPayload；
+     * 插件的命令轮询器解析 stelarith_task 后调用 StelarithModules.Set()，
+     * 于是面板上的开关**真的**会改本机行为（此前"插件管理"读写的是 Components
+     * 资源，与真实插件启停毫无关系，开关是假的）。
+     */
+    setModule: async (uid, module, enabled) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）模块开关已记录" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("set_module", ts);
+      const task = { action: "set_module", module, enabled: !!enabled, token, scope: "device", ts };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+    },
+    /**
+     * 一次性下发多个模块开关（面板"恢复默认/批量"用）。
+     * 同样的命令通道，载荷换成 {modules:{...}}；插件端 ApplyFromCommand 两种都吃。
+     */
+    setModules: async (uid, modules) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）模块开关已记录" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("set_modules", ts);
+      const task = { action: "set_module", modules, token, scope: "device", ts };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+    },
+    /**
+     * ClassIsland 快捷入口（专页用）。
+     *
+     * 全部经**同一条命令通道**下发 stelarith_task，由教室端插件执行：
+     *   restart_island → 宿主进程优雅重启（插件侧调 AppBase.Restart）
+     *   sync_now       → 立即拉一次集控资源（不等下一个同步周期）
+     *   push_notice    → 在本机大屏弹一条提醒
+     *   set_active_class → 切班（复用 P 键 payload：group_id / group_name）
+     */
+    classislandAction: async (uid, action, payload) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟执行 " + action };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask(action, ts);
+      const task = Object.assign({ action, token, scope: "device", ts }, payload || {});
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+    },
+    /**
+     * 单机状态回读：面板用它做「指令下发后核对」（切班/模块开关是否真的生效）。
+     * 走 client 端口的 `/v1/client/{uid}/status`（代理会自动补租户 Host 头），
+     * 它额外返回 `self_reported_class_id`，可与管理端指派值交叉校验。
+     */
+    deviceStatusOne: async (uid) => {
+      if (!canUseBackend()) return null;
+      try { return await cims(`/v1/client/${encodeURIComponent(uid)}/status`, {}, null); }
+      catch (_) { return null; }
     },
     deviceAction: async (id, action) => {
       if (!canUseBackend()) return { status: "success", message: "（演示）指令已模拟下发" };
@@ -560,14 +822,34 @@
     },
 
     // ---- 通知广播 ----
-    // 下发：向所有在线设备下发桌面通知（CIMS send-notification，设备侧真实生效）
-    // 历史：CIMS 不存储 → 站点侧 SQLite 留痕（未配置后端时降级演示）
-    listNotices: async () => normNotices(await ext("/notices", {}, "notices")),
-    sendNotice: async (title, scope) => {
+    // 下发通知
+    // ── 为什么改成「首选服务端通道」──────────────────────────────────────────
+    // 旧实现是面板自己遍历 `/client/list` 逐台 `send-notification`，然后另发一次
+    // 留痕请求。问题有三：① 绕过权限校验（前端能推就是能推）；② 无法按班级定向
+    // （只会全量）；③ 留痕与推送分离，两条通道各写一次 → 历史里重复、设备端重复弹。
+    // 现在统一 POST /api/console/ext/notices，由服务端做「鉴权 → 范围校验 →
+    // 定向解析 → 去重 → 下发 → 留痕 → 审计」一条龙。面板只管发一次。
+    // 只有「独立打开面板且未配站点后端」时才退化为直连 CIMS 的旧路径。
+    listNotices: async (classId) =>
+      normNotices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
+    sendNotice: async (title, scope, classes, content) => {
+      const body = {
+        title,
+        scope: scope || "本班",
+        content: content || "",
+        classes: Array.isArray(classes) ? classes : [],
+      };
+      // ① 内嵌网站 / 配了站点后端：走服务端（推荐路径，含定向与去重）
+      if (state.embedded || state.siteHost) {
+        return ext("/notices", { method: "POST", body: JSON.stringify(body) }, "notices");
+      }
+      // ② 纯演示：本地造一条
       if (!canUseBackend()) {
-        const list = D.notices(); list.unshift({ id: "n" + Date.now(), title, scope: scope || "本班", at: "刚刚" });
+        const list = D.notices();
+        list.unshift({ id: "n" + Date.now(), title, scope: body.scope, at: "刚刚" });
         return { status: "success", sent: 1 };
       }
+      // ③ 独立打开 + 直连 CIMS：退化为直接下发（无站点侧留痕，仅开发调试用）
       const uids = await reqTo(state.mgmtHost, `/account/${acct()}/client/list`);
       let sent = 0;
       if (Array.isArray(uids)) {
@@ -579,9 +861,23 @@
           } catch (_) { /* 单台失败忽略 */ }
         }
       }
-      // 留痕到站点（失败不阻断下发结果）
-      try { await ext("/notices", { method: "POST", body: JSON.stringify({ title, scope, sent }) }); } catch (_) {}
       return { status: "success", sent };
+    },
+
+    // ---- 班级实体与「设备 ↔ 班级」映射（一班一号的权威视图）----
+    // 走站点代理到 CIMS management `/class/*`（代理已放行 /class/ 前缀的读操作）。
+    // 面板用它：① 通知页多选目标班级；② 设备页显示每台设备的所属班级。
+    listClassEntities: async () => {
+      try {
+        const r = await cims("/class/list", {}, null);
+        return Array.isArray(r) ? r : [];
+      } catch (_) { return []; }
+    },
+    deviceClassMap: async () => {
+      try {
+        const r = await cims("/class/device-map", {}, null);
+        return r && typeof r === "object" ? r : { devices: {}, classes: [] };
+      } catch (_) { return { devices: {}, classes: [] }; }
     },
 
     // ---- 班级交流（站点侧 SQLite，支持房间/班级隔离，跨班互通）----
@@ -604,37 +900,97 @@
     CHAT_ROOM_GLOBAL: "techrep-global",
     // 年级房间 id 约定：grade:<年级名>。面板用它拼房间名，服务端按房间隔离存储。
     gradeRoom: (grade) => "grade:" + (grade || "").trim(),
+    // 一对一私聊房间 id：dm:<较小id>:<较大id>（与服务端 canTalkInRoom 的解析一致）。
+    // 用 id 而非用户名，避免改名后会话断掉；id 排序保证双方算出同一个房间名。
+    dmRoom: (a, b) => {
+      const x = Number(a), y = Number(b);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+      return "dm:" + (x < y ? x + ":" + y : y + ":" + x);
+    },
+
+    // ---- 好友（站点侧 SQLite，仅登录用户可操作自己的关系）----
+    // 服务端在 SQL 层用当前会话用户 id 做约束，前端传的 peerId 只表示「对端是谁」，
+    // 无法借此操作别人的好友关系。
+    listFriends: async () => {
+      const r = await ext("/friends", {}, null);
+      return {
+        friends: (r && r.friends) || [],
+        incoming: (r && r.incoming) || [],
+        outgoing: (r && r.outgoing) || [],
+      };
+    },
+    searchFriends: async (q) => {
+      const r = await ext("/friends?q=" + encodeURIComponent(q || ""), {}, null);
+      return (r && r.results) || [];
+    },
+    friendAction: async (action, peerId, peerName, message) =>
+      ext("/friends", {
+        method: "POST",
+        body: JSON.stringify({ action, peerId, peerName, message }),
+      }, null),
 
     // ---- 故障上报 / Bug（实名站：stelarith-website /api/feedback，复用反馈模型）----
     // 嵌入网站（/admin/console）或配置了 siteHost 时走网站；否则演示降级 / 扩展网关。
+    //
+    // 模板标签约定（配合面板的预设模板）：labels 形如
+    //   ["report", "高", "投影/一体机不亮"]  /  ["bug", "崩溃闪退"]
+    // 除种类与等级之外的第一个标签即「模板名」，读回时还原成 template 字段展示。
+    // 存中文标签（而不是模板 id）是为了让反馈在网站后台也一眼能读懂，不必回表映射。
+    _templateOf: (labels, kind) =>
+      (labels || []).filter((l) => l !== kind && !["高", "中", "低"].includes(l))[0] || "",
     async listReports() {
       if (state.demo) return D.reports();
       if (!state.embedded && !state.siteHost) return ext("/reports", {}, "reports");
       try {
         const items = await siteFetch("/api/feedback");
-        return (Array.isArray(items) ? items : []).filter((x) => (x.labels || []).includes("report"))
-          .map((x) => ({ id: x.id, title: x.title, level: (x.labels || []).find((l) => ["高", "中", "低"].includes(l)) || "-", status: x.status || "待处理", at: x.createdAt || "" }));
+        return (Array.isArray(items) ? items : [])
+          .filter((x) => (x.labels || []).includes("report"))
+          .map((x) => ({
+            id: x.id,
+            title: x.title,
+            level: (x.labels || []).find((l) => ["高", "中", "低"].includes(l)) || "-",
+            template: API._templateOf(x.labels, "report"),
+            status: x.status || "待处理",
+            at: x.createdAt || "",
+          }));
       } catch (_) { return state.embedded || state.siteHost ? [] : D.reports(); }
     },
     async submitReport(r) {
       if (state.demo) return { ok: true, demo: true };
       if (!state.embedded && !state.siteHost) return ext("/reports", { method: "POST", body: JSON.stringify(r) }, "reports");
-      return siteFetch("/api/feedback", { method: "POST", body: JSON.stringify({ title: r.title, content: r.desc || "", labels: ["report", r.level].filter(Boolean) }) });
+      return siteFetch("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          title: r.title,
+          content: r.desc || "",
+          labels: ["report", r.level, r.template].filter(Boolean),
+        }),
+      });
     },
     async listBugs() {
       if (state.demo) return D.bugs();
       if (!state.embedded && !state.siteHost) return ext("/bugs", {}, "bugs");
       try {
         const items = await siteFetch("/api/feedback");
-        return (Array.isArray(items) ? items : []).filter((x) => (x.labels || []).includes("bug"))
-          .map((x) => ({ id: x.id, title: x.title, status: x.status || "待受理", at: x.createdAt || "" }));
+        return (Array.isArray(items) ? items : [])
+          .filter((x) => (x.labels || []).includes("bug"))
+          .map((x) => ({
+            id: x.id,
+            title: x.title,
+            template: API._templateOf(x.labels, "bug"),
+            status: x.status || "待受理",
+            at: x.createdAt || "",
+          }));
       } catch (_) { return state.embedded || state.siteHost ? [] : D.bugs(); }
     },
     async submitBug(b) {
       if (state.demo) return { ok: true, demo: true };
       if (!state.embedded && !state.siteHost) return ext("/bugs", { method: "POST", body: JSON.stringify(b) }, "bugs");
       const content = ["复现步骤：", b.steps || "", "日志：", b.log || ""].join("\n");
-      return siteFetch("/api/feedback", { method: "POST", body: JSON.stringify({ title: b.title, content, labels: ["bug"] }) });
+      return siteFetch("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({ title: b.title, content, labels: ["bug", b.template].filter(Boolean) }),
+      });
     },
 
     // ---- 操作日志（站点侧 SQLite）----
@@ -648,6 +1004,22 @@
           body: JSON.stringify({ action, target, detail }),
         });
       } catch (e) { return { ok: false, error: e.message }; }
+    },
+
+    // ---- 权限与分级（服务端解算后下发；前端只渲染，不自行推导）----
+    //
+    // 为什么权限矩阵要走服务端：等级/设备/分级三张表属于**安全边界**，
+    // 前端自己推导时只要有一处判断写错，界面就会显示出实际做不到的能力，
+    // 用户点下去得到 403，体感是"面板骗我"。服务端下发则始终与真正的门控
+    // （can/canDevice/canBroadcastTo）同源，界面与服务端永远一致。
+    permissions: async () => {
+      try {
+        const r = await ext("/permissions", {}, null);
+        // ext() 在「未配 extHost」时返回 {}（不是 null），所以这里按**结构**判定：
+        // 拿不到 me 快照就视为不可用，由调用方渲染「权限信息不可用」，
+        // 而不是让页面拿到一个空对象后在 r.me.level 上抛错。
+        return r && r.me ? r : null;
+      } catch (_) { return null; }
     },
 
     // ---- 账号信息（全权接入 website 账号体系）----

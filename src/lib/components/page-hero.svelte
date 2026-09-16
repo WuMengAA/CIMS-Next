@@ -22,7 +22,7 @@
 	<div class="flex size-16 items-center justify-center rounded-2xl bg-primary/15 text-primary">
 		<Icon class="size-8" />
 	</div>
-	<h1 class="font-heading text-3xl font-semibold tracking-tight">{title}</h1>
+	<h1 class="text-shimmer font-heading text-3xl font-semibold tracking-tight">{title}</h1>
 	<p class="max-w-lg text-muted-foreground">{desc}</p>
 	{#if note}
 		<div class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-xs text-muted-foreground">

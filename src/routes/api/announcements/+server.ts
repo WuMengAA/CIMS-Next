@@ -2,6 +2,7 @@ import { json } from "@sveltejs/kit";
 import { getAnnouncements, addAnnouncement, updateAnnouncement, deleteAnnouncement } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
 import { can } from "$lib/permissions.js";
+import { broadcastToClassrooms } from "$lib/server/broadcast.js";
 
 // GET /api/announcements  → 公开：默认只返回“生效中”的公告
 // ?all=1（需 manageContent）→ 后台：返回全部（含草稿/归档）
@@ -35,7 +36,20 @@ export async function POST({ request, cookies }) {
 		startsAt: body.startsAt || undefined,
 		endsAt: body.endsAt || undefined
 	});
-	return json(item, { status: 201 });
+
+	// 自动广播到教室端：公告一发布就推到 CIMS 大屏，不需要有人再手动转发一遍。
+	// 只有「已发布」状态才推（草稿不推，避免误推未定稿内容）；
+	// 可用 body.broadcast === false 显式关闭（例如只想挂在网站上不打扰教室）。
+	// 推送失败不影响公告落库结果，响应里带 broadcast 字段说明送达情况。
+	let broadcast: Awaited<ReturnType<typeof broadcastToClassrooms>> | null = null;
+	if (item.status === "published" && body.broadcast !== false) {
+		broadcast = await broadcastToClassrooms(item.title, item.content || "", {
+			scope: "全校",
+			source: "announcement",
+			author: u.displayName || u.username
+		});
+	}
+	return json({ ...item, broadcast }, { status: 201 });
 }
 
 // PUT /api/announcements  → 更新公告

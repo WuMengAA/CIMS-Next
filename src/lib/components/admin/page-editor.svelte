@@ -27,6 +27,7 @@
 	} from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { page } from "$app/state";
+	import IconPicker from "$lib/components/icon-picker.svelte";
 
 	let {
 		slug = "new",
@@ -42,6 +43,7 @@
 	let status = $state<"published" | "draft">("published");
 	let cover = $state("");
 	let navTitle = $state("");
+	let icon = $state("");
 
 	// ---- 版式设计 ----
 	let layout = $state<"narrow" | "standard" | "wide" | "full">("standard");
@@ -66,6 +68,68 @@
 	let device = $state<"desktop" | "tablet" | "mobile">("desktop");
 	// 模板选择器展开
 	let tplOpen = $state(true);
+
+	// ---- 站内文件引用（媒体库）----
+	// mediaMode：插入目标，"body" 插正文（Markdown 图片语法），"cover" 设为封面图地址
+	let mediaMode = $state<"body" | "cover">("body");
+	let mediaShow = $state(false);
+	let mediaList = $state<{ url: string; filename: string }[]>([]);
+	let mediaLoading = $state(false);
+	let uploadingImg = $state(false);
+	let fileInput: HTMLInputElement | undefined = $state(undefined);
+
+	async function openMedia(mode: "body" | "cover") {
+		mediaMode = mode;
+		mediaShow = true;
+		await loadMedia();
+	}
+	async function loadMedia() {
+		mediaLoading = true;
+		try {
+			const res = await fetch("/api/media");
+			if (res.ok) mediaList = await res.json();
+		} catch (e) { console.error(e); }
+		mediaLoading = false;
+	}
+	async function onMediaFile(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = "";
+		if (!file) return;
+		uploadingImg = true;
+		try {
+			const form = new FormData();
+			form.append("file", file);
+			const res = await fetch("/api/media", { method: "POST", body: form });
+			const data = await res.json();
+			if (res.ok && data.url) {
+				if (mediaMode === "cover") {
+					cover = data.url;
+					toast.success("图片已上传并设为封面");
+				} else {
+					const alt = file.name.replace(/\.[^.]+$/, "");
+					insertAtCursor("\n\n![" + alt + "](" + data.url + ")\n\n", "", "", false);
+					toast.success("图片已上传并插入正文");
+				}
+				mediaShow = false;
+				loadMedia();
+			} else {
+				toast.error(data.error || "上传失败");
+			}
+		} catch (err) { toast.error("上传失败"); }
+		uploadingImg = false;
+	}
+	function pickMedia(url: string, filename: string) {
+		if (mediaMode === "cover") {
+			cover = url;
+			toast.success("已设为封面");
+		} else {
+			const alt = (filename || url.split("/").pop() || "图片").replace(/\.[^.]+$/, "");
+			insertAtCursor("\n\n![" + alt + "](" + url + ")\n\n", "", "", false);
+			toast.success("已插入图片");
+		}
+		mediaShow = false;
+	}
 
 	const apiPath = "/api/pages";
 
@@ -102,6 +166,7 @@
 			status = it.status || "published";
 			cover = it.cover || "";
 			navTitle = it.navTitle || "";
+			icon = it.icon || "";
 			layout = it.layout || "standard";
 			hero = it.hero || "plain";
 			aside = !!it.aside;
@@ -151,7 +216,7 @@
 				title, body, status,
 				// 显式传空串 = 清空该字段（store 的白名单会删除）；页面的设计字段
 				// 必须"传了就生效、不传就保留"，所以这里全量传，不做省略。
-				excerpt, category, cover, navTitle, accent,
+				excerpt, category, cover, navTitle, accent, icon,
 				tags: tagsArr,
 				layout, hero,
 				aside: aside ? "true" : "",
@@ -208,7 +273,7 @@
 		{ icon: ListOrdered, title: "有序列表", run: () => insertAtCursor("\n1. ", "", "列表项") },
 		{ icon: ListTodo, title: "任务列表", run: () => insertAtCursor("\n- [ ] ", "", "待办") },
 		{ icon: LinkIcon, title: "链接", run: () => insertAtCursor("[", "](https://)", "链接文字") },
-		{ icon: ImageIcon, title: "图片", run: () => insertAtCursor("\n![", "](/uploads/图片路径.png)", "图片说明") },
+		{ icon: ImageIcon, title: "图片", run: () => openMedia("body") },
 		{ icon: SquareCode, title: "代码块", run: () => insertAtCursor("\n```\n", "\n```\n", "代码") },
 		{ icon: Code, title: "行内代码", run: () => insertAtCursor("`", "`", "code") },
 		{ icon: Table, title: "表格", run: () => insertAtCursor("\n| 列一 | 列二 |\n| --- | --- |\n| ", " |  |\n", "内容") },
@@ -370,8 +435,24 @@
 
 					<div class="pe-field">
 						<Label class="pe-label">封面图地址</Label>
-						<Input bind:value={cover} placeholder="/uploads/cover.png" />
-						<p class="pe-hint">页头选「横幅」时作为背景图</p>
+						<div class="flex items-center gap-2">
+							<Input bind:value={cover} placeholder="/uploads/cover.png" class="flex-1" />
+							<Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5" onclick={() => openMedia("cover")}>
+								<ImageIcon class="size-3.5" /> 媒体库
+							</Button>
+						</div>
+						<p class="pe-hint">可从媒体库选择/上传，页头选「横幅」时作为背景图</p>
+					</div>
+
+					<div class="pe-field">
+						<Label class="pe-label">页面图标</Label>
+						<div class="flex items-center gap-2">
+							<IconPicker value={icon} onpick={(n) => (icon = n)} triggerLabel={icon ? icon : "选择图标"} class="shrink-0" />
+							{#if icon}
+								<button type="button" class="pe-icon-btn" title="清除图标" onclick={() => (icon = "")}>✕</button>
+							{/if}
+						</div>
+						<p class="pe-hint">用于导航/卡片上的图形化展示</p>
 					</div>
 
 					<div class="pe-field">
@@ -425,6 +506,38 @@
 			</section>
 		</aside>
 	</div>
+
+	<!-- ═══ 站内文件引用（媒体库）弹层 ═══ -->
+	{#if mediaShow}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onclick={(e) => { if (e.target === e.currentTarget) mediaShow = false; }}>
+			<div class="w-full max-w-2xl rounded-xl border border-border/60 bg-background p-4 shadow-xl">
+				<div class="mb-3 flex items-center justify-between">
+					<h3 class="font-heading text-base font-semibold">选择图片（媒体库）</h3>
+					<button onclick={() => (mediaShow = false)} class="text-muted-foreground hover:text-foreground">✕</button>
+				</div>
+				<p class="mb-3 text-xs text-muted-foreground">{mediaMode === "cover" ? "点击图片设为封面；也可上传新图片。" : "点击图片插入到正文；也可上传新图片。"}</p>
+				<div class="mb-3 flex items-center gap-2">
+					<Button size="sm" variant="outline" onclick={() => fileInput?.click()}>上传新图片</Button>
+					{#if uploadingImg}<span class="text-xs text-muted-foreground">上传中…</span>{/if}
+				</div>
+				{#if mediaLoading}
+					<p class="py-6 text-center text-sm text-muted-foreground">加载中…</p>
+				{:else if mediaList.length === 0}
+					<p class="py-6 text-center text-sm text-muted-foreground">媒体库暂无图片，点击上方上传</p>
+				{:else}
+					<div class="grid max-h-80 grid-cols-4 gap-2 overflow-y-auto">
+						{#each mediaList as m (m.url)}
+							<button type="button" onclick={() => pickMedia(m.url, m.filename)} class="group relative overflow-hidden rounded-lg border border-border/60 hover:border-primary/60">
+								<img src={m.url} alt={m.filename} loading="lazy" class="aspect-square w-full object-cover" />
+								<span class="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1.5 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">{m.filename}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
+	<input type="file" bind:this={fileInput} accept="image/*" class="hidden" onchange={onMediaFile} />
 </div>
 
 <style>

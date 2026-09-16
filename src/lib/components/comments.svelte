@@ -22,12 +22,12 @@
 	async function submit() {
 		err = ""; msg = "";
 		if (!body.trim()) { err = "评论内容不能为空"; return; }
-		if (!user && !name.trim()) { err = "游客评论请填写昵称"; return; }
+		// 游客可留空昵称：服务端会以 Guest_<时间戳> 作为默认名，不强制填写。
 		try {
 			const res = await fetch("/api/comments", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ target, name, content: body })
+				body: JSON.stringify({ target, name: name.trim(), content: body })
 			});
 			const d = await res.json().catch(() => ({}));
 			if (res.ok) {
@@ -75,7 +75,8 @@
 		<h3 class="mb-3 text-sm font-medium">发表评论</h3>
 		{#if !user}
 			<div class="mb-3">
-				<input bind:value={name} placeholder="昵称（游客必填）" maxlength="50" class="h-9 w-full max-w-xs rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
+				<input bind:value={name} placeholder="昵称（留空则显示为 Guest_时间戳）" maxlength="50" class="h-9 w-full max-w-xs rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
+				<p class="mt-1.5 text-xs text-muted-foreground">游客可留空，将以 <span class="font-medium text-foreground">Guest_时间戳</span> 作为默认昵称。</p>
 			</div>
 		{:else}
 			<p class="mb-3 text-xs text-muted-foreground">以 {user.username} 的身份发表（自动通过）</p>

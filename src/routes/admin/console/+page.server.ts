@@ -1,6 +1,6 @@
 import { redirect } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, canDevice, isConsoleReadOnly, roleLevelLabel } from "$lib/permissions.js";
+import { can, canDevice, isConsoleReadOnly, roleLevelLabel, allowedBroadcastScopes } from "$lib/permissions.js";
 import { getCimsAccount } from "$lib/server/cims-account.js";
 import type { PageServerLoad } from "./$types";
 
@@ -38,6 +38,13 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			manage: canDevice(u.role, "manage"),
 			issue: can(u.role, "submitIssue")
 		},
+		// 广播可达范围（第三维度：能发 ≠ 能发多远）。
+		// 面板据此只列出该账号可选的范围，避免「选了全校却被服务端 403」的挫败感。
+		// 服务端仍会独立校验一次（前端只是体验层，不是安全边界）。
+		broadcastScopes: allowedBroadcastScopes(u.role),
+		// 当前用户 id：面板用它拼一对一私聊房间名（dm:<小id>:<大id>）。
+		// 只下发 id 本身，不含任何凭据；好友关系仍由服务端按会话用户校验。
+		userId: u.id,
 		accountId: account?.id ?? ""
 	};
 };

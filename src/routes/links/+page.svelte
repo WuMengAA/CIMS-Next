@@ -5,7 +5,9 @@
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 
-	let { data }: { data: { links: { name: string; url: string; description?: string; avatar?: string; verified?: boolean }[] } } = $props();
+	// 内联形状需与 content-store.ts 的 FriendLink 保持一致（含 category —— 模板里
+	// 用它渲染分类角标，漏掉这一项会让 svelte-check 报「属性不存在」）。
+	let { data }: { data: { links: { name: string; url: string; description?: string; avatar?: string; verified?: boolean; category?: string }[] } } = $props();
 
 	const steps = [
 		{ title: "Fork 数据仓库", desc: "Fork afoim/af_friends-data" },
@@ -22,6 +24,15 @@
 	let appVerified = $state(false);
 	let appMsg = $state("");
 	let appErr = $state("");
+	let q = $state("");
+	const filtered = $derived(
+		(data.links || []).filter(
+			(f) =>
+				!q.trim() ||
+				f.name.toLowerCase().includes(q.trim().toLowerCase()) ||
+				(f.description || "").toLowerCase().includes(q.trim().toLowerCase())
+		)
+	);
 
 	async function submitApplication() {
 		appErr = ""; appMsg = "";
@@ -86,11 +97,11 @@
 			<h2 class="font-heading text-xl font-medium">友情链接</h2>
 			<div class="relative w-full sm:w-48">
 				<Search class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-				<Input placeholder="搜索友链" class="w-full pl-9" />
+				<Input placeholder="搜索友链" bind:value={q} class="w-full pl-9" />
 			</div>
 		</div>
 		<div class="grid gap-3 sm:grid-cols-2">
-			{#each data.links as f (f.url)}
+			{#each filtered as f (f.url)}
 				<a
 					href={f.url}
 					target="_blank"
@@ -101,7 +112,7 @@
 						{f.avatar || f.name.charAt(0)}
 					</div>
 					<div class="min-w-0">
-						<p class="flex items-center gap-1 truncate text-sm font-medium">{f.name}{#if f.verified}<span class="inline-flex items-center rounded bg-primary/15 px-1 text-[10px] font-medium text-primary">已认证</span>{/if}</p>
+						<p class="flex items-center gap-1 truncate text-sm font-medium">{f.name}{#if f.verified}<span class="inline-flex items-center rounded bg-primary/15 px-1 text-[10px] font-medium text-primary">已认证</span>{/if}{#if f.category}<span class="inline-flex items-center rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">{f.category}</span>{/if}</p>
 						<p class="truncate text-xs text-muted-foreground">{f.description || f.name}</p>
 					</div>
 				</a>

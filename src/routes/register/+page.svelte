@@ -11,6 +11,7 @@
 	let password = $state("");
 	let password2 = $state("");
 	let showPwd = $state(false);
+	let inviteCode = $state("");
 	let submitting = $state(false);
 
 	// 注册成功后的验证状态：成功即展示验证链接（本地无 SMTP 时由服务端回传令牌拼链接）。
@@ -42,6 +43,7 @@
 					username: username.trim(),
 					displayName: displayName.trim(),
 					email: email.trim(),
+					inviteCode: inviteCode.trim(),
 					password
 				})
 			});

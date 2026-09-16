@@ -179,14 +179,35 @@ export function getUserByEmail(email: string): User | null {
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * 注册白名单（环境变量开启；为空数组 = 关闭，保持开放注册）：
+ *   REGISTER_EMAIL_DOMAINS=example.edu.cn,school.cn  → 仅允许这些邮箱域名
+ *   REGISTER_INVITE_CODES=abc123,xyz789             → 必须携带匹配邀请码
+ */
+const REGISTER_EMAIL_DOMAINS = (process.env.REGISTER_EMAIL_DOMAINS || "")
+	.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+const REGISTER_INVITE_CODES = (process.env.REGISTER_INVITE_CODES || "")
+	.split(",").map((s) => s.trim()).filter(Boolean);
+
+/** 注册敏感词（社区合规底线；用户名 / 昵称命中即拒绝）。 */
+const SENSITIVE_WORDS = [
+	"fuck", "shit", "bitch", "asshole", "bastard", "damn", "sb", "nmsl",
+	"色情", "涉黄", "裸聊", "约炮", "性爱", "自慰",
+	"赌博", "博彩", "彩票群", "毒品", "吸毒", "枪支", "武器", "炸药",
+	"诈骗", "洗钱", "走私", "贩毒", "代开发票", "办证", "法轮", "邪教",
+	"骚货", "贱货", "傻逼", "草你", "日你"
+];
+
+/**
  * 开放注册：创建「待验证」账号（status=pending）。
  * 默认角色 user，无需管理员介入；验证邮箱或管理员批准后方可登录。
+ * 注册门槛（敏感词 / 邮箱域名白名单 / 邀请码）默认全关，由环境变量开启。
  */
 export function registerUser(
 	username: string,
 	email: string,
 	password: string,
-	displayName?: string
+	displayName?: string,
+	opts?: { inviteCode?: string }
 ): { ok: boolean; error?: string; verifyToken?: string; username?: string; email?: string } {
 	const name = (username || "").trim();
 	const mail = (email || "").trim();
@@ -198,6 +219,19 @@ export function registerUser(
 	}
 	if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) {
 		return { ok: false, error: "邮箱格式不正确" };
+	}
+	// 敏感词检测：用户名 / 昵称 命中即拒绝（社区合规）
+	if (SENSITIVE_WORDS.some((w) => name.toLowerCase().includes(w) || (nick && nick.toLowerCase().includes(w)))) {
+		return { ok: false, error: "用户名或昵称包含敏感词，请更换" };
+	}
+	// 邮箱域名白名单（开启时）：仅允许列表内的域名注册
+	if (REGISTER_EMAIL_DOMAINS.length && (!mail || !REGISTER_EMAIL_DOMAINS.includes(mail.split("@")[1]?.toLowerCase() || ""))) {
+		return { ok: false, error: "注册邮箱不在允许域名内" };
+	}
+	// 邀请码白名单（开启时）：必须携带匹配邀请码
+	if (REGISTER_INVITE_CODES.length) {
+		const code = (opts?.inviteCode || "").trim();
+		if (!REGISTER_INVITE_CODES.includes(code)) return { ok: false, error: "需要有效的邀请码" };
 	}
 	if (getUser(name)) return { ok: false, error: "用户名已存在" };
 	if (mail && isEmailTaken(mail)) return { ok: false, error: "该邮箱已被注册" };

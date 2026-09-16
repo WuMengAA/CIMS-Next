@@ -48,17 +48,17 @@ export async function POST({ request, cookies, getClientAddress }) {
 
 	if (action === "submit") {
 		const target = body.target || (body.postSlug ? "posts:" + body.postSlug : null);
-		const name = (body.name || "").trim();
+		let name = (body.name || "").trim();
 		const content = (body.content || "").trim();
 		if (!target) return json({ error: "缺少 target" }, { status: 400 });
 		if (!content) return json({ error: "评论内容不能为空" }, { status: 400 });
 		if (content.length > 2000) return json({ error: "评论内容不能超过 2000 字" }, { status: 400 });
 
-		// 登录用户需有 comment 权限；游客允许但必须填昵称
+		// 登录用户需有 comment 权限；游客允许，未填昵称时默认 Guest_<时间戳>
 		if (user) {
 			if (!can(user.role, "comment")) return json({ error: "无评论权限" }, { status: 403 });
-		} else {
-			if (!name) return json({ error: "游客评论请填写昵称" }, { status: 400 });
+		} else if (!name) {
+			name = "Guest_" + Date.now();
 		}
 		if (!rateLimit(ip)) return json({ error: "操作过于频繁，请稍后再试" }, { status: 429 });
 

@@ -7,6 +7,7 @@
 	import ThemeToggle from "$lib/components/theme-toggle.svelte";
 	import { pageIn } from "$lib/transition.js";
 	import { can, roleLevelLabel, type Action } from "$lib/permissions.js";
+	import { Avatar, AvatarImage, AvatarFallback } from "$lib/components/ui/avatar/index.js";
 	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck } from "@lucide/svelte";
 	import type { LayoutProps } from "./$types";
 
@@ -143,6 +144,24 @@
 		{/each}
 	</Sidebar.Content>
 	<Sidebar.Footer>
+		<!-- 账号卡：登录用户本体（头像/昵称/角色）常驻侧栏底部，前后台一致可见 -->
+		{#if data.user}
+			<a
+				href="/admin/users"
+				class="mx-1 mb-1 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-sidebar-accent group-data-[collapsible=icon]:mx-0 group-data-[collapsible=icon]:justify-center"
+			>
+				<Avatar class="size-8 shrink-0">
+					<AvatarImage src={data.user.avatar} alt={data.user.displayName} />
+					<AvatarFallback class="bg-primary/15 text-xs text-primary">
+						{(data.user.displayName || data.user.username).slice(0, 1).toUpperCase()}
+					</AvatarFallback>
+				</Avatar>
+				<div class="flex min-w-0 flex-col leading-tight group-data-[collapsible=icon]:hidden">
+					<span class="truncate text-sm font-medium">{data.user.displayName}</span>
+					<span class="truncate text-xs text-muted-foreground">@{data.user.username} · {levelLabel}</span>
+				</div>
+			</a>
+		{/if}
 		<!-- 前台 / 后台滑块：后台侧固定停在「后台」，点「前台」回站点 -->
 		<ViewSwitch current="admin" class="mx-1 group-data-[collapsible=icon]:hidden" />
 		<div class="flex items-center justify-between gap-2 px-3">

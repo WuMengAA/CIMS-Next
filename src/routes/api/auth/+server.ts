@@ -76,7 +76,7 @@ export async function POST(event: RequestEvent) {
 	}
 
 	if (action === "register") {
-		const result = registerUser(body.username, body.email, body.password, body.displayName);
+		const result = registerUser(body.username, body.email, body.password, body.displayName, { inviteCode: body.inviteCode });
 		if (!result.ok) return json({ error: result.error }, { status: 400 });
 
 		// 镜像到 CIMS（website 为账号权威）。明文密码只在注册这一刻存在于请求体

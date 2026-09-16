@@ -196,6 +196,86 @@ export function isConsoleReadOnly(role: Role | null | undefined): boolean {
 	return canDevice(role, "watch") && !canDevice(role, "control");
 }
 
+// ── 广播可达范围（广播的第三个维度：能发 ≠ 能发多远）────────────────────────
+//
+// 「能广播」和「能广播到多大范围」是两件事，历史上混为一谈：
+// 只要拿到 sendBroadcast / 设备轴 control，就能向**全校**大屏推消息 ——
+// 于是一个班的电教委员喊一句话，全校所有教室的屏幕同时弹出来。
+// 这里把范围拆成独立档位，按内容等级收敛：
+//
+//   L2 电教委员/注册用户 → class  仅本班
+//   L3 审核员            → grade  本年级
+//   L4 编辑 / L5 站长     → school 全校
+//
+// 与设备轴的关系：设备轴 control 决定「能不能下发」，本档位决定「能下发给谁」。
+// 两者都要过（见 /api/console/ext 的 notices 分支）。
+
+/** 广播可达范围。 */
+export type BroadcastScope = "class" | "grade" | "school";
+
+const SCOPE_RANK: Record<BroadcastScope, number> = { class: 0, grade: 1, school: 2 };
+
+export const BROADCAST_SCOPE_LABELS: Record<BroadcastScope, string> = {
+	class: "本班",
+	grade: "本年级",
+	school: "全校"
+};
+
+/** 角色能广播的最大范围；返回 null 表示完全不能广播（L1 只读）。 */
+export function broadcastScope(role: Role | null | undefined): BroadcastScope | null {
+	const lv = roleToLevel(role);
+	if (lv === null) return null;
+	if (lv >= 4) return "school";
+	if (lv === 3) return "grade";
+	if (lv === 2) return "class";
+	return null;
+}
+
+/** 该角色能否广播到指定范围（范围档位不超过其上限）。 */
+export function canBroadcastTo(role: Role | null | undefined, scope: BroadcastScope): boolean {
+	const max = broadcastScope(role);
+	if (!max) return false;
+	return SCOPE_RANK[max] >= SCOPE_RANK[scope];
+}
+
+/**
+ * 把界面上的范围文案归一成档位。
+ * 无法识别时按**最严**的 class 处理 —— 认不出来就不给更大的范围，
+ * 避免新增一个文案就把权限放开。
+ */
+export function scopeFromLabel(label: unknown): BroadcastScope {
+	const s = String(label ?? "").trim();
+	if (s.includes("全校") || s.includes("广播")) return "school";
+	if (s.includes("年级")) return "grade";
+	return "class";
+}
+
+/** 角色可选的广播范围清单（面板下拉用，只列有权限的档位）。 */
+export function allowedBroadcastScopes(role: Role | null | undefined): BroadcastScope[] {
+	const max = broadcastScope(role);
+	if (!max) return [];
+	return (["class", "grade", "school"] as BroadcastScope[]).filter((s) => SCOPE_RANK[s] <= SCOPE_RANK[max]);
+}
+
+/**
+ * 把「想要的范围」收敛到角色上限之内。
+ *
+ * 用于「事件本身自带范围、但发起人权限不够」的场景：例如电教委员在全校群里
+ * 喊 @全体 —— 事件语义是全校，但他只能发本班，于是收敛为 class，
+ * 而不是直接拒绝（拒绝会让互助功能对 L2 完全不可用），
+ * 也不是照发全校（那等于权限形同虚设）。
+ *
+ * 返回 null 表示完全不能广播。
+ */
+export function clampBroadcastScope(
+	role: Role | null | undefined,
+	want: BroadcastScope
+): BroadcastScope | null {
+	const max = broadcastScope(role);
+	if (!max) return null;
+	return SCOPE_RANK[max] >= SCOPE_RANK[want] ? want : max;
+}
+
 /** 角色的中文标签。owner/admin 都显示「站长」，避免两个"最高权限"名目。 */
 export const ROLE_LABELS: Record<Role, string> = {
 	owner: "站长",
@@ -212,6 +292,205 @@ export function roleLevelLabel(role: Role | null | undefined): string {
 	const lv = roleToLevel(role);
 	return lv === null ? "未登录" : LEVEL_LABELS[lv];
 }
+
+// ── 管理分级（组织层：谁管谁）──────────────────────────────────────────────
+//
+// 与「等级轴 / 设备轴 / 广播范围轴」的区别：那三条回答「能做什么」，
+// 本层回答「管到哪一级」。三档自下而上收拢：
+//
+//   class  班级电教委员  管本班设备（锁屏/截图/远控本班）、发本班广播、本班交流
+//   grade  年级管理员    管本年级各班（审核本年级内容、发本年级广播）
+//   school 校级管理员    管全校（用户、设备、策略、全校广播）
+//
+// 关键约束（防越权三条）：
+//   ① 分级是**上限**不是授权 —— 校级管理员若无 device.remote，仍不能远控；
+//      分级只用来把「可视范围」和「广播范围」收窄，不会凭空给能力。
+//   ② 班级电教委员**不能跨班**：其广播范围与设备可见范围都锁在本班
+//      （服务端另有同班校验，见 console-ext 的 chat/notices 分支）。
+//   ③ 年级管理员看本年级：靠 gradeName 匹配，而不是靠角色名信任客户端。
+
+/** 管理分级。 */
+export type ManagementTier = "class" | "grade" | "school";
+
+const TIER_RANK: Record<ManagementTier, number> = { class: 0, grade: 1, school: 2 };
+
+export const MANAGEMENT_TIER_LABELS: Record<ManagementTier, string> = {
+	class: "班级 · 电教委员",
+	grade: "年级 · 年级管理员",
+	school: "校级 · 校级管理员"
+};
+
+export const MANAGEMENT_TIER_DESCRIPTIONS: Record<ManagementTier, string> = {
+	class: "管本班：锁屏/截图/远控本班设备，发本班广播，本班交流。不可跨班。",
+	grade: "管本年级：审核本年级内容、发本年级广播、查看本年级设备与电教委员。",
+	school: "管全校：用户与角色、全量设备与策略、全校广播、站点设置。"
+};
+
+/**
+ * 角色对应的管理分级。
+ *
+ * techrep（电教委员）是本层存在的理由：它内容等级只有 L2，却是**班级层**的
+ * 实际运维人 —— 分级轴让它能管本班设备，同时被硬锁在本班之内。
+ */
+const ROLE_TIER: Record<Role, ManagementTier> = {
+	owner: "school",
+	admin: "school",
+	editor: "school",
+	moderator: "grade",
+	techrep: "class",
+	user: "class",
+	viewer: "class"
+};
+
+/** 角色 → 管理分级。 */
+export function roleManagementTier(role: Role | null | undefined): ManagementTier | null {
+	if (!role) return null;
+	return ROLE_TIER[role] ?? null;
+}
+
+/**
+ * 该角色能管到的最大范围（与广播范围共用 class/grade/school 三档语义）。
+ * 返回 null 表示无任何管理范围（未登录）。
+ */
+export function managementScope(role: Role | null | undefined): BroadcastScope | null {
+	const t = roleManagementTier(role);
+	return t ?? null;
+}
+
+/** 是否属于「班级层」——面板据此把跨班入口整体收起。 */
+export function isClassScoped(role: Role | null | undefined): boolean {
+	return roleManagementTier(role) === "class";
+}
+
+/**
+ * 校验「操作者能否管理某个目标班级」。
+ *
+ * 三条规则：
+ *   · 校级：任意班
+ *   · 年级：同年级（按年级名前缀匹配，gradeName 由账号资料提供）
+ *   · 班级：仅本班（按 classId 相等）
+ *
+ * 年级名匹配刻意用「前缀/包含」而不是严格相等：学校的年级名有
+ * 「高一」/「高一年级」/「2026级高一」几种写法，严格相等会把一半人误判成越权。
+ * 代价是把「高一」和「高一实验」视为同年级 —— 在本场景下可接受（都属高一年级）。
+ */
+export function canManageClass(
+	role: Role | null | undefined,
+	actor: { classId?: string | null; gradeName?: string | null },
+	target: { classId?: string | null; gradeName?: string | null }
+): boolean {
+	const scope = managementScope(role);
+	if (!scope) return false;
+	if (scope === "school") return true;
+	if (scope === "grade") {
+		const a = (actor.gradeName ?? "").trim();
+		const b = (target.gradeName ?? "").trim();
+		if (!a || !b) return false;
+		return a === b || a.startsWith(b) || b.startsWith(a);
+	}
+	const a = (actor.classId ?? "").trim();
+	const b = (target.classId ?? "").trim();
+	return !!a && !!b && a === b;
+}
+
+/**
+ * 把「目标范围」收敛到角色可管范围内。
+ * 返回 null = 完全不可管（未登录）。
+ */
+export function clampManagementScope(
+	role: Role | null | undefined,
+	want: BroadcastScope
+): BroadcastScope | null {
+	const max = managementScope(role);
+	if (!max) return null;
+	return TIER_RANK[max] >= TIER_RANK[want] ? want : max;
+}
+
+export const ASSIGNABLE_TIERS: ManagementTier[] = ["class", "grade", "school"];
+
+/**
+ * 面板「权限与分级」页的完整快照（服务端算好后一次性下发）。
+ *
+ * 为什么由服务端算而不是前端算：等级/设备/分级三张表是**安全边界**的一部分，
+ * 前端拿到的必须是"服务端认为你能做什么"，而不是"前端自己推导出你能做什么"。
+ * 前端自行推导时，任何一处判断写错都会让界面显示超出实际权限的能力；
+ * 服务端下发则始终与真正的门控逻辑（can/canDevice/canBroadcastTo）同源。
+ */
+export function permissionMatrix(role: Role | null | undefined) {
+	const me = roleCapabilitiesSummary(role);
+	const scope = broadcastScope(role);
+	const tier = roleManagementTier(role);
+	return {
+		// 当前账号快照
+		me: {
+			role: role ?? null,
+			roleLabel: role ? ROLE_LABELS[role] : "未登录",
+			level: me.level,
+			levelLabel: me.levelLabel,
+			actions: me.actions,
+			actionLabels: me.actions.map((a) => ACTION_LABELS[a]),
+			deviceTiers: me.deviceTiers,
+			isUserPlusDevice: me.isUserPlusDevice,
+			managementTier: tier,
+			managementTierLabel: tier ? MANAGEMENT_TIER_LABELS[tier] : "—",
+			managementTierDescription: tier ? MANAGEMENT_TIER_DESCRIPTIONS[tier] : "",
+			broadcastScopes: allowedBroadcastScopes(role),
+			broadcastScopeLabel: scope ? BROADCAST_SCOPE_LABELS[scope] : "不可广播",
+			canManageClassScope: scope === "class",
+			canManageGrade: tier === "grade",
+			canManageSchool: tier === "school"
+		},
+		// 等级轴
+		levels: capabilitiesByLevel().map((g) => ({
+			level: g.level,
+			label: LEVEL_LABELS[g.level],
+			description: LEVEL_DESCRIPTIONS[g.level],
+			sampleRole: LEVEL_SAMPLE_ROLE[g.level],
+			actions: g.actions.map((a) => ({ key: a, label: ACTION_LABELS[a] }))
+		})),
+		// 设备轴
+		deviceTiers: (Object.keys(DEVICE_LABELS) as DeviceTier[]).map((t) => ({
+			key: t,
+			label: DEVICE_LABELS[t],
+			description: DEVICE_DESCRIPTIONS[t],
+			roles: (Object.keys(ROLE_LABELS) as Role[]).filter((r) => canDevice(r, t)).map((r) => ROLE_LABELS[r])
+		})),
+		// 分级轴
+		managementTiers: ASSIGNABLE_TIERS.map((t) => ({
+			key: t,
+			label: MANAGEMENT_TIER_LABELS[t],
+			description: MANAGEMENT_TIER_DESCRIPTIONS[t],
+			roles: (Object.keys(ROLE_LABELS) as Role[])
+				.filter((r) => roleManagementTier(r) === t)
+				.map((r) => ROLE_LABELS[r])
+		})),
+		// 广播范围轴
+		broadcastScopes: (["class", "grade", "school"] as BroadcastScope[]).map((s) => ({
+			key: s,
+			label: BROADCAST_SCOPE_LABELS[s],
+			roles: (Object.keys(ROLE_LABELS) as Role[])
+				.filter((r) => canBroadcastTo(r, s))
+				.map((r) => ROLE_LABELS[r])
+		})),
+		// 全部角色（面板做"角色 → 能力"对照表）
+		roles: ASSIGNABLE_ROLES.map((r) => {
+			const s = broadcastScope(r);
+			const t = roleManagementTier(r);
+			return {
+				key: r,
+				label: ROLE_LABELS[r],
+				level: roleToLevel(r),
+				levelLabel: roleLevelLabel(r),
+				deviceTiers: roleDeviceTiers(r),
+				managementTier: t,
+				managementTierLabel: t ? MANAGEMENT_TIER_LABELS[t] : "—",
+				broadcastScope: s,
+				broadcastScopeLabel: s ? BROADCAST_SCOPE_LABELS[s] : "不可广播"
+			};
+		})
+	};
+}
+
 
 /** 可分配角色清单，按等级从高到低（用户管理下拉复用）。 */
 export const ASSIGNABLE_ROLES: Role[] = ["admin", "owner", "editor", "moderator", "techrep", "user", "viewer"];
@@ -265,3 +544,30 @@ export const LEVEL_SAMPLE_ROLE: Record<Level, Role> = {
 	4: "editor",
 	5: "admin"
 };
+
+/**
+ * 角色能力摘要（用于界面直观展示「权限叠加」）。
+ *
+ * 设计原则：**权限是一个个叠加上去的**——高等级自动继承低等级的全部能力，
+ * 设备轴（横向）再叠加在内容等级（纵向）之上。例：电教委员（techrep）本质就是
+ * 「注册用户(L2) 的全部能力 + 设备操作权限」，并非一个与用户并列的独立类别；
+ * 因此它能评论、发帖、申请，只是额外持 remote 设备档位。
+ */
+export function roleCapabilitiesSummary(role: Role | null | undefined): {
+	level: Level | null;
+	levelLabel: string;
+	actions: Action[];
+	deviceTiers: DeviceTier[];
+	isUserPlusDevice: boolean;
+} {
+	const lv = roleToLevel(role);
+	const actions = lv ? (Object.keys(LEVEL_OF_ACTION) as Action[]).filter((a) => LEVEL_OF_ACTION[a] <= lv) : [];
+	return {
+		level: lv,
+		levelLabel: lv === null ? "未登录" : LEVEL_LABELS[lv],
+		actions,
+		deviceTiers: roleDeviceTiers(role),
+		// 电教委员 = 用户（L2）能力 + 设备权限（叠加，而非替代）
+		isUserPlusDevice: role === "techrep"
+	};
+}

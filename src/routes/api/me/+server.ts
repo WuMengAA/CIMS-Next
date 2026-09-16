@@ -2,6 +2,7 @@ import { json } from "@sveltejs/kit";
 import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, getUser, updateProfile } from "$lib/server/auth.js";
 import { recordActivity } from "$lib/server/activity.js";
+import { syncUserUpdateToCims } from "$lib/server/cims-account.js";
 
 /** GET /api/me —— 当前登录用户资料。 */
 export function GET(event: RequestEvent) {
@@ -22,7 +23,7 @@ export function GET(event: RequestEvent) {
 	});
 }
 
-/** PUT /api/me —— 保存个人资料（昵称 / 邮箱 / 简介 / 头像）。 */
+/** PUT /api/me —— 保存个人资料（昵称 / 邮箱 / 简介 / 头像 / 班级 / 年级）。 */
 export async function PUT(event: RequestEvent) {
 	const { request, cookies } = event;
 	const user = verifyToken(cookies.get("admin_token"));
@@ -51,8 +52,24 @@ export async function PUT(event: RequestEvent) {
 	});
 
 	const fresh = getUser(user.username);
+
+	// 镜像到 CIMS（账号跟随 website 同步）。班级/年级是集控侧「这台设备属于哪个班」
+	// 的账号维度依据 —— 电教委员改了班级，CIMS 侧要同步，否则设备归属与人对不上。
+	// fail-open：CIMS 不可达不影响资料保存结果，响应里带 sync 字段说明。
+	let sync: Awaited<ReturnType<typeof syncUserUpdateToCims>> | null = null;
+	if (fresh?.email) {
+		sync = await syncUserUpdateToCims({
+			email: fresh.email,
+			username: fresh.username,
+			displayName: fresh.displayName,
+			className: fresh.className || "",
+			gradeName: fresh.gradeName || ""
+		});
+	}
+
 	return json({
 		ok: true,
+		sync,
 		user: fresh
 	? {
 				username: fresh.username,

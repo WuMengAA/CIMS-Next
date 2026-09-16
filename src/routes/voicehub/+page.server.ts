@@ -9,7 +9,7 @@ export const load: PageServerLoad = async () => {
 	const base = (env.VOICEHUB_BASE || "").replace(/\/+$/, "");
 	const key = env.VOICEHUB_KEY || "";
 	if (!base || !key) {
-		return { now: null, queue: [], configured: false };
+		return { now: null, queue: [], configured: false, base };
 	}
 	try {
 		const [nowR, qR] = await Promise.all([
@@ -23,7 +23,7 @@ export const load: PageServerLoad = async () => {
 		if (!nowR.ok || !qR.ok) {
 			const status = !nowR.ok ? nowR.status : qR.status;
 			// env 已就绪但 API 拒绝（如 401 未授权）：单独标记，便于前端区分"未配置"与"已配置但连接失败"
-			return { now: null, queue: [], configured: true, error: true, errorStatus: status };
+			return { now: null, queue: [], configured: true, error: true, errorStatus: status, base };
 		}
 		const nowJ = await nowR.json();
 		const qJ = await qR.json();
@@ -45,9 +45,9 @@ export const load: PageServerLoad = async () => {
 			at: s.requestedAt,
 			cover: s.cover || null,
 		}));
-		return { now, queue, configured: true };
+		return { now, queue, configured: true, base };
 	} catch {
 		// 网络异常等：env 已就绪但未能拿到数据
-		return { now: null, queue: [], configured: true, error: true, errorStatus: null };
+		return { now: null, queue: [], configured: true, error: true, errorStatus: null, base };
 	}
 };

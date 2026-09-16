@@ -4,9 +4,9 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Save, Plus, Trash2, Link2 } from "@lucide/svelte";
+	import { Save, Plus, Trash2, Link2, ArrowDownToLine } from "@lucide/svelte";
 
-	interface Link { name: string; url: string; description?: string; }
+	interface Link { name: string; url: string; description?: string; category?: string; bottom?: boolean; }
 	let links = $state<Link[]>([]);
 	let loading = $state(true);
 	let saving = $state(false);
@@ -22,7 +22,7 @@
 	}
 
 	function addLink() {
-		links = [...links, { name: "", url: "", description: "" }];
+		links = [...links, { name: "", url: "", description: "", category: "", bottom: false }];
 	}
 
 	function removeLink(index: number) {
@@ -78,15 +78,30 @@
 						<Input bind:value={link.url} placeholder="https://..." />
 					</div>
 				</div>
-				<div class="mt-3 flex items-center gap-2">
-					<div class="grid flex-1 gap-1.5">
-						<Label>描述（可选）</Label>
-						<Input bind:value={link.description} placeholder="一句话介绍" />
+				<div class="mt-3 grid grid-cols-2 gap-3">
+					<div class="grid gap-1.5">
+						<Label>分类（可选）</Label>
+						<Input bind:value={link.category} placeholder="如：大学 / 社团" />
 					</div>
-					<Button variant="ghost" size="icon" class="mt-5 h-9 w-9 text-destructive hover:text-destructive" onclick={() => removeLink(i)}>
-						<Trash2 class="h-4 w-4" />
-					</Button>
+					<div class="flex items-end gap-2">
+						<div class="grid flex-1 gap-1.5">
+							<Label>描述（可选）</Label>
+							<Input bind:value={link.description} placeholder="一句话介绍" />
+						</div>
+						<Button variant="ghost" size="icon" class="h-9 w-9 text-destructive hover:text-destructive" onclick={() => removeLink(i)}>
+							<Trash2 class="h-4 w-4" />
+						</Button>
+					</div>
 				</div>
+				<label class="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+					<input
+						type="checkbox"
+						bind:checked={link.bottom}
+						class="size-4 rounded border-border"
+					/>
+					<ArrowDownToLine class="size-4 text-primary" />
+					置底排序（排在工作台榜单最后）
+				</label>
 			</div>
 		{/each}
 		{#if links.length === 0}

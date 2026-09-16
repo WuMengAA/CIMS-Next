@@ -1,6 +1,6 @@
 <script lang="ts">
 	import PageHero from "$lib/components/page-hero.svelte";
-	import { Wrench, Palette, Image as ImageIcon } from "@lucide/svelte";
+	import { Wrench, Palette, Droplet, ImagePlus } from "@lucide/svelte";
 
 	const tools = [
 		{
@@ -8,6 +8,18 @@
 			icon: Palette,
 			title: "封面生成器",
 			desc: "确定性模板封面，实时预览，导出 SVG / PNG。"
+		},
+		{
+			href: "/tools/color-tool",
+			icon: Droplet,
+			title: "色位工具",
+			desc: "调色板、色值转换、对比度检测与取色。"
+		},
+		{
+			href: "/tools/image-tool",
+			icon: ImagePlus,
+			title: "图片工具",
+			desc: "客户端图片缩放、裁剪、滤镜与格式转换，不上传服务器。"
 		}
 	];
 </script>

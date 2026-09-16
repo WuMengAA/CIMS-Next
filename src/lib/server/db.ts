@@ -74,6 +74,9 @@ CREATE INDEX IF NOT EXISTS idx_activities_action  ON activities(action);
 -- 由 /api/console/ext/* 暴露给集控面板，替代此前的纯前端演示数据。
 
 -- 通知广播历史（发布动作本身仍由 CIMS 下发到设备，这里只留痕）
+-- classes：本次推送的目标班级（逗号分隔；空串 = 不限班级/全校）。
+-- channel：来源通道（notice / chat / announcement），用于辨识「同一内容经多条通道」，
+--          配合 broadcast.ts 的短时去重，避免设备因多通道各推一次而收到重复通知。
 CREATE TABLE IF NOT EXISTS console_notices (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   title      TEXT NOT NULL,
@@ -81,6 +84,8 @@ CREATE TABLE IF NOT EXISTS console_notices (
   account    TEXT NOT NULL DEFAULT '',
   author     TEXT NOT NULL DEFAULT '',
   sent       INTEGER NOT NULL DEFAULT 0,
+  classes    TEXT NOT NULL DEFAULT '',
+  channel    TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_console_notices_created ON console_notices(created_at);
@@ -106,6 +111,26 @@ CREATE TABLE IF NOT EXISTS console_audit (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_console_audit_created ON console_audit(created_at);
+
+-- 班级交流 · 好友关系（2026-09-15）
+-- 一对一行，requester 发起、addressee 接收；status: pending / accepted / rejected。
+-- 用 user id 作为关系主键（username 改名不会断关系），同时冗余存一份显示名，
+-- 免得列表页为了显示名字再回表捞。
+-- 唯一约束建在「无向对」上（两端 id 排序后拼接），这样 A→B 和 B→A 不会各存一行。
+CREATE TABLE IF NOT EXISTS console_friends (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  pair           TEXT NOT NULL UNIQUE,
+  requester_id   INTEGER NOT NULL,
+  requester_name TEXT NOT NULL DEFAULT '',
+  addressee_id   INTEGER NOT NULL,
+  addressee_name TEXT NOT NULL DEFAULT '',
+  status         TEXT NOT NULL DEFAULT 'pending',
+  message        TEXT NOT NULL DEFAULT '',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_console_friends_addr ON console_friends(addressee_id, status);
+CREATE INDEX IF NOT EXISTS idx_console_friends_req  ON console_friends(requester_id, status);
 `;
 
 export function nowIso(): string {
@@ -137,6 +162,15 @@ function ensureDb(): DatabaseSync {
 	// 班级绑定（集控面板「新账号引导补充班级身份」字段）：仅面板/管理端可写，用户自填。
 	if (!cols.has("class_name")) db.exec("ALTER TABLE users ADD COLUMN class_name TEXT NOT NULL DEFAULT ''");
 	if (!cols.has("grade_name")) db.exec("ALTER TABLE users ADD COLUMN grade_name TEXT NOT NULL DEFAULT ''");
+
+	// console_notices 定向广播字段（向后兼容旧库：老行补空串，等价于「不限班级」）。
+	// 有了这两列，历史通知才能「分班级、按通道」正确展示，也多通道重复推送有了判据。
+	const ncols = new Set(
+		(db.prepare("PRAGMA table_info(console_notices)").all() as { name: string }[]).map((c) => c.name)
+	);
+	if (!ncols.has("classes")) db.exec("ALTER TABLE console_notices ADD COLUMN classes TEXT NOT NULL DEFAULT ''");
+	if (!ncols.has("channel")) db.exec("ALTER TABLE console_notices ADD COLUMN channel TEXT NOT NULL DEFAULT ''");
+
 	seed(db);
 	// 历史 active 账号（本就不经邮箱验证即可登录，含种子 admin）统一视为已验证；
 	// 新注册的 pending 用户不受影响（验证或管理员批准后才会变 active 且 verified=1）。

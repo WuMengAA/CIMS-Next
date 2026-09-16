@@ -35,6 +35,7 @@ vite.config.ts.timestamp-*
 /content/settings.json
 /content/stats.json
 /content/announcements.json
+/content/feedback.json
 /content/cache/
 /uploads/*
 !/uploads/.gitkeep

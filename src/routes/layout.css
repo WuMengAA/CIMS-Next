@@ -735,3 +735,26 @@
 .dark .hljs-strong { color: #c9d1d9; font-weight: bold; }
 .dark .hljs-addition { color: #aff5b4; background-color: #033a16; }
 .dark .hljs-deletion { color: #ffdcd7; background-color: #67060c; }
+
+
+/* ───────────────────────────────────────────────────────────────────────────
+   侧边栏：收起为「图标栏」（collapsible=icon）
+   桌面端折叠后仅留一列图标；菜单文字 / 站点名 / 标语 / 子菜单 全部隐藏，
+   避免图标栏里挤进文字。移动端仍是整宽抽屉，不受此规则影响。
+   ─────────────────────────────────────────────────────────────────────────── */
+[data-slot="sidebar"][data-collapsible="icon"] [data-slot="sidebar-menu-button"] > span:last-child {
+	display: none;
+}
+/* 图标栏里把分组分隔留白压薄，让一列图标更紧凑 */
+[data-slot="sidebar"][data-collapsible="icon"] [data-slot="sidebar-separator"] {
+	margin-block: 0.25rem;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   移动端抽屉遮挡一致性
+   移动端复用与桌面同一套 open/collapse 状态（逻辑一致）。抽屉遮罩需稳定盖过
+   顶栏固定元素（阅读进度条等），否则内容从遮罩缝隙透出会造成「遮挡错过」的
+   观感与动画串层。抽屉本体置于遮罩之上，打开时整屏统一变暗。
+   ─────────────────────────────────────────────────────────────────────────── */
+[data-slot="sheet-overlay"] { z-index: 55; }
+[data-slot="sheet-content"] { z-index: 60; }

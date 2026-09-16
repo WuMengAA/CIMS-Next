@@ -241,9 +241,10 @@ export function getItem(section: "posts" | "projects" | "docs" | "pages", slug: 
 		...(data.toc !== undefined ? { toc: data.toc === true || data.toc === "true" } : {}),
 		...(data.hideTitle !== undefined ? { hideTitle: data.hideTitle === true || data.hideTitle === "true" } : {}),
 		...(data.noindex !== undefined ? { noindex: data.noindex === true || data.noindex === "true" } : {}),
-		...(data.accent ? { accent: data.accent } : {}),
-		...(data.navTitle ? { navTitle: data.navTitle } : {})
-	};
+	...(data.accent ? { accent: data.accent } : {}),
+	...(data.navTitle ? { navTitle: data.navTitle } : {}),
+	...(data.icon ? { icon: data.icon } : {})
+};
 }
 
 /**
@@ -268,7 +269,8 @@ const MANAGED_FRONTMATTER_KEYS = [
 	// hideTitle 是否隐藏正文大标题（内容里已手写标题时用）
 	// navTitle 侧栏/导航里显示的短标题
 	// noindex 搜索引擎不索引
-	"layout", "aside", "hero", "accent", "toc", "hideTitle", "navTitle", "noindex"
+	// icon 页面图标键（由图形化图标选择器写入，前台导航/特性卡展示用）
+	"layout", "aside", "hero", "accent", "toc", "hideTitle", "navTitle", "noindex", "icon"
 ] as const;
 
 export function saveItem(
@@ -572,14 +574,16 @@ export function saveSettings(settings: SiteSettings): void {
 	jsonCache.delete(path.join(CONTENT_DIR, "settings.json"));
 }
 
-export interface FriendLink { name: string; url: string; description?: string; avatar?: string; verified?: boolean; }
+export interface FriendLink { name: string; url: string; description?: string; avatar?: string; verified?: boolean; category?: string; bottom?: boolean; }
 
 export function getLinks(): FriendLink[] {
 	const filePath = path.join(CONTENT_DIR, "links.json");
 	if (!fs.existsSync(filePath)) return [];
 	try {
 		const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-		return Array.isArray(data) ? data : data.links || [];
+		const raw: FriendLink[] = Array.isArray(data) ? data : data.links || [];
+		// 置底（bottom）友链排到最后，其余保持原顺序，实现「榜单后置」展示。
+		return [...raw].sort((a, b) => (a.bottom === b.bottom ? 0 : a.bottom ? 1 : -1));
 	} catch { return []; }
 }
 

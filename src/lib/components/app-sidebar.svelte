@@ -34,6 +34,7 @@
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import { can } from "$lib/permissions.js";
 	import { readMoreOpen, writeMoreOpen } from "$lib/sidebar-memory.js";
+	import { ICON_MAP } from "$lib/icon-library.js";
 	
 	import { page } from "$app/state";
 
@@ -72,6 +73,7 @@
 		{ title: "搜索", url: "/search", icon: "search" },
 		{ title: "公告", url: "/announcements", icon: "announcements" },
 		{ title: "连接", url: "/links", icon: "links" },
+		{ title: "订阅", url: "/subscribe", icon: "rss" },
 		{ title: "旧站归档", url: "/archives", icon: "archives" },
 		{ title: "反馈", url: "/feedback", icon: "feedback" }
 	];
@@ -86,23 +88,24 @@
 		"create": Sparkles, "sparkles": Sparkles, "novel": BookMarked, "novels": BookMarked, "anime": Clapperboard, "clapperboard": Clapperboard,
 		"game": Gamepad2, "games": Gamepad2, "gamepad2": Gamepad2, "tool": Wrench, "tools": Wrench, "wrench": Wrench,
 		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
+		"rss": Rss, "subscribe": Rss, "newspaper": Newspaper,
 		"archive": Archive, "archives": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
 		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
-		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "rss": Rss, "pages": FileText,
+		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "pages": FileText,
 		"search": Search, "layoutdashboard": FileText
 	};
 
 	const workspace = $derived(
 		(data?.nav?.workspace && data.nav.workspace.length > 0 ? data.nav.workspace : defaultWorkspace)
-			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || Home }))
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Home }))
 	);
 	const more = $derived(
 		(data?.nav?.more && data.nav.more.length > 0 ? data.nav.more : defaultMore)
-			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || Globe }))
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Globe }))
 	);
 	const bottom = $derived(
 		(data?.nav?.bottom && data.nav.bottom.length > 0 ? data.nav.bottom : defaultBottom)
-			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || Globe }))
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Globe }))
 	);
 
 	// 「更多」展开态从本地记忆恢复（前后台共用），并在切换时写回 ——
@@ -141,7 +144,7 @@
 	}
 </script>
 
-<Sidebar.Root>
+<Sidebar.Root collapsible="icon">
 	<Sidebar.Header>
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
@@ -151,7 +154,7 @@
 					>
 						S
 					</div>
-					<div class="flex flex-col gap-0.5 leading-none">
+					<div class="flex flex-col gap-0.5 leading-none group-data-[collapsible=icon]:hidden">
 						<span class="font-heading text-base font-semibold tracking-tight">{data?.settings?.siteName || "Stelarith 工作台"}</span>
 						<span class="text-xs text-muted-foreground">{data?.settings?.slogan || "Protect What You Love."}</span>
 					</div>
@@ -175,7 +178,7 @@
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton onclick={() => { moreOpen = !moreOpen; writeMoreOpen(moreOpen); }} aria-expanded={moreOpen} tooltipContent="更多">
 							<MorphIcon icon={moreOpen ? ChevronUp : ChevronDown} spring="snappy" reducedMotion="user" size={16} aria-hidden="true" />
-							<span>更多</span>
+							<span class="group-data-[collapsible=icon]:hidden">更多</span>
 						</Sidebar.MenuButton>
 						{#if moreOpen}
 							<Sidebar.MenuSub>

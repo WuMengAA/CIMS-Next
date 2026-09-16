@@ -26,8 +26,15 @@ const CREDS_READY = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD);
 // 它挂载在 prefix="/api" 且 TenantMiddleware 要求 Host 头为 <slug>.<BASE_DOMAIN>，否则 403。
 const CLIENT_URL = (env.CIMS_CLIENT_URL ?? "http://127.0.0.1:8096").replace(/\/$/, "");
 const BASE_DOMAIN = env.CIMS_BASE_DOMAIN ?? "localhost";
-// 允许的路径：账户/指令/资源（management）、登录、以及客户端配置拉取（含带 /api 前缀的写法）。
-const ALLOW = [/^\/account\//, /^\/user\/auth/, /^\/v1\/client\//, /^\/api\/v1\/client\//];
+// 允许的路径：账户/指令/资源（management）、登录、班级（设备归属与切班）、
+// 以及客户端配置拉取（含带 /api 前缀的写法）。
+const ALLOW = [
+	/^\/account\//,
+	/^\/user\/auth/,
+	/^\/class\//,
+	/^\/v1\/client\//,
+	/^\/api\/v1\/client\//
+];
 
 /**
  * 按「方法 + 路径 + 载荷」判定所需**设备权限档位**，力求最小必要：
@@ -42,6 +49,11 @@ const ALLOW = [/^\/account\//, /^\/user\/auth/, /^\/v1\/client\//, /^\/api\/v1\/
 function requiredTier(rel: string, method: string, body: string | undefined): DeviceTier | null {
 	if (method === "GET" || rel === "/user/auth") return null;
 	if (body && body.includes("stelarith_task")) return "remote";
+	// 远程切班：电教委员的日常动作（把本班大屏切到某份课表），control 档即可。
+	// 单独拎出来是因为它落在 /class/ 下，若不特判会被下面的 manage 兜底拦掉。
+	if (/^\/class\/[^/]+\/activate$/.test(rel)) return "control";
+	// 班级增删改、设备划班/移班、班级资源写：影响面超出单个班 → manage。
+	if (/^\/class\//.test(rel)) return "manage";
 	if (/^\/account\/[^/]+\/client\/[^/]+\/command\//.test(rel)) return "control";
 	return "manage";
 }

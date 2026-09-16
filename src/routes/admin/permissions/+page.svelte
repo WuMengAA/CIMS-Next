@@ -174,6 +174,7 @@
 	</h2>
 	<p class="mb-4 text-sm text-muted-foreground">
 		与等级完全独立。等级高不代表能远控设备，等级低也不代表不能 —— 例如电教委员内容等级为 L2，却持有远程控制权限。
+		电教委员本质是「注册用户(L2) 的全部能力 + 设备权限」<strong class="text-foreground">叠加</strong>，并非脱离用户的独立角色：它照样能评论、发帖、申请，只是额外持 remote 设备档位。
 	</p>
 
 	<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

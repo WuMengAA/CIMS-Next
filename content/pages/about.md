@@ -1,10 +1,13 @@
 ---
 title: 关于本站
-date: 2026-09-13
+date: 2026-09-13T00:00:00.000Z
 status: published
 excerpt: 星璃（Stelarith）的内容中枢——一个本地优先、隐私友好的独立创作空间，也是「星璃」品牌与其开源组件的统一门户。
+tags: []
+owner: admin
+layout: narrow
+hero: plain
 ---
-
 # 星璃内容中枢
 
 这里不是又一个博客平台，而是 **「星璃 / Stelarith」** 这个独立创作品牌的内容中枢：一个本地优先、隐私友好的个人互联网空间，也是星璃产品与开源组件的统一门户。
