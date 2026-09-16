@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>星璃集控 · 教室端部署指南</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1b1f24; --muted:#5b6672; --line:#e3e8ee;
+    --card:#f7f9fc; --accent:#1668c9; --accent-soft:#e8f1fd;
+    --ok:#1a7f4b; --ok-soft:#e7f6ee; --warn:#9a6400; --warn-soft:#fdf3e0;
+    --danger:#b3261e; --danger-soft:#fdeceb; --code:#f2f4f7;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#14171c; --fg:#e8ecf1; --muted:#9aa5b1; --line:#2a313a;
+      --card:#1b2027; --accent:#5aa9ff; --accent-soft:#17293f;
+      --ok:#5ed39a; --ok-soft:#14301f; --warn:#e2b04a; --warn-soft:#33280f;
+      --danger:#ff8a80; --danger-soft:#3a1a18; --code:#1f242b;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:0 20px 80px; background:var(--bg); color:var(--fg);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  .wrap{max-width:900px;margin:0 auto}
+  header{padding:44px 0 24px;border-bottom:2px solid var(--line);margin-bottom:8px}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:-.3px}
+  .sub{color:var(--muted);font-size:15px}
+  h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:0}
+  h3{font-size:16.5px;margin:26px 0 8px}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:24px}
+  li{margin:5px 0}
+  code{background:var(--code);padding:1.5px 6px;border-radius:4px;font-size:13.5px;
+       font-family:ui-monospace,Consolas,"Cascadia Mono",monospace}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:8px;
+      padding:13px 15px;overflow:auto;font-size:13px;line-height:1.6;
+      font-family:ui-monospace,Consolas,"Cascadia Mono",monospace}
+  pre code{background:none;padding:0}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--card);font-weight:600}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:16px 20px;margin:18px 0}
+  .callout{border-left:4px solid var(--accent);background:var(--accent-soft);
+           border-radius:0 8px 8px 0;padding:13px 18px;margin:16px 0}
+  .ok{border-left-color:var(--ok);background:var(--ok-soft)}
+  .warn{border-left-color:var(--warn);background:var(--warn-soft)}
+  .danger{border-left-color:var(--danger);background:var(--danger-soft)}
+  .callout b{display:block;margin-bottom:4px}
+  .steps{counter-reset:s;list-style:none;padding-left:0}
+  .steps>li{counter-increment:s;position:relative;padding:14px 0 14px 56px;
+            border-bottom:1px dashed var(--line)}
+  .steps>li:last-child{border-bottom:0}
+  .steps>li::before{
+    content:counter(s);position:absolute;left:0;top:13px;width:34px;height:34px;
+    border-radius:50%;background:var(--accent);color:#fff;font-weight:700;
+    display:flex;align-items:center;justify-content:center;font-size:15px;
+  }
+  .file{font-family:ui-monospace,Consolas,monospace;font-size:13.5px;
+        background:var(--code);padding:2px 7px;border-radius:4px}
+  .muted{color:var(--muted)}
+  .toc{columns:2;column-gap:32px;font-size:14.5px}
+  .toc a{color:var(--accent);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  hr{border:0;border-top:1px solid var(--line);margin:34px 0}
+  @media print{
+    body{font-size:11.5pt;padding:0}
+    h2{page-break-after:avoid}
+    .card,.callout{page-break-inside:avoid}
+    a{color:inherit;text-decoration:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>星璃集控 · 教室端部署指南</h1>
+  <div class="sub">一台教室电脑，从零到「开机自动显示本班课表 + 能收集控广播」<br>
+  <span class="muted">本页可打印。深色细节见 <code>docs\</code> 目录里的六份文档。</span></div>
+</header>
+
+<div class="callout">
+  <b>先看这一页就够</b>
+  照着下面五步做完，教室端就能用了。遇到问题先跑 <code>2-环境自检.cmd</code>，
+  它覆盖了 80% 的现场情况。剩下 20% 在 <code>docs\06-常见问题与排障.md</code>。
+</div>
+
+<h3>目录</h3>
+<div class="toc">
+  <a href="#s1">1 · 五分钟部署</a><br>
+  <a href="#s2">2 · 部署前要准备的信息</a><br>
+  <a href="#s3">3 · 一个必须理解的事实</a><br>
+  <a href="#s4">4 · 验收标准</a><br>
+  <a href="#s5">5 · 出问题了怎么办</a><br>
+  <a href="#s6">6 · 换版本（升级 / 降级）</a><br>
+  <a href="#s7">7 · 服务端在哪里</a><br>
+  <a href="#s8">8 · 官方集控功能</a><br>
+  <a href="#s9">9 · 常用速查</a>
+</div>
+
+<h2 id="s1">1 · 五分钟部署</h2>
+
+<div class="callout warn">
+  <b>唯一的前提</b>
+  <strong>整个目录一起拷到教室电脑</strong>，不能只拷 <code>app</code> 或只拷 <code>scripts</code>。
+  脚本按相对路径找同级文件，缺一个目录就装不起来。
+</div>
+
+<ol class="steps">
+  <li>
+    <b>拷包</b><br>
+    把整个部署包目录（约 330 MB）拷到教室电脑，例如
+    <span class="file">C:\Users\Public\Desktop\ClassroomDeploy</span>。
+  </li>
+  <li>
+    <b>填服务端地址</b><br>
+    打开 <span class="file">config\deployment.json</span>，把
+    <code>"ServerBase"</code> 改成学校服务端地址（形如 <code>http://10.0.0.10:8096</code>）。<br>
+    <span class="muted">不想改文件也行 —— 下一步会问你。其余字段留空即可，脚本会自动补。</span>
+  </li>
+  <li>
+    <b>双击 <span class="file">1-部署到本机.cmd</span></b><br>
+    弹出 UAC 时点「是」。脚本会走七步：读配置 → 检查环境 → 装本体 → 铺数据 →
+    写配置 → 建自启和快捷方式 → 自检。<br>
+    <span class="muted">连不上服务端只会警告、不会中断 —— 教室断网也要能显示课表。</span>
+  </li>
+  <li>
+    <b>启动一次</b><br>
+    双击桌面上新出现的「ClassIsland」。主界面应显示课表。
+    <span class="muted">此时还没连服务端也正常，包里带了一份离线档案。</span>
+  </li>
+  <li>
+    <b>在面板里给这台设备登记班级</b><br>
+    双击桌面「电教委员面板」→ 在设备页把这台机器的标识绑定到对应班级。
+    绑定后服务端会下发该班课表，教室端自动切换。
+  </li>
+</ol>
+
+<p>想确认整体状态，双击 <span class="file">2-环境自检.cmd</span>。全绿即成功。</p>
+
+<h2 id="s2">2 · 部署前要准备的信息</h2>
+
+<p>全部来自服务端管理员。填到 <span class="file">config\deployment.json</span> 里，或部署时按提示输入。</p>
+
+<table>
+  <tr><th>信息</th><th>例子</th><th>说明</th></tr>
+  <tr><td>服务端地址</td><td><code>http://10.0.0.10:8096</code></td><td>★必填。不要带结尾斜杠</td></tr>
+  <tr><td>租户标识 Slug</td><td><code>demo-class</code></td><td>必须与服务端账户一致</td></tr>
+  <tr><td>租户基域 BaseDomain</td><td><code>localhost</code></td><td>等于服务端 <code>.env</code> 的 <code>CIMS_BASE_DOMAIN</code>，一般不用改</td></tr>
+  <tr><td>本机设备标识</td><td><code>class201-pc</code></td><td>同一租户下不可重复。<b>留空则自动取计算机名</b>（推荐）</td></tr>
+  <tr><td>面板地址</td><td>自动推导</td><td>留空时按服务端地址推导成 <code>:8090/admin/console</code></td></tr>
+</table>
+
+<h2 id="s3">3 · 一个必须理解的事实</h2>
+
+<div class="callout danger">
+  <b>用浏览器打开 <code>http://&lt;服务端&gt;:8096/…</code> 会返回 403 —— 这不是故障</b>
+  服务端靠 HTTP 请求里的 <code>Host</code> 头识别「这是哪个班」，而浏览器不会替你设置它。
+  <strong>教室端插件会主动设置这个头</strong>，所以插件工作正常。
+  实测同一接口：带 <code>Host: demo-class.localhost</code> 返回 <b>200</b>，裸 IP 返回 <b>403</b>。
+</div>
+
+<p>由此推出两条实用结论：</p>
+<ul>
+  <li><b>填 IP 就行，不必让它看起来像域名。</b>租户身份由配置里的 <code>Slug</code> + <code>BaseDomain</code> 决定，
+      与地址栏里的主机名无关。</li>
+  <li><b>排错时不要用浏览器测 8096。</b>用 <code>2-环境自检.cmd</code>，它按插件的方式带 Host 头请求，
+      结果才有意义。</li>
+</ul>
+
+<h2 id="s4">4 · 验收标准</h2>
+
+<table>
+  <tr><th>检查项</th><th>怎么看</th><th>期望</th></tr>
+  <tr><td>本体</td><td><code>C:\ClassIsland\ClassIsland.exe</code></td><td>存在</td></tr>
+  <tr><td>版本目录</td><td><code>C:\ClassIsland\app-2.1.0.1-0\</code></td><td>存在</td></tr>
+  <tr><td>插件</td><td><code>…\data\Plugins\StelarithControlPlugin\</code></td><td>dll / deps.json / manifest.yml / stelarith-sync.json 都在</td></tr>
+  <tr><td>服务端认得出</td><td>自检里的「Manifest 接口」</td><td><code>HTTP 200</code></td></tr>
+  <tr><td>插件真在跑</td><td><code>C:\ClassIsland\app-2.1.0.1-0\ste-*.log</code></td><td>存在，且最后写入在 15 分钟内</td></tr>
+  <tr><td>面板能看到</td><td>面板设备列表</td><td>本机在线，显示插件版本</td></tr>
+</table>
+
+<h2 id="s5">5 · 出问题了怎么办</h2>
+
+<ol>
+  <li>双击 <span class="file">2-环境自检.cmd</span>，看有没有红项。</li>
+  <li>想发报告：<code>2-环境自检.cmd -Report check.txt</code>，把生成的 txt 发给管理员。
+      <span class="muted">报告已脱敏，不含密钥。</span></li>
+  <li>还在上课时间、需要立刻恢复：<code>4-回滚.cmd -Last</code>，一分钟内退回上一个可用版本。
+      <b>先恢复可用性，再查根因。</b></li>
+</ol>
+
+<p>最常见的三种情况：</p>
+
+<table>
+  <tr><th>现象</th><th>多半是</th><th>怎么修</th></tr>
+  <tr><td>双击 cmd 一闪而过</td><td>没以管理员运行</td><td>右键 → 以管理员身份运行</td></tr>
+  <tr><td>自检说 Manifest 403</td><td><code>Slug</code> 或 <code>BaseDomain</code> 与服务端不一致</td><td>核对服务端 <code>.env</code> 的 <code>CIMS_BASE_DOMAIN</code> 与账户 slug</td></tr>
+  <tr><td>主界面没课表</td><td>设备还没在面板绑定班级</td><td>去面板绑定；或先看自检是否通过</td></tr>
+</table>
+
+<p class="muted">更多：<span class="file">docs\06-常见问题与排障.md</span></p>
+
+<h2 id="s6">6 · 换版本（升级 / 降级）</h2>
+
+<div class="callout">
+  <b>换版本前请先知道：日常只需要换插件（约 500 KB），不必动 281 MB 的本体。</b>
+  脚本会自动先停 ClassIsland —— 因为宿主会锁住插件 DLL，运行中替换必然失败。
+</div>
+
+<pre><code>REM 只升级插件（最常见）
+3-升级或降级.cmd -From E:\ClassroomDeploy-新版本
+
+REM 连 ClassIsland 本体一起升级
+3-升级或降级.cmd -From E:\ClassroomDeploy-新版本 -WithApp
+
+REM 降级 —— 把 -From 指向旧版本包即可，不需要别的参数
+3-升级或降级.cmd -From E:\ClassroomDeploy-旧版本
+
+REM 回滚到最近一次替换前的状态
+4-回滚.cmd -Last
+
+REM 只是服务端地址被改乱了
+4-回滚.cmd -RestoreSyncOnly
+</code></pre>
+
+<p>升级/回滚每次都会自动备份旧文件到
+<span class="file">插件目录\.bak-&lt;时间戳&gt;\</span>，所以「回滚错了想切回来」也是可以的。</p>
+
+<div class="callout ok">
+  <b>怎么确认新版本真的生效了（两个硬判据）</b>
+  ① <b>进程启动时间晚于 DLL 修改时间</b>（自检里已做成检查项）—— 进程更早就说明跑的还是内存里的旧代码；<br>
+  ② <b>出现了本轮新增的 <code>ste-*.log</code></b> —— 新代码路径启动时才会创建。
+  面板里的版本号读的是 <code>manifest.yml</code>，它<b>只能</b>证明清单换成功了，不能证明 DLL 换了。
+</div>
+
+<h2 id="s7">7 · 服务端在哪里</h2>
+
+<p>整套系统对外只有<b>两个</b>地址，教室端也只填这两个：</p>
+
+<table>
+  <tr><th>名称</th><th>形态</th><th>谁需要访问</th></tr>
+  <tr><td>CIMS 地址</td><td><code>http://&lt;主机&gt;:8096</code></td><td>所有教室端（★必须放行）</td></tr>
+  <tr><td>面板地址</td><td><code>http://&lt;主机&gt;:8090/admin/console</code></td><td>电教委员 / 管理员（浏览器）</td></tr>
+</table>
+
+<p>服务端放哪里不重要，重要的是<b>这两个地址从教室网络能通</b>。三种选择：</p>
+<ul>
+  <li><b>校内一台常开机器（推荐）</b> —— 延迟低、不依赖外网、数据在校内。</li>
+  <li><b>装在某一间教室的电脑上</b> —— 只适合一两个班；这台机器一关，其他班也失去集控。</li>
+  <li><b>公网云主机</b> —— 需要额外的反向代理来改写 Host 头，详见
+      <span class="file">docs\02-服务端落地.md</span>。</li>
+</ul>
+
+<div class="callout warn">
+  <b>服务端不可用时会怎样（有意的降级设计）</b>
+  课表显示、上课提醒这些核心功能<b>完全在本地</b>，断网不影响上课。
+  断网期间：课表停在最后一次同步成功的版本、收不到新广播、面板上这台设备显示为离线。
+  网络恢复后插件自动继续同步 —— 它只是这一轮没拉到，<b>不会退出、也不会被禁用</b>。
+</div>
+
+<h2 id="s8">8 · 官方集控功能（ClassIsland 自带）</h2>
+
+<p>ClassIsland <b>自带</b>一套集控功能，和本项目自研的星璃集控不是一回事，但用的是同一套数据格式。</p>
+
+<table>
+  <tr><th></th><th>官方集控</th><th>星璃集控（本项目）</th></tr>
+  <tr><td>怎么开</td><td>设置 → 集控 → 加入集控</td><td>装插件 + 填 <code>stelarith-sync.json</code></td></tr>
+  <tr><td>权限保护</td><td><b>有</b>：禁改设置/课表、禁退出、凭据校验</td><td>无（依赖宿主权限体系）</td></tr>
+  <tr><td>设备状态上报</td><td>无</td><td><b>有</b></td></tr>
+  <tr><td>命令通道</td><td>官方服务端模式（官方标注「开发中」）</td><td>HTTP 轮询，可用</td></tr>
+  <tr><td>服务端状态</td><td>静态配置模式可用</td><td>已可用</td></tr>
+</table>
+
+<h3>绑定设置怎么写</h3>
+<p>在 ClassIsland 安装目录建 <span class="file">ManagementPreset.json</span>：</p>
+<pre><code>{
+  "ManagementServerKind": 0,
+  "ManagementServer": "",
+  "ManifestUrlTemplate": "https://example.com/manifest.json",
+  "ClassIdentity": "1-201"
+}</code></pre>
+<p><code>ManagementServerKind</code>：<code>0</code> = 静态托管的配置文件（可用）；
+<code>1</code> = 集控服务器（官方标注「正在开发」）。URL 模板只支持两个占位符：
+<code>{id}</code>（客户端 ID）和 <code>{cuid}</code>（唯一客户端 GUID）。</p>
+
+<div class="callout danger">
+  <b>两套机制并存时最容易踩的坑：档案双写</b>
+  官方集控和星璃插件<b>都会往同一份课表档案里写</b>，
+  结果课表在两个版本之间来回跳，表现为「课表偶尔变回旧的」。<br>
+  <b>规则是二选一：</b>用官方集控下发课表 → 把 <code>ResourceWriteBack</code> 设为 <code>false</code>；
+  用星璃插件下发 → 不要启用官方集控。
+  关掉写回后，星璃插件仍可正常工作（上报状态、收广播、点歌上屏），只是不再碰课表档案。
+</div>
+
+<p class="muted">完整说明（含官方 URL 模板、策略与凭据的完整字段表、与 CIMS 对接的前提）：
+<span class="file">docs\03-官方集控与绑定设置.md</span></p>
+
+<h2 id="s9">9 · 常用速查</h2>
+
+<table>
+  <tr><th>场景</th><th>命令</th></tr>
+  <tr><td>首次部署</td><td><code>1-部署到本机.cmd</code></td></tr>
+  <tr><td>无人值守部署（配置已填好）</td><td><code>deploy.ps1 -NonInteractive</code></td></tr>
+  <tr><td>只看计划不动磁盘</td><td><code>deploy.ps1 -DryRun</code></td></tr>
+  <tr><td>自检并存报告</td><td><code>2-环境自检.cmd -Report check.txt</code></td></tr>
+  <tr><td>只升插件</td><td><code>upgrade.ps1 -From E:\包 -WithApp</code>（去掉 -WithApp 即只升插件）</td></tr>
+  <tr><td>回滚</td><td><code>rollback.ps1 -Last</code></td></tr>
+  <tr><td>卸掉自启与桌面快捷方式</td><td><code>upgrade.ps1 -RemoveAutoStart</code></td></tr>
+  <tr><td>这台机器也当服务端</td><td><code>deploy.ps1 -OpenFirewall</code></td></tr>
+</table>
+
+<h3>数据与目录（装完之后的分布）</h3>
+<pre><code>C:\ClassIsland\
+├── ClassIsland.exe              ← 启动器（快捷方式指向它）
+├── app-2.1.0.1-0\               ← 程序本体（ste-*.log 插件日志在这里）
+├── assets\musics\               ← 提醒音效
+└── data\
+    ├── Settings.json            ← 宿主设置（含安装路径绝对路径）
+    ├── Profiles\Default.json    ← 课表档案
+    ├── Config\                  ← 各插件设置
+    └── Plugins\
+        └── StelarithControlPlugin\
+            ├── StelarithControlPlugin.dll / deps.json / manifest.yml
+            ├── stelarith-sync.json    ← ★服务端地址在这里
+            └── stelarith-panel.json
+</code></pre>
+
+<div class="callout warn">
+  <b>分发前请自查（安全）</b>
+  不要把带真密钥的配置打进去。已知风险点：第三方 AI 插件的 <code>aisettings.json</code> 里有明文
+  <code>apiKey</code>；<code>stelarith-sync.json</code> 的 <code>VoiceHubKey</code>；
+  以及任何 <code>.env</code> / 启动脚本。
+  出包脚本已内置排除与脱敏，但如果你是手工拷目录，请自己对照检查。
+</div>
+
+<hr>
+<p class="muted" style="text-align:center">
+  星璃集控 · 教室端部署包 &nbsp;|&nbsp; 详细文档在 <code>docs\</code> 目录<br>
+  <code>01</code> 教室端部署 · <code>02</code> 服务端落地 · <code>03</code> 官方集控与绑定 ·
+  <code>04</code> 多设备与远程 · <code>05</code> 升级降级回滚 · <code>06</code> 排障
+</p>
+
+</div>
+</body>
+</html>
