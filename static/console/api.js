@@ -1,0 +1,1045 @@
+// 星集控 · 统一 API 层（对接真实 CIMS 接口）
+//
+// 接口来源（已在 CIMS-backend 源码中核实）：
+//   · management 端口（MGMT）：账户/客户端控制/资源写，Bearer token 认证
+//       POST /user/auth
+//       GET  /account/list
+//       GET  /account/{acct}/client/list            -> uid 数组
+//       GET  /account/{acct}/client/{uid}           -> {uid,name,status,...}
+//       GET  /account/{acct}/client/{uid}/status
+//       POST /account/{acct}/client/{uid}/command/restart
+//       POST /account/{acct}/client/{uid}/command/update-data
+//       POST /account/{acct}/client/{uid}/command/send-notification   body: NotificationPayload
+//       POST /account/{acct}/{type}/write?name=xxx  (type∈ClassPlan|TimeLayout|Subjects|Policy|DefaultSettings|Components|Credentials)
+//       GET  /account/{acct}/{type}/list
+//   · client 端口（CLIENT）：终端配置拉取
+//       GET  /v1/client/{uid}/manifest
+//       GET  /v1/client/{type}?name=xxx             -> 资源内容
+//   · 扩展网关（EXT，可选）：CIMS 不存储协作/上报数据，可由部署方自建轻量服务
+//       /notices  /chat(?room=)  /reports  /bugs  /audit   —— /chat 支持房间隔离（跨班互通）
+//
+// 设计原则：单一出口、可换后端、请求失败/无后端/演示模式一律降级为演示数据，面板永不白屏。
+(function (global) {
+  const K_MGMT = "cims_mgmt";
+  const K_CLIENT = "cims_client";
+  const K_EXT = "cims_ext";
+  const K_TOKEN = "cims_token";
+  const K_CLASS = "cims_class";
+  const K_DEMO = "cims_demo";
+  const K_VHUB_HOST = "cims_vhub_host";
+  const K_VHUB_KEY = "cims_vhub_key";
+  const K_SITE = "cims_site_host";
+  const K_NOVNC = "cims_novnc_url";
+  const K_TASK_SECRET = "cims_task_secret";
+
+  const state = {
+    mgmtHost: localStorage.getItem(K_MGMT) || "",
+    clientHost: localStorage.getItem(K_CLIENT) || "",
+    extHost: localStorage.getItem(K_EXT) || "",
+    token: localStorage.getItem(K_TOKEN) || "",
+    accountId: "",
+    classId: localStorage.getItem(K_CLASS) || "",
+    demo: localStorage.getItem(K_DEMO) === "1",
+    voicehubHost: localStorage.getItem(K_VHUB_HOST) || "",
+    voicehubKey: localStorage.getItem(K_VHUB_KEY) || "",
+    siteHost: localStorage.getItem(K_SITE) || "",
+    noVncUrl: localStorage.getItem(K_NOVNC) || "",
+    taskSecret: localStorage.getItem(K_TASK_SECRET) || "",
+    embedded: false,
+    timeout: 8000,
+  };
+
+  function setMgmtHost(v) { state.mgmtHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_MGMT, state.mgmtHost); }
+  function setClientHost(v) { state.clientHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_CLIENT, state.clientHost); }
+  function setExtHost(v) { state.extHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_EXT, state.extHost); }
+  function setVoicehubHost(v) { state.voicehubHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_VHUB_HOST, state.voicehubHost); }
+  function setVoicehubKey(v) { state.voicehubKey = v || ""; localStorage.setItem(K_VHUB_KEY, state.voicehubKey); }
+  function setSiteHost(v) { state.siteHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_SITE, state.siteHost); }
+  function setNoVncUrl(v) { state.noVncUrl = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_NOVNC, state.noVncUrl); }
+  function setTaskSecret(v) { state.taskSecret = v || ""; localStorage.setItem(K_TASK_SECRET, state.taskSecret); }
+  function setEmbedded(on) { state.embedded = !!on; }
+  function setHost(v) { setMgmtHost(v); } // 兼容旧调用：host 视作 management 端口
+  function setToken(v) { state.token = v || ""; localStorage.setItem(K_TOKEN, state.token); }
+  function setClass(v) { state.classId = v || ""; localStorage.setItem(K_CLASS, state.classId); }
+  function setDemo(on) { state.demo = !!on; localStorage.setItem(K_DEMO, state.demo ? "1" : "0"); }
+  function clearAuth() { state.token = ""; state.accountId = ""; localStorage.removeItem(K_TOKEN); }
+  function acct() { return state.accountId; }
+
+  // 是否具备「真实账户上下文」：非演示模式 + 配了 mgmt 后端 + 已选定账户。
+  // 三者缺一，/account//... 就是畸形路径（后端 404、控制台持续刷错误）。
+  // 统一判定为「没有真实后端可用」，让各调用方走既有演示/空数据分支，
+  // 而不是把畸形请求发出去。
+  function canUseBackend() { return !state.demo && !!state.mgmtHost && !!state.accountId; }
+
+  async function reqTo(host, path, opts = {}) {
+    if (!host) throw new Error("未配置后端地址");
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), state.timeout);
+    try {
+      const res = await fetch(host + path, {
+        ...opts,
+        signal: ctl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(state.token ? { Authorization: "Bearer " + state.token } : {}),
+          ...(opts.headers || {}),
+        },
+      });
+      if (res.status === 401) { clearAuth(); throw new Error("未授权，请重新登录"); }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const txt = await res.text();
+      return txt ? JSON.parse(txt) : {};
+    } finally { clearTimeout(t); }
+  }
+
+  // 走 management 端口；失败或有降级键时回落演示数据
+  async function cims(path, opts, demoKey) {
+    if (!canUseBackend()) return D[demoKey] ? D[demoKey]() : {};
+    try { return await reqTo(state.mgmtHost, path, opts); }
+    catch (e) { if (demoKey && D[demoKey]) return D[demoKey](); throw e; }
+  }
+
+  // 走 stelarith-website（同源或 siteHost）：协作/上报类数据落地网站，复用其反馈模型
+  async function siteFetch(path, opts = {}) {
+    const base = state.siteHost ? state.siteHost.replace(/\/+$/, "") : "";
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), state.timeout);
+    try {
+      const res = await fetch(base + path, {
+        ...opts,
+        credentials: "include",
+        signal: ctl.signal,
+        headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const txt = await res.text();
+      return txt ? JSON.parse(txt) : {};
+    } finally { clearTimeout(t); }
+  }
+  // 走 client 端口（配置拉取）
+  async function cli(path, opts, demoKey) {
+    if (state.demo || !state.clientHost) return D[demoKey] ? D[demoKey]() : {};
+    try { return await reqTo(state.clientHost, path, opts); }
+    catch (e) { if (demoKey && D[demoKey]) return D[demoKey](); throw e; }
+  }
+  // 走站点侧协作接口（通知历史 / 班级交流 / 操作日志）。
+  // 注意：只有在「完全没配后端」（纯演示模式）时才返回内置演示数据；
+  // 一旦配了 extHost，请求失败就如实抛错，绝不静默回退假数据——
+  // 否则权限不足/服务异常会伪装成「有数据」，是最难排查的一类问题。
+  async function ext(path, opts, demoKey) {
+    if (state.demo || !state.extHost) return D[demoKey] ? D[demoKey]() : {};
+    return reqTo(state.extHost, path, opts);
+  }
+
+  // ---- 校园点歌（voicehub）独立客户端 ----
+  // 鉴权：x-api-key 请求头（voicehub 开放 API 要求，与 CIMS Bearer 不同）
+  // 契约（已在 voicehub 源码 server/api/open/* 核实）：
+  //   GET  /api/open/songs?played=true|false&sortBy=...&sortOrder=...&limit=   -> {success,data:{songs:[...]}}
+  //   POST /api/open/songs/request  body:{title,artist,...}                   -> 点歌（需 songs:request 权限）
+  async function vhubReq(path, opts = {}) {
+    if (!state.voicehubHost) throw new Error("未配置点歌站地址");
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), state.timeout);
+    try {
+      const res = await fetch(state.voicehubHost + path, {
+        ...opts,
+        signal: ctl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": state.voicehubKey || "",
+          ...(opts.headers || {}),
+        },
+      });
+      if (res.status === 401) throw new Error("点歌站 API Key 无效或未授权");
+      if (!res.ok) throw new Error("点歌站 HTTP " + res.status);
+      const txt = await res.text();
+      return txt ? JSON.parse(txt) : {};
+    } finally { clearTimeout(t); }
+  }
+
+  // 取「正在播放」（最近已播一首）与「待播队列」（未播、按提交时间升序）
+  async function vhubList() {
+    if (state.demo || !state.voicehubHost) return { now: null, queue: D.voicehub() };
+    try {
+      const [nowR, qR] = await Promise.all([
+        vhubReq("/api/open/songs?played=true&sortBy=playedAt&sortOrder=desc&limit=1"),
+        vhubReq("/api/open/songs?played=false&sortBy=createdAt&sortOrder=asc&limit=10"),
+      ]);
+      const nowRaw = nowR?.data?.songs?.[0] || null;
+      const now = nowRaw
+        ? { id: nowRaw.id, title: nowRaw.title, artist: nowRaw.artist, by: nowRaw.requester, at: nowRaw.playedAtFormatted }
+        : null;
+      const queue = (qR?.data?.songs || []).map((s) => ({
+        id: s.id, title: s.title, artist: s.artist, by: s.requester, votes: s.voteCount, at: s.requestedAt,
+      }));
+      return { now, queue };
+    } catch (e) { return { now: null, queue: D.voicehub(), error: e.message }; }
+  }
+
+  async function vhubRequest(title, artist) {
+    if (state.demo || !state.voicehubHost) return { success: true, demo: true };
+    return vhubReq("/api/open/songs/request", {
+      method: "POST",
+      body: JSON.stringify({ title, artist }),
+    });
+  }
+
+  // 把当前播放 + 待播队列写入 CIMS Components/songboard（真实接口，已核实）。
+  // 与 ext/voicehub-sync/voicehub-adapter.mjs 写同一资源，由 ClassIsland 点歌看板插件拉取上屏。
+  // 契约：POST /account/{acct}/Components/write?name=songboard   (Bearer token)
+  async function vhubPush(now, queue) {
+    if (state.demo || !state.mgmtHost) return { demo: true };
+    let accountId = state.accountId;
+    if (!accountId) {
+      try {
+        const list = await reqTo(state.mgmtHost, "/account/list");
+        if (Array.isArray(list) && list.length) accountId = list[0].id || list[0];
+      } catch (_) {}
+    }
+    if (!accountId) return { demo: true };
+    return reqTo(state.mgmtHost, `/account/${accountId}/Components/write?name=songboard`, {
+      method: "POST",
+      body: JSON.stringify({ name: "songboard", now: now || null, queue: queue || [], pushedAt: Date.now() }),
+    });
+  }
+
+  // ---- 演示数据（无后端或请求失败时兜底，保证面板始终可用/可演示） ----
+  const D = {
+    classes: () => ([
+      { id: "default_classplan", name: "高一(1)班" }, { id: "classplan_702", name: "高一(2)班" },
+      { id: "classplan_703", name: "高一(3)班" }, { id: "classplan_801", name: "高二(1)班" },
+    ]),
+    devices: () => ([
+      { id: "uid-d1", name: "前门一体机", online: true, ip: "10.0.7.11", ver: "1.6.2", last: "刚刚" },
+      { id: "uid-d2", name: "后墙班牌", online: true, ip: "10.0.7.12", ver: "1.6.2", last: "1 分钟前" },
+      { id: "uid-d3", name: "备用投影盒", online: false, ip: "10.0.7.13", ver: "1.5.9", last: "3 小时前" },
+    ]),
+    schedule: () => ({
+      name: state.classId || "default_classplan",
+      days: [
+        { day: 1, name: "周一", items: ["语文", "数学", "英语", "物理", "体育"] },
+        { day: 2, name: "周二", items: ["数学", "语文", "化学", "英语", "自习"] },
+        { day: 3, name: "周三", items: ["英语", "物理", "数学", "历史", "体育"] },
+        { day: 4, name: "周四", items: ["语文", "化学", "数学", "地理", "自习"] },
+        { day: 5, name: "周五", items: ["数学", "英语", "物理", "语文", "班会"] },
+      ],
+    }),
+    config: () => ({
+      name: state.classId || "default_components",
+      components: ["课表", "倒计时", "天气", "通知"],
+      autoHide: { inClass: true, exam: true, projection: true },
+      updateChannel: "http://update.example.edu/",
+    }),
+    plugins: () => ([
+      { id: "components_p1", name: "课表增强", ver: "2.1.0", enabled: true },
+      { id: "components_p2", name: "天气插件", ver: "1.4.3", enabled: true },
+      { id: "components_p3", name: "打铃扩展", ver: "0.9.1", enabled: false },
+      { id: "components_p4", name: "值日轮播", ver: "1.0.2", enabled: false },
+    ]),
+    notices: () => ([
+      { id: "n1", title: "期中考试时间调整", scope: "全校", at: "09-05 08:12" },
+      { id: "n2", title: "本班周一换课通知", scope: "本班", at: "09-04 17:40" },
+    ]),
+    chat: () => ([
+      { from: "高一(2)班", text: "你们投影闪屏修好了吗？", at: "10:02", mine: false },
+      { from: "我", text: "换了 HDMI 线，好了", at: "10:04", mine: true },
+      { from: "高二(1)班", text: "求推荐稳定版插件", at: "10:11", mine: false },
+    ]),
+    reports: () => ([
+      { id: "r1", title: "一体机无法开机", level: "高", status: "处理中", at: "09-06 14:20" },
+      { id: "r2", title: "班牌时间不同步", level: "低", status: "已解决", at: "09-03 09:15" },
+    ]),
+    bugs: () => ([
+      { id: "b1", title: "课表组件跨天不刷新", status: "已受理", at: "09-05 21:33" },
+      { id: "b2", title: "通知弹窗遮挡倒计时", status: "待复现", at: "09-02 11:02" },
+    ]),
+    audit: () => ([
+      { at: "09-06 16:02", who: "我", act: "下发课表配置", target: "高一(1)班" },
+      { at: "09-06 15:41", who: "我", act: "重启设备 d2", target: "高一(1)班" },
+      { at: "09-05 10:20", who: "管理员", act: "更新组件 打铃扩展", target: "全校" },
+    ]),
+    voicehub: () => ([
+      { id: "s1", song: "孤勇者", by: "高一(3)班 王同学", at: "10:21", status: "播放中" },
+      { id: "s2", song: "起风了", by: "高二(1)班 李同学", at: "10:18", status: "排队 1" },
+      { id: "s3", song: "晴天", by: "高一(2)班 张同学", at: "10:15", status: "排队 2" },
+    ]),
+  };
+
+  // ---- 协作数据归一化（站点后端返回 createdAt 等原始字段，这里转成面板展示形态）----
+  // 对内嵌真实后端：请求失败一律返回空数组，**不再回退演示数据**——
+  // 之前失败时静默显示假数据，让人误以为「后端通了」，反而更难排查。
+  function fmtTime(v) {
+    if (!v) return "";
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return String(v);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function normNotices(r) {
+    if (!Array.isArray(r)) return [];
+    return r.map((n) => ({
+      id: n.id,
+      title: n.title != null ? n.title : "",
+      scope: n.scope != null ? n.scope : "",
+      author: n.author || "",
+      // 目标班级（服务端存逗号串或数组，这里统一成数组），用于「历史通知分班级」展示
+      classes: Array.isArray(n.classes)
+        ? n.classes
+        : String(n.classes || "").split(",").map((s) => s.trim()).filter(Boolean),
+      // 来源通道：notice / chat / announcement —— 让同一条内容走过多条通道时一眼可辨
+      channel: n.channel || "",
+      sent: Number.isFinite(n.sent) ? n.sent : (n.sent != null ? Number(n.sent) || 0 : 0),
+      at: n.at || fmtTime(n.createdAt),
+    }));
+  }
+  function normChat(r, me) {
+    if (!Array.isArray(r)) return [];
+    return r.map((m) => ({
+      id: m.id,
+      from: m.from != null ? m.from : (m.sender || ""),
+      text: m.text != null ? m.text : (m.body || ""),
+      room: m.room || "",
+      at: m.at || fmtTime(m.createdAt),
+      mine: (m.from != null ? m.from : m.sender) === me,
+    }));
+  }
+  function normAudit(r) {
+    if (!Array.isArray(r)) return [];
+    return r.map((a) => ({
+      id: a.id,
+      at: a.at || fmtTime(a.createdAt),
+      who: a.who != null ? a.who : (a.actor || ""),
+      act: a.act != null ? a.act : (a.action || ""),
+      target: a.target || "",
+      detail: a.detail || "",
+    }));
+  }
+
+  // 把 CIMS 资源列表响应归一化为 {id,name}
+  function normResources(list) {
+    if (!Array.isArray(list)) return [];
+    return list.map((x) => {
+      if (typeof x === "string") return { id: x, name: x };
+      const n = x.name || x.id || x.slug || "";
+      return { id: n, name: n };
+    });
+  }
+
+  // ---- 星璃功能模块目录（面板展示用） ----
+  //
+  // 与插件端 `StelarithModules.All` 一一对应（id 必须完全一致 —— 三处共用同一套字符串：
+  // 插件 C#、本文件、面板渲染）。这里冗余一份 label/描述 是因为心跳上报为了省带宽
+  // 只发 `{moduleId: bool}`，不含文案；若面板依赖插件发文案，插件旧版本就会渲染出空白。
+  // 未知 id 一律按「未登记模块」展示，不隐藏 —— 新插件加了模块但面板没更新时，
+  // 用户仍能看到并操控它，而不是"开关神秘消失"。
+  const MODULE_CATALOG = [
+    { id: "heartbeat", label: "状态心跳上报", core: true, desc: "定期上报在线状态、插件清单与模块开关。关闭后面板将看不到这台设备。" },
+    { id: "command_poll", label: "集控指令通道", core: true, desc: "轮询并执行集控下发的指令（锁屏/截图/切班/广播）。关闭后本机将失去远程控制能力。" },
+    { id: "sync", label: "资源主动同步", core: false, desc: "定时从集控拉取课表 / 作息 / 科目 / 组件配置。" },
+    { id: "writeback", label: "写回 ClassIsland 档案", core: false, desc: "把同步到的资源写入本机档案，使大屏真正显示新配置。" },
+    { id: "notification", label: "集控播报", core: false, desc: "把集控广播落到 ClassIsland 官方提醒系统，在大屏播放遮罩播报。" },
+    { id: "os_actions", label: "本机动作（锁屏 / 截图）", core: false, desc: "允许集控对这台机器执行锁屏与截屏。" },
+    { id: "remote_control", label: "远程控制转发", core: false, desc: "允许集控经本地代理发起远程控制（VNC）会话。" },
+    { id: "message_feed", label: "岛内消息中心", core: false, desc: "在 ClassIsland 设置页 / 托盘里查看本机最近的广播与通知。" },
+  ];
+  const MODULE_BY_ID = MODULE_CATALOG.reduce((m, x) => (m[x.id] = x, m), {});
+
+  /** 秒 → 人话（心跳间隔通常是几十秒，粒度到"刚刚/分钟"即可）。 */
+  function ago(sec) {
+    if (sec == null || isNaN(sec)) return "从未上报";
+    if (sec < 60) return "刚刚";
+    if (sec < 3600) return Math.floor(sec / 60) + " 分钟前";
+    if (sec < 86400) return Math.floor(sec / 3600) + " 小时前";
+    return Math.floor(sec / 86400) + " 天前";
+  }
+
+  /**
+   * `/class/device-status` 的一条 → 面板统一设备结构。
+   *
+   * 关键语义：
+   *   · `reported=false` 与 `online=false` 是**两件事** ——
+   *     前者="从未接上集控"，后者="接上过但现在掉线"。混为一谈会让
+   *     "端点配错"和"教室断电"看起来一样，排查时没有方向。
+   *   · `ver` 为空时显示 "—" 而不是空字符串：空表格单元格看起来像渲染失败。
+   */
+  function normDevice(d) {
+    const online = !!d.online;
+    const reported = !!d.reported;
+    return {
+      id: d.client_id,
+      name: d.host || d.client_id,
+      host: d.host || "",
+      online,
+      reported,
+      ageSec: typeof d.age_seconds === "number" ? d.age_seconds : null,
+      // last 是**真实心跳**推导出的相对时间，不再是"注册时间"冒充
+      last: reported ? ago(d.age_seconds) : "从未上报",
+      reportedAt: d.reported_at || "",
+      ip: d.ip || "",
+      ver: d.version || "—",
+      classId: d.class_id || "",
+      className: d.class_name || "",
+      activeGroup: d.active_class_group || "",
+      modules: d.modules && typeof d.modules === "object" ? d.modules : {},
+      plugins: Array.isArray(d.plugins) ? d.plugins : [],
+      extra: d.extra && typeof d.extra === "object" ? d.extra : {},
+      // 状态文案三分：未接入 / 在线 / 离线
+      stateLabel: !reported ? "尚未接入" : online ? "在线" : "离线",
+      stateKind: !reported ? "warn" : online ? "ok" : "err",
+    };
+  }
+
+  /** 演示设备补齐新字段（无后端时面板结构仍完整，不报 undefined）。 */
+  function demoDevice(d) {
+    return Object.assign({
+      host: d.name, reported: true, ageSec: 12, reportedAt: "", classId: "", className: "",
+      activeGroup: "", modules: {}, plugins: [], extra: {}, stateLabel: d.online ? "在线" : "离线",
+      stateKind: d.online ? "ok" : "err",
+    }, d, { online: !!d.online });
+  }
+
+  /** 模块快照（{id:bool}）→ 有序数组，带上目录里的文案；未知 id 也保留。 */
+  function normModules(snap) {
+    const map = snap && typeof snap === "object" ? snap : {};
+    const known = MODULE_CATALOG.map((m) => Object.assign({}, m, { enabled: !!map[m.id] }));
+    const extra = Object.keys(map)
+      .filter((k) => !MODULE_BY_ID[k])
+      .map((k) => ({ id: k, label: k + "（未登记）", core: false, desc: "插件上报了本面板不认识的模块。", enabled: !!map[k] }));
+    return known.concat(extra);
+  }
+
+
+  //
+  // 为什么必须有这一层：CIMS 下发的 ClassPlan 是**官方「Profile 信封」**——
+  //   { Name, ClassPlans:{<planGuid>:{TimeRule:{WeekDay},Classes:[{SubjectId,...}]}},
+  //     ClassPlanGroups:{...} }
+  // 而面板视图（dashboard/schedule）读的是 `sched.days[0].items`。
+  // 两者结构完全不同：直接透传时 `sched.days` 为 undefined，
+  // `sched.days[0]` 立刻抛
+  //   TypeError: Cannot read properties of undefined (reading '0')
+  // 症状是「总览/操作日志整页显示『加载失败』」——因为 dashboard 与 audit
+  // 同属一次 go() 渲染链，dashboard 先炸就把 view 整块替换成错误卡。
+  //
+  // 关键映射：
+  //   · 一个 ClassPlan = 一天（信封里 6 个 plan 对应周一~周六）；
+  //     天序取 `TimeRule.WeekDay`（0=周日 … 6=周六），不能靠对象键顺序。
+  //   · `Classes[].SubjectId` 是 GUID，必须用 Subjects 资源
+  //     （{Subjects:{<guid>:{Name}}}) 反查成「语文/数学」这类可读名。
+  //     查不到就退回短 GUID，绝不显示空白。
+  //   · 科目表取不到不应让整页失败 —— 降级为「显示 GUID」，课表仍可用。
+  const WEEK_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+  /** 把官方 Subjects 信封压成 {guid: 名称} 映射；任何异常都退化为空表。 */
+  function subjectNameMap(subEnvelope) {
+    const map = {};
+    const s = subEnvelope && subEnvelope.Subjects;
+    if (s && typeof s === "object") {
+      for (const [guid, v] of Object.entries(s)) {
+        const nm = v && (v.Name || v.name);
+        if (guid && nm) map[guid] = String(nm);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * 官方 Profile 信封 → 面板课表形态。
+   * @param {any} env  ClassPlan 资源（可能是官方信封，也可能已是面板形态）
+   * @param {any} subEnv Subjects 资源（官方信封），可为空
+   */
+  function normSchedule(env, subEnv) {
+    // 已经是面板形态（含 days 数组）→ 原样返回，兼容演示数据与旧契约
+    if (env && Array.isArray(env.days)) return env;
+    const nameMap = subjectNameMap(subEnv);
+    const plans = (env && env.ClassPlans) || {};
+    const entries = Object.entries(plans);
+    if (!entries.length) {
+      // 合法空信封（例如未绑定班级的 default_classplan）：给空周，而不是让调用方炸
+      return { name: (env && env.Name) || "", days: [] };
+    }
+    const days = entries.map(([guid, cp]) => {
+      const rule = (cp && cp.TimeRule) || {};
+      // WeekDay: 0=周日 … 6=周六；缺字段时退化为 0，排序后仍在
+      const wd = Number.isFinite(rule.WeekDay) ? rule.WeekDay : 0;
+      const items = ((cp && cp.Classes) || [])
+        .filter((c) => c && c.IsEnabled !== false)
+        .map((c) => {
+          const sid = c.SubjectId || c.subjectId || "";
+          return nameMap[sid] || (sid ? String(sid).slice(0, 8) : "");
+        })
+        .filter((x) => x);
+      return {
+        day: wd,
+        // 优先用课表自带的 Name（学校数据里就是「周一」「周二」这类权威标签），
+        // 缺失时才用 WeekDay 折算；两者都不依赖对象键顺序。
+        name: (cp && cp.Name) || WEEK_NAMES[wd] || `第${wd}天`,
+        items,
+        planId: guid,
+        planName: (cp && cp.Name) || "",
+      };
+    });
+    // 按周序排序，保证「今日课表」取到的是周一而非对象键里的随机一个
+    days.sort((a, b) => a.day - b.day);
+    // `__raw` / `__subjectIds` 是为**回写**准备的（见 denormSchedule）：
+    // 面板形态只有科目中文名，而 CIMS 要的是 SubjectId GUID + 完整 TimeRule/Classes 结构，
+    // 没有原始信封就重建不出来。这两个字段不参与渲染，仅随面板对象一起流转。
+    const subjectIds = {};
+    for (const [guid, nm] of Object.entries(nameMap)) subjectIds[nm] = guid;
+    return {
+      name: (env && env.Name) || (env && env.name) || "",
+      days,
+      __raw: env || null,
+      __subjectIds: subjectIds,
+    };
+  }
+
+  /**
+   * 面板课表形态 → 官方 Profile 信封（**回写方向的归一化**）。
+   *
+   * 为什么必须有这一半：课表读取曾经因为「面板形态 vs 官方信封」不匹配而整页崩，
+   * 修复时只补了读取方向；**写入方向**当时是把面板对象原样 POST 回去 ——
+   * 于是保存的课表里没有 `Classes[].SubjectId`，客户端反序列化后就是空课表，
+   * 表现为「面板显示保存成功，但教室端什么都没变」。两个方向必须成对修。
+   *
+   * 做法：以原始信封为骨架（保留 TimeRule/TimeLayoutId/类群等我们没编辑的字段），
+   * 只按顺序把每个格的科目**名**换回 SubjectId GUID。拿不到 raw 时退化重建最小信封。
+   *
+   * @returns {{ envelope: any, dropped: string[] }} dropped = 无法识别成科目的格子文本
+   */
+  function denormSchedule(panel) {
+    const days = (panel && panel.days) || [];
+    const subjectIds = (panel && panel.__subjectIds) || {};
+    const raw = panel && panel.__raw;
+    const dropped = [];
+
+    // 没有原始信封（演示数据/空课表）→ 重建一个符合官方形状的最小信封
+    const envelope = raw && raw.ClassPlans
+      ? JSON.parse(JSON.stringify(raw))
+      : {
+          Name: (panel && panel.name) || "",
+          ClassPlans: {},
+          ClassPlanGroups: (raw && raw.ClassPlanGroups) || {},
+        };
+
+    for (const d of days) {
+      const planId = d.planId || `day-${d.day}`;
+      const exist = envelope.ClassPlans[planId] || {};
+      // 原始 Classes 按索引对齐，用来继承 IsEnabled 等我们没编辑的字段
+      const rawClasses = Array.isArray(exist.Classes) ? exist.Classes : [];
+
+      const classes = [];
+      (d.items || []).forEach((txt, i) => {
+        const label = String(txt == null ? "" : txt).trim();
+        const prev = rawClasses[i] || {};
+        if (!label) {
+          // 空格子 → 保留一个「禁用」占位记录，而不是直接跳过。
+          // 直接跳过会让后面的节次整体前移（第 3 节变成第 2 节），
+          // 课表的节次位置是有意义的，不能因为某个格子没填就塌缩。
+          classes.push({ SubjectId: "", IsEnabled: false });
+          return;
+        }
+        let sid = subjectIds[label];
+        if (!sid) {
+          // 兜底：原格子本身就是 GUID（后端没给 Subjects 时 normSchedule 会退化成短 GUID）
+          const base = prev.SubjectId || prev.subjectId;
+          if (base && String(base).startsWith(label)) sid = base;
+        }
+        if (!sid) {
+          dropped.push(`${d.name || d.day} 第${i + 1}节「${label}」`);
+          classes.push({ SubjectId: "", IsEnabled: false });
+          return;
+        }
+        classes.push({
+          SubjectId: sid,
+          IsEnabled: prev.IsEnabled !== false,
+          ...(prev.AttachedObjects ? { AttachedObjects: prev.AttachedObjects } : {}),
+        });
+      });
+
+      const wd = Number.isFinite(d.day) ? d.day : 0;
+      envelope.ClassPlans[planId] = {
+        ...exist,
+        Name: exist.Name || d.name || WEEK_NAMES[wd] || `第${wd}天`,
+        TimeLayoutId: exist.TimeLayoutId || (raw && raw.__timeLayoutId) || "",
+        TimeRule: exist.TimeRule || {
+          WeekDay: wd,
+          WeekCountDiv: 0,
+          WeekCountDivTotal: 2,
+          IsActive: true,
+        },
+        Classes: classes,
+      };
+      // 已存在的计划保留其类群关联；不覆盖 AssociatedGroup
+    }
+    return { envelope, dropped };
+  }
+
+  // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
+  // 与 ext/stelarith-agent 的 verify() 对齐：token = hex(HMAC_SHA256(action + "|" + ts, secret))。
+  // 生产环境：secret 为「网站—设备」共享密钥；更高安全用网站私钥 Ed25519 签名（见 sync/sign-task.mjs），
+  // 代理侧持网站公钥验签。未配置 secret 时退回时间戳占位（仅联调用，不可用于生产）。
+  async function signTask(action, ts) {
+    if (!state.taskSecret) return String(Date.now());
+    const data = action + "|" + ts;
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(state.taskSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  const API = {
+    state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
+    // 展示层辅助（面板渲染设备状态/模块开关直接用，避免在 app.js 里各写一套格式化）
+    normModules, ago, MODULE_CATALOG,
+    // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest / voicehubPush）。
+    // 曾经写成 `voicehubList, voicehubRequest, voicehubPush,` 的简写属性：这几个标识符并不存在，
+    // 对象字面量一求值就抛 ReferenceError，导致 global.API 从未赋值、整个面板 API 层全废。
+    voicehubList: vhubList, voicehubRequest: vhubRequest, voicehubPush: vhubPush,
+
+    // ---- 认证（CIMS 原生）----
+    async login(host, email, password) {
+      setMgmtHost(host);
+      if (!host) { state.demo = true; localStorage.setItem(K_DEMO, "1"); return { token: "demo" }; }
+      const r = await reqTo(state.mgmtHost, "/user/auth", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      if (r.requires_2fa) throw new Error("后端启用了 2FA，当前面板未支持，请用非 2FA 账户或扩展网关处理");
+      setToken(r.token || "");
+      // 自动选择首个账户作为操作上下文
+      try {
+        const accts = await reqTo(state.mgmtHost, "/account/list");
+        if (Array.isArray(accts) && accts.length) state.accountId = accts[0].id;
+      } catch (_) { /* 登录成功但取账户失败，后续真实调用会降级 */ }
+      return r;
+    },
+
+    // ---- 班级（= 课表资源名）----
+    listClasses: async () => {
+      const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
+      return Array.isArray(r) ? normResources(r) : D.classes();
+    },
+
+    // ---- 课表（ClassPlan 资源）----
+    // 必须经 normSchedule：CIMS 下发的是官方 Profile 信封（无 days 字段），
+    // 直接透传会让 dashboard/schedule 在读 sched.days[0] 时抛
+    // 「Cannot read properties of undefined (reading '0')」。
+    // 科目表（Subjects）单独取一次用于把 SubjectId 翻成人话；取失败不影响课表可用。
+    getSchedule: async (cls) => {
+      const name = cls || state.classId || "default_classplan";
+      const env = await cli(`/v1/client/ClassPlan?name=${encodeURIComponent(name)}`, {}, "schedule");
+      // 演示模式 / 未配后端：cli 已回退演示数据（本身即面板形态），直接返回
+      if (state.demo || !state.clientHost) return env;
+      let subEnv = null;
+      try {
+        subEnv = await cli(`/v1/client/Subjects?name=sub_school`, {}, null);
+      } catch (_) { /* 科目表缺失：退化为显示短 GUID，不阻断课表 */ }
+      return normSchedule(env, subEnv);
+    },
+    putSchedule: async (cls, panelOrEnvelope) => {
+      const name = cls || state.classId || "default_classplan";
+      // 回写方向归一化：面板形态必须转回官方信封（Classes[].SubjectId），
+      // 否则客户端读到的是一张空课表 —— 而面板会显示「保存成功」，最难查的一类问题。
+      let payload = panelOrEnvelope;
+      let dropped = [];
+      if (panelOrEnvelope && Array.isArray(panelOrEnvelope.days)) {
+        const r = denormSchedule(panelOrEnvelope);
+        payload = r.envelope;
+        dropped = r.dropped;
+      }
+      const out = await cims(`/account/${acct()}/ClassPlan/write?name=${encodeURIComponent(name)}`,
+        { method: "POST", body: JSON.stringify(payload) }, "schedule");
+      // 把「没能落地的格子」一并回给调用方，由 UI 明确提示，而不是静默丢弃
+      return { ...(out && typeof out === "object" ? out : { result: out }), dropped };
+    },
+
+    // ---- ClassIsland 组件配置（Components 资源）----
+    getConfig: async (cls) => {
+      const name = cls || state.classId || "default_components";
+      return cli(`/v1/client/Components?name=${encodeURIComponent(name)}`, {}, "config");
+    },
+    putConfig: async (cls, payload) => {
+      const name = cls || state.classId || "default_components";
+      return cims(`/account/${acct()}/Components/write?name=${encodeURIComponent(name)}`,
+        { method: "POST", body: JSON.stringify(payload) }, "config");
+    },
+
+    // ---- 插件/组件（Components 资源）----
+    listPlugins: async () => {
+      const r = await cims(`/account/${acct()}/Components/list`, {}, "plugins");
+      return Array.isArray(r) ? normResources(r) : D.plugins();
+    },
+    setPlugin: async (id, enabled) => {
+      return cims(`/account/${acct()}/Components/write?name=${encodeURIComponent(id)}`,
+        { method: "POST", body: JSON.stringify({ enabled }) }, "plugins");
+    },
+
+    // ---- 设备（客户端控制，CIMS 原生）----
+    //
+    // 【设备状态真实显示】数据源是 `/class/device-status`（CIMS management）：
+    // 它把「管理端指派的班级」与「设备自己上报的心跳遥测」合到一处 ——
+    //   online/reported/age_seconds ← client_status.reported_at 与 90s 新鲜度阈值
+    //   host/ip/version            ← 设备上报的机器名、来源 IP、插件版本
+    //   modules/plugins/extra      ← 星璃模块开关、ClassIsland 插件清单、同步遥测
+    //
+    // 为什么不再走 `/account/{acct}/client/list` + 逐台 `/{uid}`：
+    //   那条老路只返回「配置侧」信息（mac/registered_at），**没有任何在线信号** ——
+    //   面板只能拿"注册时间"冒充"最后心跳"，设备关了一个月照样显示在线。
+    //   逐台串行请求在几十台设备的学校里还会打满超时。
+    //   新接口一次拿全部，且 online 是真实心跳推导出来的。
+    deviceStatus: async () => {
+      if (!canUseBackend()) return { fresh: 90, devices: D.devices().map(demoDevice) };
+      try {
+        const r = await reqTo(state.mgmtHost, "/class/device-status");
+        const list = Array.isArray(r && r.devices) ? r.devices : [];
+        return {
+          fresh: Number((r && r.fresh_seconds) || 90) || 90,
+          devices: list.map(normDevice),
+        };
+      } catch (_) {
+        return { fresh: 90, devices: D.devices().map(demoDevice), error: true };
+      }
+    },
+    /** 兼容旧调用方：只要设备数组。 */
+    listDevices: async () => (await API.deviceStatus()).devices,
+    /**
+     * 下发「星璃功能模块」开关。
+     *
+     * 通道：命令队列（stelarith_task: set_module）。之所以不走 CIMS 原生端点 ——
+     * CIMS 不认识"星璃模块"这个概念，它只会转发 NotificationPayload；
+     * 插件的命令轮询器解析 stelarith_task 后调用 StelarithModules.Set()，
+     * 于是面板上的开关**真的**会改本机行为（此前"插件管理"读写的是 Components
+     * 资源，与真实插件启停毫无关系，开关是假的）。
+     */
+    setModule: async (uid, module, enabled) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）模块开关已记录" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("set_module", ts);
+      const task = { action: "set_module", module, enabled: !!enabled, token, scope: "device", ts };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+    },
+    /**
+     * 一次性下发多个模块开关（面板"恢复默认/批量"用）。
+     * 同样的命令通道，载荷换成 {modules:{...}}；插件端 ApplyFromCommand 两种都吃。
+     */
+    setModules: async (uid, modules) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）模块开关已记录" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("set_modules", ts);
+      const task = { action: "set_module", modules, token, scope: "device", ts };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+    },
+    /**
+     * ClassIsland 快捷入口（专页用）。
+     *
+     * 全部经**同一条命令通道**下发 stelarith_task，由教室端插件执行：
+     *   restart_island → 宿主进程优雅重启（插件侧调 AppBase.Restart）
+     *   sync_now       → 立即拉一次集控资源（不等下一个同步周期）
+     *   push_notice    → 在本机大屏弹一条提醒
+     *   set_active_class → 切班（复用 P 键 payload：group_id / group_name）
+     */
+    classislandAction: async (uid, action, payload) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟执行 " + action };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask(action, ts);
+      const task = Object.assign({ action, token, scope: "device", ts }, payload || {});
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+    },
+    /**
+     * 单机状态回读：面板用它做「指令下发后核对」（切班/模块开关是否真的生效）。
+     * 走 client 端口的 `/v1/client/{uid}/status`（代理会自动补租户 Host 头），
+     * 它额外返回 `self_reported_class_id`，可与管理端指派值交叉校验。
+     */
+    deviceStatusOne: async (uid) => {
+      if (!canUseBackend()) return null;
+      try { return await cims(`/v1/client/${encodeURIComponent(uid)}/status`, {}, null); }
+      catch (_) { return null; }
+    },
+    deviceAction: async (id, action) => {
+      if (!canUseBackend()) return { status: "success", message: "（演示）指令已模拟下发" };
+      // ① CIMS 原生指令端点（HTTP→gRPC，由设备侧 CIMS 客户端执行）
+      //    refresh 是面板「刷新」按钮的动作名，对应 CIMS 的 update-data（拉取最新资源）。
+      const ep = { restart: "restart", refresh: "update-data", sync: "update-data", notify: "send-notification" }[action];
+      if (ep) {
+        const body = action === "notify"
+          ? JSON.stringify({ MessageContent: "来自集控面板的提醒" })
+          : undefined;
+        return reqTo(state.mgmtHost, `/account/${acct()}/client/${id}/command/${ep}`,
+          { method: "POST", body });
+      }
+      // ② 锁屏 / 截图：CIMS 无原生端点，经 send-notification 下发 stelarith_task，
+      //    由班级端 ClassIsland 插件解析后执行本地动作（与远程控制同一链路）。
+      if (action === "lock" || action === "screenshot") {
+        const ts = Math.floor(Date.now() / 1000);
+        const token = await signTask(action, ts);
+        const task = { action, token, scope: "device", ts };
+        const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+        return reqTo(state.mgmtHost, `/account/${acct()}/client/${id}/command/send-notification`,
+          { method: "POST", body });
+      }
+      return { status: "error", message: `不支持的动作：${action}` };
+    },
+
+    // ---- 远程屏幕控制（经 CIMS 通知下发 stelarith_task，触发设备侧代理按需启 VNC）----
+    // 真实：POST /account/{acct}/client/{uid}/command/send-notification
+    //   NotificationPayload.MessageContent = JSON({ stelarith_task:{action,token,scope,ts} })
+    // token 由 signTask() 用共享密钥 HMAC 签名（未配密钥则时间戳占位）；代理侧验签后启 VNC，
+    // 并把 {ip,port,token} 回报到扩展网关 /vnc-session（见 ext/stelarith-ext-gateway）。面板用
+    // deviceRemoteStatus(uid) 轮询该回执，拿到后内嵌 noVNC。
+    deviceRemoteStart: async (uid, scope) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟请求远程控制" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("remote_control_start", ts);
+      const task = { action: "remote_control_start", token, scope: scope || "class", ts };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
+    },
+    deviceRemoteStop: async (uid, scope) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟结束会话" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("remote_control_stop", ts);
+      const task = { action: "remote_control_stop", token, scope: scope || "class", ts };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      const out = await reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
+      // 控制结束：顺手清掉扩展网关里的 VNC 会话回执
+      try { await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`, { method: "DELETE" }); } catch (_) {}
+      return out;
+    },
+    // 轮询扩展网关，取设备最新 VNC 会话回执：{ip, port, token} 或 null
+    deviceRemoteStatus: async (uid) => {
+      try {
+        const r = await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`);
+        return r && r.session ? r.session : null;
+      } catch (_) { return null; }
+    },
+
+    // ---- 通知广播 ----
+    // 下发通知
+    // ── 为什么改成「首选服务端通道」──────────────────────────────────────────
+    // 旧实现是面板自己遍历 `/client/list` 逐台 `send-notification`，然后另发一次
+    // 留痕请求。问题有三：① 绕过权限校验（前端能推就是能推）；② 无法按班级定向
+    // （只会全量）；③ 留痕与推送分离，两条通道各写一次 → 历史里重复、设备端重复弹。
+    // 现在统一 POST /api/console/ext/notices，由服务端做「鉴权 → 范围校验 →
+    // 定向解析 → 去重 → 下发 → 留痕 → 审计」一条龙。面板只管发一次。
+    // 只有「独立打开面板且未配站点后端」时才退化为直连 CIMS 的旧路径。
+    listNotices: async (classId) =>
+      normNotices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
+    sendNotice: async (title, scope, classes, content) => {
+      const body = {
+        title,
+        scope: scope || "本班",
+        content: content || "",
+        classes: Array.isArray(classes) ? classes : [],
+      };
+      // ① 内嵌网站 / 配了站点后端：走服务端（推荐路径，含定向与去重）
+      if (state.embedded || state.siteHost) {
+        return ext("/notices", { method: "POST", body: JSON.stringify(body) }, "notices");
+      }
+      // ② 纯演示：本地造一条
+      if (!canUseBackend()) {
+        const list = D.notices();
+        list.unshift({ id: "n" + Date.now(), title, scope: body.scope, at: "刚刚" });
+        return { status: "success", sent: 1 };
+      }
+      // ③ 独立打开 + 直连 CIMS：退化为直接下发（无站点侧留痕，仅开发调试用）
+      const uids = await reqTo(state.mgmtHost, `/account/${acct()}/client/list`);
+      let sent = 0;
+      if (Array.isArray(uids)) {
+        for (const uid of uids) {
+          try {
+            await reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+              { method: "POST", body: JSON.stringify({ MessageContent: title }) });
+            sent++;
+          } catch (_) { /* 单台失败忽略 */ }
+        }
+      }
+      return { status: "success", sent };
+    },
+
+    // ---- 班级实体与「设备 ↔ 班级」映射（一班一号的权威视图）----
+    // 走站点代理到 CIMS management `/class/*`（代理已放行 /class/ 前缀的读操作）。
+    // 面板用它：① 通知页多选目标班级；② 设备页显示每台设备的所属班级。
+    listClassEntities: async () => {
+      try {
+        const r = await cims("/class/list", {}, null);
+        return Array.isArray(r) ? r : [];
+      } catch (_) { return []; }
+    },
+    deviceClassMap: async () => {
+      try {
+        const r = await cims("/class/device-map", {}, null);
+        return r && typeof r === "object" ? r : { devices: {}, classes: [] };
+      } catch (_) { return { devices: {}, classes: [] }; }
+    },
+
+    // ---- 班级交流（站点侧 SQLite，支持房间/班级隔离，跨班互通）----
+    // room 约定：
+    //   "techrep-global"      全校电教委员群
+    //   "<classId>"           某班房间（如 class_03）
+    //   "grade:高一" / "grade:高二"  年级电教委员群（同年级跨班互助）
+    // 正文含 @全体 / @all 时，服务端会自动把这条升级为教室大屏广播（见
+    // src/routes/api/console/ext/[...path]/+server.ts 的 chat 分支）——
+    // 即「不要把重要消息只留在群里」，喊一句就上屏幕，不必再切页手工重发。
+    listChat: async (room) => normChat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
+    sendChat: async (text, from, room) => {
+      const me = from || (state.classId || "电教委员");
+      const r = await ext("/chat", {
+        method: "POST",
+        body: JSON.stringify({ text, from: me, room: room || "techrep-global" }),
+      }, "chat");
+      return r;
+    },
+    CHAT_ROOM_GLOBAL: "techrep-global",
+    // 年级房间 id 约定：grade:<年级名>。面板用它拼房间名，服务端按房间隔离存储。
+    gradeRoom: (grade) => "grade:" + (grade || "").trim(),
+    // 一对一私聊房间 id：dm:<较小id>:<较大id>（与服务端 canTalkInRoom 的解析一致）。
+    // 用 id 而非用户名，避免改名后会话断掉；id 排序保证双方算出同一个房间名。
+    dmRoom: (a, b) => {
+      const x = Number(a), y = Number(b);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return "";
+      return "dm:" + (x < y ? x + ":" + y : y + ":" + x);
+    },
+
+    // ---- 好友（站点侧 SQLite，仅登录用户可操作自己的关系）----
+    // 服务端在 SQL 层用当前会话用户 id 做约束，前端传的 peerId 只表示「对端是谁」，
+    // 无法借此操作别人的好友关系。
+    listFriends: async () => {
+      const r = await ext("/friends", {}, null);
+      return {
+        friends: (r && r.friends) || [],
+        incoming: (r && r.incoming) || [],
+        outgoing: (r && r.outgoing) || [],
+      };
+    },
+    searchFriends: async (q) => {
+      const r = await ext("/friends?q=" + encodeURIComponent(q || ""), {}, null);
+      return (r && r.results) || [];
+    },
+    friendAction: async (action, peerId, peerName, message) =>
+      ext("/friends", {
+        method: "POST",
+        body: JSON.stringify({ action, peerId, peerName, message }),
+      }, null),
+
+    // ---- 故障上报 / Bug（实名站：stelarith-website /api/feedback，复用反馈模型）----
+    // 嵌入网站（/admin/console）或配置了 siteHost 时走网站；否则演示降级 / 扩展网关。
+    //
+    // 模板标签约定（配合面板的预设模板）：labels 形如
+    //   ["report", "高", "投影/一体机不亮"]  /  ["bug", "崩溃闪退"]
+    // 除种类与等级之外的第一个标签即「模板名」，读回时还原成 template 字段展示。
+    // 存中文标签（而不是模板 id）是为了让反馈在网站后台也一眼能读懂，不必回表映射。
+    _templateOf: (labels, kind) =>
+      (labels || []).filter((l) => l !== kind && !["高", "中", "低"].includes(l))[0] || "",
+    async listReports() {
+      if (state.demo) return D.reports();
+      if (!state.embedded && !state.siteHost) return ext("/reports", {}, "reports");
+      try {
+        const items = await siteFetch("/api/feedback");
+        return (Array.isArray(items) ? items : [])
+          .filter((x) => (x.labels || []).includes("report"))
+          .map((x) => ({
+            id: x.id,
+            title: x.title,
+            level: (x.labels || []).find((l) => ["高", "中", "低"].includes(l)) || "-",
+            template: API._templateOf(x.labels, "report"),
+            status: x.status || "待处理",
+            at: x.createdAt || "",
+          }));
+      } catch (_) { return state.embedded || state.siteHost ? [] : D.reports(); }
+    },
+    async submitReport(r) {
+      if (state.demo) return { ok: true, demo: true };
+      if (!state.embedded && !state.siteHost) return ext("/reports", { method: "POST", body: JSON.stringify(r) }, "reports");
+      return siteFetch("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          title: r.title,
+          content: r.desc || "",
+          labels: ["report", r.level, r.template].filter(Boolean),
+        }),
+      });
+    },
+    async listBugs() {
+      if (state.demo) return D.bugs();
+      if (!state.embedded && !state.siteHost) return ext("/bugs", {}, "bugs");
+      try {
+        const items = await siteFetch("/api/feedback");
+        return (Array.isArray(items) ? items : [])
+          .filter((x) => (x.labels || []).includes("bug"))
+          .map((x) => ({
+            id: x.id,
+            title: x.title,
+            template: API._templateOf(x.labels, "bug"),
+            status: x.status || "待受理",
+            at: x.createdAt || "",
+          }));
+      } catch (_) { return state.embedded || state.siteHost ? [] : D.bugs(); }
+    },
+    async submitBug(b) {
+      if (state.demo) return { ok: true, demo: true };
+      if (!state.embedded && !state.siteHost) return ext("/bugs", { method: "POST", body: JSON.stringify(b) }, "bugs");
+      const content = ["复现步骤：", b.steps || "", "日志：", b.log || ""].join("\n");
+      return siteFetch("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({ title: b.title, content, labels: ["bug", b.template].filter(Boolean) }),
+      });
+    },
+
+    // ---- 操作日志（站点侧 SQLite）----
+    listAudit: async (action) =>
+      normAudit(await ext("/audit" + (action ? "?action=" + encodeURIComponent(action) : ""), {}, "audit")),
+    /** 记一条集控操作日志；失败不抛（审计不应阻断主流程）。 */
+    audit: async (action, target, detail) => {
+      try {
+        return await ext("/audit", {
+          method: "POST",
+          body: JSON.stringify({ action, target, detail }),
+        });
+      } catch (e) { return { ok: false, error: e.message }; }
+    },
+
+    // ---- 权限与分级（服务端解算后下发；前端只渲染，不自行推导）----
+    //
+    // 为什么权限矩阵要走服务端：等级/设备/分级三张表属于**安全边界**，
+    // 前端自己推导时只要有一处判断写错，界面就会显示出实际做不到的能力，
+    // 用户点下去得到 403，体感是"面板骗我"。服务端下发则始终与真正的门控
+    // （can/canDevice/canBroadcastTo）同源，界面与服务端永远一致。
+    permissions: async () => {
+      try {
+        const r = await ext("/permissions", {}, null);
+        // ext() 在「未配 extHost」时返回 {}（不是 null），所以这里按**结构**判定：
+        // 拿不到 me 快照就视为不可用，由调用方渲染「权限信息不可用」，
+        // 而不是让页面拿到一个空对象后在 r.me.level 上抛错。
+        return r && r.me ? r : null;
+      } catch (_) { return null; }
+    },
+
+    // ---- 账号信息（全权接入 website 账号体系）----
+    // 嵌入网站（/admin/console）时 iframe 与宿主同源，siteFetch 带凭证 cookie 直连 /api/me，
+    // 拉取当前登录用户完整资料（含班级/年级绑定）。这就是「全权接入」——
+    // 面板不猜账号，直接读 website 真实账号存储；未登录/请求失败返回 null。
+    async me() {
+      if (state.demo) return null;
+      if (!state.embedded && !state.siteHost) return null;
+      try {
+        const r = await siteFetch("/api/me");
+        return (r && r.username) ? r : null;
+      } catch (_) { return null; }
+    },
+    /** 保存当前账号资料（含 className/gradeName），失败抛错。 */
+    async saveMe(patch) {
+      if (state.demo) return { ok: true, demo: true };
+      return siteFetch("/api/me", { method: "PUT", body: JSON.stringify(patch) });
+    },
+  };
+
+  global.API = API;
+})(window);

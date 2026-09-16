@@ -1,15 +1,24 @@
 # 星璃集控客户端插件清单
-# ClassIsland 加载插件时首先读取此文件（文件名必须为 manifest.yml，YAML 格式）。
-# 插件清单格式：https://docs.classisland.tech/zh-cn/latest/dev/plugins/create-project/#%E6%8F%92%E4%BB%B6%E6%B8%85%E5%8D%95%E6%96%87%E4%BB%B6
+#
+# ClassIsland 加载插件时首先读取本文件（文件名必须为 manifest.yml，YAML 格式）；
+# 1.4.x 时代的 plugin.manifest.json 在 2.x 已不再识别 —— 缺本文件会让插件被
+# **静默跳过**（运行日志里完全不出现、也不报错），是「插件没生效」最常见的原因。
+# 插件清单格式：https://docs.classisland.tech/zh-cn/latest/dev/plugins/create-project/
+#
+# ⚠️ 版本号三处必须同步，否则会出现「界面显示旧版本」的假象：
+#      本文件 version ↔ csproj 的 <Version> ↔ 仓库 tag / Release
+#    其中**本文件是面板设备列表与插件管理页实际读取的那一处**。
+#    另注意：manifest.yml 是 csproj 的 Content 项，**只在构建时复制到输出目录**；
+#    只改本文件而不重新构建（或部署时只拷 dll 漏掉本文件），界面版本号就停在旧值。
 
-# 插件唯一标识符（与其他插件不重复，文件夹名需与此一致）
+# 插件唯一标识符（与其他插件不重复，文件夹名需与此一致，故不可随意改名）
 id: StelarithControlPlugin
 
 # 插件显示名称（在 ClassIsland 设置界面中显示）
 name: StelarithControlPlugin
 
 # 插件功能描述
-description: 星璃集控客户端插件：本机锁屏/截屏/通知转发，接收 StelarithAgent 推流的集控指令。
+description: 星璃集控客户端插件：课表/作息/组件配置同步、集控播报、远程切班、状态上报与上岛组件；本机锁屏/截图等 OS 级动作经本地代理 StelarithAgent 执行。
 
 # 入口程序集文件名（不含路径，ClassIsland 会在插件目录下找到）
 entranceAssembly: "StelarithControlPlugin.dll"

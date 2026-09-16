@@ -1,12 +1,88 @@
-node_modules/
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# SQLite 运行库（多用户 / 会话 / 活动流；运行时生成，不入库）
+/content/stelarith.db
+/content/stelarith.db-wal
+/content/stelarith.db-shm
+
+# CMS data (sensitive / runtime-generated)
+/content/users.json
+/content/comments.json
+/content/link-applications.json
+/content/nav.json
+/content/settings.json
+/content/stats.json
+/content/announcements.json
+/content/feedback.json
+/content/cache/
+/uploads/*
+!/uploads/.gitkeep
+
+# Keep content example structure (optional)
+!/content/posts/*.md
+!/content/docs/*.md
+!/content/projects/*.md
+
+# Build logs & temp scripts
+/build-*.txt
+/build-*.log
+/build_*.log
+/stelarith.out.log
+/uicheck.log
+# 本地运行/调试日志（dev / prod 运行时产生）
+*.log
+.rebuild-log.txt
+.prod-run.log
+/*.mjs
+/*.tmp
+/_tmp_*
+
+# Local deploy artifacts (rebuilt on demand)
+/deploy-stelarith/
+/*.tar.gz
+/*.zip
+# Solution-pack (Rust / Python / Tauri / Node 参考实现)
 dist/
 target/
+*.bundle
+__pycache__/
+
+# .NET / C# 构建产物（ext/*/ 下 ClassIsland 插件）
 bin/
 obj/
 *.user
-.DS_Store
-*.log
-.env
-.env.local
-*.bundle
-__pycache__/
+# 临时构建备份目录
+build_prev_*/
+
+# Tauri generated (build.rs embed output)
+/admin-console/src-tauri/gen/
+
+# 本地部署/启动脚本（含明文密码，不入库）
+start-*.ps1
+# 生产启动器：含机器专属绝对路径，且曾是明文凭据的载体（2026-09-14 从历史清除）
+/run-prod.bat
+
+# WorkBuddy 项目级工作记忆与自动化（含个人信息，不入库）
+/.workbuddy/

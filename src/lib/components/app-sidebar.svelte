@@ -1,0 +1,256 @@
+<script lang="ts">
+	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
+	import {
+		Home,
+		BookOpen,
+		Sparkles,
+		BookMarked,
+		Clapperboard,
+		Gamepad2,
+		Wrench,
+		Rocket,
+		MoreHorizontal,
+		Megaphone,
+		Link,
+		Archive,
+		MessageSquare,
+		Wallet,
+		User,
+		Heart,
+		Send,
+		MessageCircle,
+		Globe,
+		Music2,
+		Newspaper,
+		Rss,
+		MessagesSquare,
+		LogIn,
+		FileText,
+		Search
+	} from "@lucide/svelte";
+	import { Github, Twitter } from "$lib/components/icons/index.js";
+	import { MorphIcon } from "morphicons/svelte";
+	import { ChevronDown, ChevronUp } from "lucide";
+	import ViewSwitch from "$lib/components/view-switch.svelte";
+	import { can } from "$lib/permissions.js";
+	import { readMoreOpen, writeMoreOpen } from "$lib/sidebar-memory.js";
+	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
+	import { ICON_MAP } from "$lib/icon-library.js";
+	
+	import { page } from "$app/state";
+
+	let { data }: { data?: { settings?: { socials?: { name: string; url: string }[]; siteName?: string; slogan?: string }; nav?: { workspace: { title: string; url: string; icon?: string }[]; more: { title: string; url: string; icon?: string }[]; bottom: { title: string; url: string; icon?: string }[] }; user?: { username?: string; role?: string } | null; canEdit?: boolean } } = $props();
+
+	// Fallback socials and dynamic mapping
+	const fallbackSocials = [
+		{ name: "GitHub", icon: Github, url: "https://github.com/afoim" },
+		{ name: "Twitter", icon: Twitter, url: "https://x.com/Stelarith_" }
+	];
+
+	const iconMap: Record<string, any> = {
+		"github": Github, "twitter": Twitter, "x": Twitter,
+		"爱发电": Heart, "ifdian": Heart, "heart": Heart,
+		"哔哩哔哩": Send, "bilibili": Send, "b站": Send,
+		"qq": MessageCircle, "qq群": MessageCircle, "telegram": Send, "tg": Send
+	};
+
+	const socials = $derived(
+		(data?.settings?.socials && data.settings.socials.length > 0 ? data.settings.socials : fallbackSocials)
+			.map((s) => ({ name: s.name, url: s.url, icon: iconMap[s.name.toLowerCase()] || iconMap[s.name] || Globe }))
+	);
+
+	// Default nav arrays (used when nav config absent)
+	// 注意：不要在这里放「只有标题、没有内容」的占位页（AI 绘图 / 交互小说 / 追番 / 游戏 / 钱包），
+	// 它们会让导航显得又散又空。待功能真正落地后再在此处与 content/nav.json 同步挂出。
+	const defaultWorkspace = [
+		{ title: "首页", url: "/", icon: "home" },
+		{ title: "博客", url: "/posts", icon: "blog" },
+		{ title: "项目", url: "/projects", icon: "projects" },
+		{ title: "教程", url: "/docs", icon: "docs" },
+		{ title: "页面", url: "/pages", icon: "pages" },
+		{ title: "工具集", url: "/tools", icon: "tools" }
+	];
+	const defaultMore = [
+		{ title: "搜索", url: "/search", icon: "search" },
+		{ title: "公告", url: "/announcements", icon: "announcements" },
+		{ title: "连接", url: "/links", icon: "links" },
+		{ title: "订阅", url: "/subscribe", icon: "rss" },
+		{ title: "旧站归档", url: "/archives", icon: "archives" },
+		{ title: "反馈", url: "/feedback", icon: "feedback" }
+	];
+	const defaultBottom = [
+		{ title: "管理后台", url: "/admin", icon: "admin" },
+		{ title: "账号", url: "/account", icon: "account" }
+	];
+
+	const navIconMap: Record<string, any> = {
+		"home": Home, "blog": BookOpen, "posts": BookOpen, "bookopen": BookOpen,
+		"project": Rocket, "projects": Rocket, "rocket": Rocket, "doc": BookMarked, "docs": BookMarked, "bookmarked": BookMarked,
+		"create": Sparkles, "sparkles": Sparkles, "novel": BookMarked, "novels": BookMarked, "anime": Clapperboard, "clapperboard": Clapperboard,
+		"game": Gamepad2, "games": Gamepad2, "gamepad2": Gamepad2, "tool": Wrench, "tools": Wrench, "wrench": Wrench,
+		"announcement": Megaphone, "announcements": Megaphone, "megaphone": Megaphone, "link": Link, "links": Link,
+		"rss": Rss, "subscribe": Rss, "newspaper": Newspaper,
+		"archive": Archive, "archives": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
+		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
+		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "pages": FileText,
+		"search": Search, "layoutdashboard": FileText
+	};
+
+	const workspace = $derived(
+		(data?.nav?.workspace && data.nav.workspace.length > 0 ? data.nav.workspace : defaultWorkspace)
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Home }))
+	);
+	const more = $derived(
+		(data?.nav?.more && data.nav.more.length > 0 ? data.nav.more : defaultMore)
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Globe }))
+	);
+	const bottom = $derived(
+		(data?.nav?.bottom && data.nav.bottom.length > 0 ? data.nav.bottom : defaultBottom)
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Globe }))
+	);
+
+	// 「更多」展开态从本地记忆恢复（前后台共用），并在切换时写回 ——
+	// 否则用户每次刷新都要重新点开「更多」找同一批入口。
+	let moreOpen = $state(false);
+	let moreHydrated = $state(false);
+	// 管理类入口（后台/钱包/账号）仅登录用户可见：登录态由根 layout 的 load 同步下发
+	// （data.user），服务端已判定，无需客户端再发请求，侧边栏零闪烁、彻底常驻。
+	const authed = $derived(!!(data?.user));
+
+	// 后台入口：能进 /admin 就进 /admin，只有集控权限（电教委员/只读）则直接进 /admin/console，
+	// 两者都无则隐藏滑块（避免点了被 hooks 弹回登录页）。
+	const adminHref = $derived(
+		!data?.user
+			? null
+			: can(data.user.role as any, "viewAdmin")
+				? "/admin"
+				: can(data.user.role as any, "viewConsole")
+					? "/admin/console"
+					: null
+	);
+
+	// 首帧后再读记忆：SSR 阶段没有 localStorage，且若在初始化时读会导致
+	// 服务端渲染的 HTML 与客户端不一致（hydration mismatch）。
+	$effect(() => {
+		if (moreHydrated) return;
+		moreHydrated = true;
+		moreOpen = readMoreOpen();
+	});
+
+	const path = $derived(page.url.pathname);
+
+	function isActive(url: string): boolean {
+		if (url === "/") return path === "/";
+		return path.startsWith(url);
+	}
+</script>
+
+<Sidebar.Root collapsible="icon">
+	<Sidebar.Header>
+		<Sidebar.Menu>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton href="/" size="lg">
+					<div
+						class="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary font-heading text-sm font-semibold text-primary-foreground"
+					>
+						S
+					</div>
+					<div class="flex flex-col gap-0.5 leading-none group-data-[collapsible=icon]:hidden">
+						<span class="font-heading text-base font-semibold tracking-tight">{data?.settings?.siteName || "Stelarith 工作台"}</span>
+						<span class="text-xs text-muted-foreground">{data?.settings?.slogan || "Protect What You Love."}</span>
+					</div>
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
+		</Sidebar.Menu>
+	</Sidebar.Header>
+	<Sidebar.Content>
+		<Sidebar.Group>
+			<Sidebar.GroupLabel>工作区</Sidebar.GroupLabel>
+			<Sidebar.GroupContent>
+				<Sidebar.Menu>
+					{#each workspace as item (item.url)}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)}>
+								<item.icon />
+								<span>{item.title}</span>
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
+					{/each}
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton onclick={() => { moreOpen = !moreOpen; writeMoreOpen(moreOpen); }} aria-expanded={moreOpen} tooltipContent="更多">
+							<MorphIcon icon={moreOpen ? ChevronUp : ChevronDown} spring="snappy" reducedMotion="user" size={16} aria-hidden="true" />
+							<span class="group-data-[collapsible=icon]:hidden">更多</span>
+						</Sidebar.MenuButton>
+						{#if moreOpen}
+							<Sidebar.MenuSub>
+								{#each more as item (item.url)}
+									<Sidebar.MenuSubItem>
+										<Sidebar.MenuSubButton href={item.url} isActive={isActive(item.url)}>
+											<item.icon />
+											<span>{item.title}</span>
+										</Sidebar.MenuSubButton>
+									</Sidebar.MenuSubItem>
+								{/each}
+							</Sidebar.MenuSub>
+						{/if}
+					</Sidebar.MenuItem>
+				</Sidebar.Menu>
+			</Sidebar.GroupContent>
+		</Sidebar.Group>
+	{#if authed}
+	<Sidebar.Separator />
+	<Sidebar.Group>
+		<Sidebar.GroupContent>
+			<Sidebar.Menu>
+				{#each bottom.filter((b) => b.url !== "/admin" || data?.canEdit) as item (item.url)}
+					<Sidebar.MenuItem>
+						<Sidebar.MenuButton href={item.url} isActive={isActive(item.url)} tooltipContent={item.title}>
+							<item.icon />
+							<span>{item.title}</span>
+						</Sidebar.MenuButton>
+					</Sidebar.MenuItem>
+				{/each}
+			</Sidebar.Menu>
+		</Sidebar.GroupContent>
+	</Sidebar.Group>
+	{:else}
+	<Sidebar.Separator />
+	<Sidebar.Group>
+		<Sidebar.GroupContent>
+			<Sidebar.Menu>
+				<Sidebar.MenuItem>
+					<Sidebar.MenuButton href="/admin/login" isActive={isActive("/admin/login")}>
+						<LogIn />
+						<span>登录</span>
+					</Sidebar.MenuButton>
+				</Sidebar.MenuItem>
+			</Sidebar.Menu>
+		</Sidebar.GroupContent>
+	</Sidebar.Group>
+	{/if}
+	</Sidebar.Content>
+	<Sidebar.Footer>
+		{#if adminHref}
+			<ViewSwitch
+				current="site"
+				{adminHref}
+				class="mx-2 group-data-[collapsible=icon]:hidden"
+			/>
+		{/if}
+		<div class="flex flex-wrap items-center gap-1 px-2 pb-2">
+			{#each socials as s (s.name)}
+				<a
+					href={s.url}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+					aria-label={s.name}
+				>
+					<s.icon class="size-4" />
+				</a>
+			{/each}
+		</div>
+	</Sidebar.Footer>
+	<Sidebar.Rail />
+	<SidebarResizer />
+</Sidebar.Root>

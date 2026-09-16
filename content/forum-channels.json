@@ -1,0 +1,30 @@
+[
+  {
+    "id": "fc_general",
+    "name": "综合讨论",
+    "slug": "general",
+    "description": "关于星璃·无限音乐画布的一切：产品想法、使用疑问、随便聊聊。",
+    "owner": "admin",
+    "createdAt": "2026-09-07T00:00:00.000Z",
+    "pinned": true,
+    "status": "published"
+  },
+  {
+    "id": "fc_dev",
+    "name": "技术交流",
+    "slug": "dev",
+    "description": "架构选型、音频解码、Flutter / Riverpod、端上小模型——开发者唠嗑区。",
+    "owner": "admin",
+    "createdAt": "2026-09-07T00:01:00.000Z",
+    "status": "published"
+  },
+  {
+    "id": "fc_share",
+    "name": "资源分享",
+    "slug": "share",
+    "description": "好用的工具、曲库整理技巧、本地音乐相关的资源与经验。",
+    "owner": "admin",
+    "createdAt": "2026-09-07T00:02:00.000Z",
+    "status": "published"
+  }
+]
