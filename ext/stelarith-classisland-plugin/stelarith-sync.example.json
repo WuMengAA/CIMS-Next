@@ -1,0 +1,30 @@
+{
+  "_说明": "把本文件复制成插件目录下的 stelarith-sync.json 即可生效（改完重启 ClassIsland）。",
+  "_字段说明": {
+    "ClientAppBase": "CIMS 客户端应用基址（教室端拉配置/上报的落点）",
+    "Slug": "租户 slug，与 Host 头 <slug>.<BaseDomain> 共同决定租户",
+    "ClientUid": "本机在 CIMS 注册的客户端 uid（教室一体机标识）",
+    "NotificationSourceName": "播报来源名——教室大屏遮罩上显示的发送方，默认「集控广播」",
+    "VoiceHubBase": "校园点歌站基址，留空则不启用点歌类上岛组件",
+    "VoiceHubKey": "点歌站开放 API Key（需 songs:read 权限）",
+    "SongboardResource": "CIMS 上点歌看板资源名；集控推送优先于直连点歌站",
+    "SongboardRefreshSeconds": "点歌数据刷新间隔（秒，最小 5）"
+  },
+
+  "ClientAppBase": "http://127.0.0.1:8096",
+  "BaseDomain": "localhost",
+  "Slug": "demo-class",
+  "ClientUid": "lab-pc-001",
+  "ClassPlanName": "default_classplan",
+  "ComponentsName": "default_components",
+  "RefreshIntervalSeconds": 30,
+  "ResourceWriteBack": true,
+  "MessageFeedBase": "",
+
+  "NotificationSourceName": "集控广播",
+
+  "VoiceHubBase": "https://voicehub.example.edu",
+  "VoiceHubKey": "",
+  "SongboardResource": "songboard",
+  "SongboardRefreshSeconds": 15
+}

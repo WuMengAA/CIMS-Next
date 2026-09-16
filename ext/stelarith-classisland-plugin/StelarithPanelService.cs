@@ -42,6 +42,9 @@ public sealed class StelarithPanelService : IHostedService
     /// <summary>面板菜单项显示名。</summary>
     public const string PanelEntryDisplayName = "星璃·集控面板";
 
+    /// <summary>「最近消息」托盘菜单项显示名。</summary>
+    public const string MessageEntryDisplayName = "星璃·最近消息";
+
     /// <summary>托盘入口是否已经成功注入（供其它服务查询，避免重复注入）。</summary>
     public static bool TrayEntryInjected { get; private set; }
 
@@ -92,24 +95,33 @@ public sealed class StelarithPanelService : IHostedService
 
             if (taskBarIcon.MoreOptionsMenuItems is { } items)
             {
-                // 防重复：若已存在显示文本相同的 NativeMenuItem（识别其 Header）
-                foreach (var it in items)
+                var added = false;
+
+                // ① 集控面板入口
+                if (!HasMenuItems(items, PanelEntryDisplayName))
                 {
-                    if (it is NativeMenuItem nm && string.Equals(Convert.ToString(nm.Header), PanelEntryDisplayName, StringComparison.Ordinal))
-                    {
-                        Diag("TryInjectOnce: entry already exists");
-                        TrayEntryInjected = true;
-                        return;
-                    }
+                    var trayMenuItem = new NativeMenuItem { Header = PanelEntryDisplayName };
+                    trayMenuItem.Click += (_, _) => OpenPanel();
+                    items.Add(trayMenuItem);
+                    added = true;
+                    _sp.GetService<ILogger<StelarithPanelService>>()?
+                        .LogInformation("Stelarith panel: 已向托盘右键菜单注入「{Name}」入口", PanelEntryDisplayName);
                 }
 
-                var trayMenuItem = new NativeMenuItem { Header = PanelEntryDisplayName };
-                trayMenuItem.Click += (_, _) => OpenPanel();
-                items.Add(trayMenuItem);
+                // ② 「最近消息」入口：直接在岛内弹出最近一条广播（不打开浏览器）
+                if (!HasMenuItems(items, MessageEntryDisplayName))
+                {
+                    var msgItem = new NativeMenuItem { Header = MessageEntryDisplayName };
+                    msgItem.Click += (_, _) => ShowLatestMessage();
+                    items.Add(msgItem);
+                    added = true;
+                    _sp.GetService<ILogger<StelarithPanelService>>()?
+                        .LogInformation("Stelarith panel: 已向托盘右键菜单注入「{Name}」入口", MessageEntryDisplayName);
+                }
+
                 TrayEntryInjected = true;
-                Diag("TryInjectOnce: SUCCESS tray entry added");
-                _sp.GetService<ILogger<StelarithPanelService>>()?
-                    .LogInformation("Stelarith panel: 已向托盘右键菜单注入「{Name}」入口", PanelEntryDisplayName);
+                if (added) Diag("TryInjectOnce: SUCCESS tray entries added");
+                else Diag("TryInjectOnce: entries already exist");
             }
             else
             {
@@ -119,6 +131,57 @@ public sealed class StelarithPanelService : IHostedService
         catch (Exception ex)
         {
             Diag("TryInjectOnce exception: " + ex);
+        }
+    }
+
+    /// <summary>菜单集合里是否已存在同 Header 的项（防重复注入）。</summary>
+    private static bool HasMenuItems(System.Collections.IEnumerable items, string header)
+    {
+        foreach (var it in items)
+        {
+            if (it is NativeMenuItem nm &&
+                string.Equals(Convert.ToString(nm.Header), header, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// 在岛内弹出最近一条广播。数据经只读消息端点拉取，弹出走官方提醒提供方
+    /// （StelarithNotificationProvider），因此教室里看到的是与集控下发同款的遮罩播报。
+    /// </summary>
+    private static void ShowLatestMessage() => ShowLatestMessageForUi(null);
+
+    /// <summary>
+    /// 同上，但把结果回灌给调用方（设置页用它把"弹了什么/为什么没弹"显示在页面上）。
+    /// 这是**网络调用**，调用方不应在 UI 线程直接调 —— 设置页的做法是直接调（端点失败会
+    /// 很快返回，且 Http 客户端有连接池复用），或包一层 Task.Run。
+    /// </summary>
+    public static void ShowLatestMessageForUi(Action<string>? feedback)
+    {
+        try
+        {
+            var opt = StelarithSyncOptions.Load();
+            var feed = StelarithMessageFeed.Fetch(opt, 5);
+            if (!feed.Ok || feed.Messages.Count == 0)
+            {
+                var msg = feed.Ok ? "暂无最近消息。" : $"拉取失败：{feed.Error}";
+                StelarithNotificationProvider.Current?.Push(StelarithBranding.SourceName, msg, 5);
+                feedback?.Invoke(msg);
+                return;
+            }
+            var latest = feed.Messages[0];
+            StelarithNotificationProvider.Current?.Push(
+                string.IsNullOrWhiteSpace(latest.Title) ? StelarithBranding.SourceName : latest.Title,
+                latest.Content,
+                8);
+            feedback?.Invoke($"已弹出最近一条：{latest.Content}");
+            Diag("ShowLatestMessage: 已弹出最近一条 " + latest.Content);
+        }
+        catch (Exception ex)
+        {
+            Diag("ShowLatestMessage exception: " + ex.Message);
+            feedback?.Invoke("弹出失败：" + ex.Message);
         }
     }
 

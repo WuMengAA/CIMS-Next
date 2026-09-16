@@ -138,3 +138,48 @@ ClassIsland 宿主在逐个启动插件的 `IHostedService` 时，若某个第�
 - 与宿主路径（`ExecuteAsync`）用静态锁互斥，保证同一时刻只有一条循环在跑；
 - 诊断走**文件**（`AppContext.BaseDirectory` 下 `ste-sync-diag.log` / `ste-poller-diag.log` / `ste-panel-diag.log`），不依赖宿主 logger（宿主启动异常时 logger 可能被 Dispose）。
 
+## 8. 上岛组件（ClassIsland 主界面小组件）
+
+插件注册了三个可拖到主界面的组件（`AddComponent<T>()`，见 `StelarithIslandComponents.cs`）：
+
+| 组件名 | 内容 | 数据来源 |
+| --- | --- | --- |
+| **集控 · 正在播放** | 封面 + 歌名/歌手 + 点歌人 + 本班标签 | `StelarithSongBoard` |
+| **集控 · 点歌名单** | 待播队列竖向循环滚动（序号/歌名/点歌人） | 同上 |
+| **集控 · 状态** | 状态点 + 班级 + 设备 uid + 数据来源 | 同上 |
+
+### 8.1 配色与字号：不要写死
+
+组件**一律不设 `Foreground`**，让文本继承宿主主题画刷 —— 早期设置页写死 `Brushes.White`，浅色主题下白字白底完全看不清。
+字号走宿主动态资源（`MainWindowBodyFontSize` / `MainWindowSecondaryFontSize`），资源键不存在时保留 fallback 数值，不会退化成 0。
+需要"淡一点"时用 `Opacity`（对继承到的颜色做乘法），而不是半透明白。
+
+### 8.2 点歌数据源（`StelarithSongBoard`）
+
+两条来源，按优先级自动降级：
+
+1. **集控推送**（`source=cims`）：集控面板 / `ext/voicehub-sync/voicehub-adapter.mjs` 把当前播放与待播队列写进 CIMS 的 `Components/songboard`，教室端只读拉取。这是「老师/电教委员强制上屏」的通道。
+2. **直连点歌站**（`source=voicehub`）：直接调 VoiceHub 开放 API（`/api/open/songs`，需 `songs:read` 的 `x-api-key`）。
+
+配置在 `stelarith-sync.json`：`VoiceHubBase` / `VoiceHubKey` / `SongboardResource` / `SongboardRefreshSeconds`。
+`VoiceHubBase` 留空时点歌组件显示「未配置点歌站」，不会报错。
+
+与其它服务相同，取值放在**静态构造函数拉起的守护线程**里（理由见 7.2），因此即使宿主的 `IHostedService` 启动序列被别的插件打断，组件数据照样会刷新。
+
+### 8.3 滚动名单为什么不用 ScrollViewer
+
+组件在岛上的可用高度由宿主的排版决定，`ScrollViewer` 在这种"高度非自主"的场景经常拿不到正确的可滚动范围（被压成零高后永不滚动）。
+因此改用 `Canvas` + `TranslateTransform` 手动位移：只依赖内容实测高度（`SizeChanged`），内容不足一屏时自动停滚，不留空白。
+
+## 9. 播报来源名可自定义
+
+教室大屏遮罩上显示"是谁在说话"。默认 **`集控广播`**，改 `stelarith-sync.json` 的 `NotificationSourceName` 即可（如「校园广播站」），无需重新编译。
+
+注意区分两个名字：
+
+- `[NotificationProviderInfo]` 的 `name` —— 宿主机【应用设置】→【提醒】里列出的**通道名**，编译期常量，本项目设为「集控广播」；
+- `StelarithBranding.SourceName` —— **推送出来时显示在屏幕上的标题**，运行时可配置。
+
+代码里不要再硬编码来源字符串，一律走 `StelarithBranding.SourceName`。
+
+

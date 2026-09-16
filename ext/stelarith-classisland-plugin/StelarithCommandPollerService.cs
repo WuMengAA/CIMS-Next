@@ -107,6 +107,19 @@ public sealed class StelarithCommandPollerService : BackgroundService
         t.Start();
     }
 
+    /// <summary>包的 StartAsync：吞掉异常，避免中断宿主的插件启动序列（存活由静态守护线程保证）。</summary>
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await base.StartAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            PollerDiag("StartAsync swallowed: " + ex.Message);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // 宿主正常启动路径（可能不会被调用，见类注释）
@@ -154,6 +167,15 @@ public sealed class StelarithCommandPollerService : BackgroundService
     /// <summary>拉取一次命令队列并逐条交给统一处理器执行。</summary>
     private static async Task PollOnceAsync(StelarithSyncOptions opt, ILogger<StelarithCommandPollerService>? logger)
     {
+        // 模块门控：停用指令通道后不再轮询（连请求都不发）。
+        // 「指令通道」被标记为核心模块，正常操作关不掉；这里是防御性分支 ——
+        // 极端情况下（手改配置文件）也不该继续对外发请求。
+        if (!StelarithModules.IsEnabled(StelarithModules.CommandPoll))
+        {
+            PollerDiag("poll skipped: module 'command_poll' disabled");
+            return;
+        }
+
         var host = $"{opt.Slug}.{opt.BaseDomain}";
         var url = $"{opt.ClientAppBase}/api/v1/client/{opt.ClientUid}/command/queued";
 

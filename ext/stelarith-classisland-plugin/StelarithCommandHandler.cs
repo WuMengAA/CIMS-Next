@@ -135,7 +135,7 @@ public sealed class StelarithCommandHandler
     private void HandleRestartApp()
     {
         _logger.LogInformation("Stelarith cmd: 收到官方 RestartApp 指令（默认不自动重启，提示用户）");
-        Notify("星璃·集控", "集控已请求重启 ClassIsland，可手动重启应用以应用改动。");
+        Notify(StelarithBranding.SourceName, "集控已请求重启 ClassIsland，可手动重启应用以应用改动。");
     }
 
     /// <summary>处理 DataUpdated：请求本地立即拉取刷新配置快照。</summary>
@@ -159,7 +159,7 @@ public sealed class StelarithCommandHandler
         // ClassIsland 上行流句柄，此处通过「主动同步快照」直观呈现当前已下发的配置规模，
         // 并将完整快照写入本地 JSON 供管理端/审计二次落盘（见 ToLocalDumpFile）。完整上行
         // 回传在有集控激活的正式环境里由宿主配置同步器承担，插件负责触发即时刷新。
-        Notify("星璃·集控", "已收到配置获取指令，当前同步快照: " + cfgBrief);
+        Notify(StelarithBranding.SourceName, "已收到配置获取指令，当前同步快照: " + cfgBrief);
         DumpSnapshotToFile();
         return Task.CompletedTask;
     }
@@ -185,7 +185,7 @@ public sealed class StelarithCommandHandler
 
         if (!string.IsNullOrWhiteSpace(textContent) && !LooksLikeTaskJson(textContent))
         {
-            var finalTitle = string.IsNullOrWhiteSpace(title) ? "星璃·集控" : title;
+            var finalTitle = string.IsNullOrWhiteSpace(title) ? StelarithBranding.SourceName : title;
             StelarithNotificationProvider.Diag(
                 $"处理 SendNotification: title={finalTitle} contentLen={textContent!.Length} provider={(StelarithNotificationProvider.Current is null ? "未就绪(降级)" : "已就绪")}");
             Notify(finalTitle, textContent);
@@ -349,6 +349,14 @@ public sealed class StelarithCommandHandler
     /// </summary>
     private void Notify(string title, string message)
     {
+        // 模块门控：停用「集控播报」后不再往大屏推遮罩。
+        // 这是教室纪律相关的开关（比如考试期间不希望被广播打断），必须真的生效。
+        if (!StelarithModules.IsEnabled(StelarithModules.Notification))
+        {
+            _logger.LogInformation("Stelarith cmd: 播报模块已停用，跳过通知展示（title={title}）", title);
+            return;
+        }
+
         // ① 官方提醒通道
         var provider = StelarithNotificationProvider.Current;
         if (provider is not null)
@@ -376,7 +384,7 @@ public sealed class StelarithCommandHandler
                 {
                     Icon = System.Drawing.SystemIcons.Information,
                     Visible = true,
-                    Text = "星璃·集控",
+                    Text = StelarithBranding.SourceName,
                 };
                 _trayIcon.BalloonTipTitle = title;
                 _trayIcon.BalloonTipText = message;

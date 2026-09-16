@@ -40,15 +40,62 @@ public class StelarithControlPlugin : PluginBase
     // 因此不能在构造函数中注入服务。日志等依赖请在 Initialize / 后台服务中通过 GetService<T>() 取得。
 
     /// <summary>
+    /// 静态构造函数：插件类型被触达的最早时刻，做两件"越早越好"的事 ——
+    ///   ① <b>防关闭守卫</b>：关掉宿主的自动禁用插件开关。宿主在加载阶段就会根据
+    ///      `AutoDisableCorruptPlugins` 决定要不要禁用坏插件，晚于加载就来不及了；
+    ///   ② 记录一条"插件确实被加载了"的证据（用于区分「插件没被加载」与「插件加载了但没干活」，
+    ///      这两种故障的现象完全不同，排查时第一步就要分清）。
+    /// 全程不抛异常：静态构造函数抛异常会让类型彻底不可用，是最严重的失败方式。
+    /// </summary>
+    static StelarithControlPlugin()
+    {
+        try
+        {
+            DiagBridge("static ctor: 插件类型已触达，开始施加防关闭守卫");
+            StelarithHostGuard.Apply();
+            DiagBridge("static ctor: 守卫结果 -> " + StelarithHostGuard.LastResult);
+        }
+        catch (Exception ex)
+        {
+            DiagBridge("static ctor 异常（已忽略）：" + ex.Message);
+        }
+    }
+
+    /// <summary>
     /// 抽象方法重写：向宿主 DI 容器注册本插件所需的后台服务与自身（作为通知提供方）。
     /// 此时宿主尚未完全构建，故不直接取 IManagementService；交由 StelarithCommandHost 在启动后取得。
     /// </summary>
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
+        // 再守一次：静态构造函数在某些加载路径下可能早于数据目录可解析，
+        // 此时 Apply() 会因找不到 Settings.json 而跳过，这里补一次。
+        // 幂等且只在取值不同时写盘，重复调用无副作用。
+        try { StelarithHostGuard.Apply(); }
+        catch (Exception ex) { DiagBridge("Initialize 守卫异常（已忽略）：" + ex.Message); }
+
+        // 把宿主的 IServiceProvider 登记给反射定位器：档案服务（ClassIsland.Services.ProfileService）
+        // 只挂在宿主容器上，插件若不去容器里取，就永远拿不到 Profile 对象（写回只能降级）。
+        // 这里用「构建后再取」的惰性登记——BuildServiceProvider 的返回值即为宿主根容器。
+        services.AddSingleton<StelarithServiceProviderBridge>();
+
         // 主动同步（cshua）：后台定时从 CIMS 客户端应用拉取当前下发的课表/组件配置。
         // 配置可经插件目录下的 stelarith-sync.json 覆盖（见 StelarithSyncOptions.Load）。
         var syncOptions = StelarithSyncOptions.Load();
         services.AddSingleton(syncOptions);
+
+        // 配置一读到就让两个「运行时单例」生效（它们各自持有守护线程/缓存）：
+        //   · 来源名 —— 播报标题上显示的发送方，默认「集控广播」
+        //   · 点歌看板 —— 上岛组件的唯一数据源（集控推送优先，其次直连点歌站）
+        try
+        {
+            StelarithBranding.Apply(syncOptions);
+            StelarithSongBoard.Configure(syncOptions);
+        }
+        catch (Exception ex)
+        {
+            DiagBridge("运行时单例配置异常（已忽略）：" + ex.Message);
+        }
+
         services.AddHostedService<StelarithSyncService>();
         // 命令轮询自取后台服务：周期拉取 CIMS 命令队列（command_queue），
         // 执行 stelarith_task / 触发配置刷新。绕开本机未激活集控时 gRPC 命令通道不触发的问题。
@@ -56,13 +103,47 @@ public class StelarithControlPlugin : PluginBase
         services.AddHostedService<StelarithCommandHost>();
         // 集控面板入口（托盘右键菜单 / 设置侧边栏）
         services.AddHostedService<StelarithPanelService>();
-        // 设置侧边栏：注册「星璃·集控面板」设置页（External 类别，含打开面板入口）
+        // 状态心跳上报：把本机真实状态（在线/班级/版本/模块开关/插件清单）回报给 CIMS，
+        // 面板「设备状态真实显示」的数据源就是它。
+        services.AddHostedService<StelarithStatusReporter>();
+        // 设置侧边栏：注册「星璃·集控」设置页（内嵌面板：状态 + 快捷入口 + 模块开关）
         services.AddSettingsPage<StelarithPanelSettingsPage>();
-        // 官方提醒提供方：注册后宿主会在【应用设置】→【提醒】列出「星璃·集控」，
+        // 设置侧边栏：注册「星璃·最近消息」消息页（岛内查看最近广播/通知，只读拉取）
+        services.AddSettingsPage<StelarithMessagePage>();
+        // 官方提醒提供方：注册后宿主会在【应用设置】→【提醒】列出本通道，
         // 集控下发的 SendNotification 可直接在教室大屏播放「遮罩 + 正文」。
         // 必须走这个官方扩展方法——它会先把 [NotificationProviderInfo] 写入
         // NotificationProviderRegistryService，否则 NotificationProviderBase 的构造函数会抛异常。
         services.AddNotificationProvider<StelarithNotificationProvider>();
+
+        // ---- 上岛组件（ClassIsland 主界面小组件）----
+        // 组件设置走单例注入：宿主在构造 ComponentBase<T> 时从容器取 T，
+        // 与官方 VoiceHubComponent 的 `services.AddSingleton<VoiceHubSettings>()` 同形态。
+        services.AddSingleton<StelarithIslandSettings>();
+        // 组件本身必须带 [ComponentInfo]，否则 AddComponent 的注册会拿不到元数据。
+        // 用单参重载：本插件不提供「组件独立设置视图」，配置统一在插件设置页/JSON，
+        // 对教室场景更省事（减少学生误触的入口）。
+        services.AddComponent<StelarithNowPlayingComponent>();   // 本班正在播放的点歌
+        services.AddComponent<StelarithSongQueueComponent>();    // 上下滚动点歌名单
+        services.AddComponent<StelarithStatusComponent>();       // 集控在线状态一行条
+    }
+
+    /// <summary>
+    /// 插件级文件诊断（写 <c>ste-plugin-diag.log</c>）。
+    /// 宿主 logger 在插件存活兜底场景下可能已 Dispose，故一律走文件。
+    /// </summary>
+    internal static void DiagBridge(string msg)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(
+                System.IO.Path.Combine(AppContext.BaseDirectory, "ste-plugin-diag.log"),
+                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+        }
+        catch
+        {
+            // 诊断写失败忽略
+        }
     }
 
     // ---- 电教委员快捷操作入口（在 ClassIsland 设置页 / 组件面板挂载按钮调用）----
@@ -80,6 +161,63 @@ public class StelarithTask
     public string Token { get; set; } = "";
     public string Scope { get; set; } = "class";
     public long Ts { get; set; }
+
+    /// <summary>
+    /// 切班用：目标课表群 GUID（set_active_class 动作）。
+    ///
+    /// ⚠️ 必须显式标注 JSON 名：CIMS 侧打包用的是 **snake_case**（`group_id`），
+    /// 而 System.Text.Json 的 `PropertyNameCaseInsensitive` 只忽略**大小写**，
+    /// **不会**把 `group_id` 映射到 `GroupId`（下划线是结构性差异，不是大小写差异）。
+    /// 不标这个特性时反序列化会静默得到 null —— 表现为「指令收到、ACK 成功，
+    /// 但切班总是失败：未找到群 guid= name=」，极难排查。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("group_id")]
+    public string? GroupId { get; set; }
+
+    /// <summary>切班用：目标课表群名称，如「3班课表群」（set_active_class 动作）。同样需显式映射。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("group_name")]
+    public string? GroupName { get; set; }
+
+    // ---- 功能模块开关（set_module 动作）----
+    // 面板可以把「要改哪个模块」写成单个字段，也可以整批下发（modules 字典）。
+    // 同样必须显式标注 JSON 名：集控侧打包用小写，且 System.Text.Json 的大小写不敏感
+    // 只解决大小写、解决不了结构性差异。
+
+    /// <summary>单个模块 id（如 sync / os_actions）。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("module")]
+    public string? Module { get; set; }
+
+    /// <summary>该模块的目标状态。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("enabled")]
+    public bool? Enabled { get; set; }
+
+    /// <summary>批量开关：{moduleId: enabled}。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("modules")]
+    public System.Collections.Generic.Dictionary<string, bool>? Modules { get; set; }
+}
+
+/// <summary>
+/// 宿主 DI 容器桥：本类型被注册为单例，构造时即拿到宿主的 IServiceProvider
+/// （单例构造发生在容器构建后，因此这里是「取根容器」的安全时机），
+/// 立即转交 StelarithReflection 用于定位档案服务。
+///
+/// 为什么需要它：插件对宿主的 DI 访问只有三种时机——Initialize（服务未构建）、
+/// 自己的 HostedService 构造（能注入 IServiceProvider，但启动序列可能被其它插件中断）、
+/// 静态守护线程（无任何 DI 上下文）。用「单例构造」这个时机最可靠且不影响启动。
+/// </summary>
+public sealed class StelarithServiceProviderBridge
+{
+    public StelarithServiceProviderBridge(IServiceProvider sp)
+    {
+        try
+        {
+            StelarithReflection.RegisterProvider(sp);
+        }
+        catch (Exception ex)
+        {
+            StelarithControlPlugin.DiagBridge("Bridge ctor failed: " + ex.Message);
+        }
+    }
 }
 
 /// <summary>
@@ -93,6 +231,8 @@ public static class StelarithDispatch
     // 集控面板下发的载荷字段为小写（action/token/scope/ts），而 StelarithTask 属性是 PascalCase。
     // System.Text.Json 默认大小写敏感，不开这个开关会反序列化出 Action="" —— 表现为
     // 「指令下发成功 200，但设备端毫无反应」。必须显式开启。
+    // 注意：CaseInsensitive 只解决**大小写**差异，解决不了 group_id 这种**下划线**差异，
+    // 后者靠 StelarithTask 上的 [JsonPropertyName] 显式映射。
     private static readonly JsonSerializerOptions TaskJson = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -113,6 +253,23 @@ public static class StelarithDispatch
             // 非本插件指令（例如普通集控命令），忽略
         }
         return null;
+    }
+
+    /// <summary>
+    /// 解析一条**裸任务对象**（根级就是任务字段，没有 stelarith_task 外壳）。
+    /// 供 <see cref="StelarithCommandHandler"/> 处理「直接把任务当载荷」的历史形态。
+    /// </summary>
+    public static StelarithTask? ParseBare(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<StelarithTask>(raw, TaskJson);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -158,21 +315,58 @@ public static class StelarithDispatch
         switch (task.Action)
         {
             case "lock":
+                if (!RequireModule(StelarithModules.OsActions, "锁屏")) break;
                 OSActions.LockWorkStation();
                 break;
             case "screenshot":
+                if (!RequireModule(StelarithModules.OsActions, "截屏")) break;
                 OSActions.CaptureScreen(Environment.GetFolderPath(
                     Environment.SpecialFolder.MyPictures) + "\\stelarith_shot.png");
+                break;
+            // 切班：把本机档案的「当前激活课表群」切到指定班级（集控通道下发不了
+            // SelectedClassPlanGroupId，只能由本地插件改档案）。见 StelarithProfileWriter。
+            case "set_active_class":
+            case "switch_class":
+                StelarithReflection.EnsureResolved();
+                var r = StelarithProfileWriter.SetActiveClassGroup(task.GroupId, task.GroupName);
+                StelarithProfileWriter.Diag("dispatch set_active_class -> " + r);
+                StelarithNotificationProvider.Current?.Push(
+                    StelarithBranding.SourceName, $"课表切换：{r}", 6);
+                break;
+            // 功能模块开关：面板「插件管理 / 功能模块」的真实落点。
+            // 关掉一个模块会立即改变本机行为，因此这是**双向**能力 —— 关闭核心模块会被拒绝。
+            case "set_module":
+            case "set_modules":
+                var applyResult = StelarithModules.ApplyFromTask(task);
+                StelarithModules.Diag("dispatch set_module -> " + applyResult);
+                StelarithNotificationProvider.Current?.Push(StelarithBranding.SourceName, "功能模块调整：" + applyResult, 6);
                 break;
             // 需要 OS 级 / 网络级动作的，一律交给本地代理（它才有权限启 VNC、控进程、验签）
             case "remote_control_start":
             case "remote_control_stop":
+                if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
+                await Agent.SendAsync(task);
+                break;
             case "shell":
             case "reboot":
+                if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
                 await Agent.SendAsync(task);
                 break;
             default:
                 break;
         }
+    }
+
+    /// <summary>
+    /// 模块门控：模块被停用时拒绝执行并留下可见记录（而不是静默什么都不做 ——
+    /// 静默失败是这套系统里最难排查的一类问题）。
+    /// </summary>
+    private static bool RequireModule(string moduleId, string what)
+    {
+        if (StelarithModules.IsEnabled(moduleId)) return true;
+        StelarithModules.Diag($"dispatch: {what} 被拒 —— 模块 {moduleId} 已停用");
+        StelarithNotificationProvider.Current?.Push(
+            StelarithBranding.SourceName, $"{what} 指令未执行：对应功能模块已被停用（可在插件设置页重新启用）。", 6);
+        return false;
     }
 }

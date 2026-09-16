@@ -29,12 +29,27 @@ public sealed class StelarithSyncService : BackgroundService
     private static ILogger<StelarithSyncService>? _staticLogger;
     private static readonly object SyncLock = new();
 
-    public StelarithSyncService(ILogger<StelarithSyncService> logger, StelarithSyncOptions opt)
+    public StelarithSyncService(ILogger<StelarithSyncService> logger, StelarithSyncOptions opt,
+        IServiceProvider services, StelarithServiceProviderBridge bridge)
     {
         _logger = logger;
         _opt = opt;
         _staticLogger = logger;
         _staticOpt = opt;
+        // 桥在此被宿主容器**真实解析**（构造注入），从而拿到根 IServiceProvider，
+        // 交给反射定位器去取档案服务（ClassIsland.Services.ProfileService）。
+        // 注意：仅在 Initialize 里 AddSingleton<T>() 是不够的——没人解析它，
+        // 构造函数就永远不会跑。必须在某个**会被实例化**的服务里注入它。
+        _ = bridge;
+        try
+        {
+            StelarithReflection.RegisterProvider(services);
+            SyncDiag("ctor: 已把宿主 IServiceProvider 登记给反射定位器");
+        }
+        catch (Exception ex)
+        {
+            SyncDiag("ctor: 登记 IServiceProvider 失败: " + ex.Message);
+        }
     }
 
     static StelarithSyncService()
@@ -66,6 +81,26 @@ public sealed class StelarithSyncService : BackgroundService
         t.IsBackground = true;
         t.Name = "stelarith-sync-guard";
         t.Start();
+    }
+
+    /// <summary>
+    /// 包的 StartAsync：把异常吞掉。
+    ///
+    /// 宿主把所有插件的 IHostedService 放在同一个启动序列里依次 StartAsync，任何一个抛异常
+    /// 都会中断后续插件的启动（本插件曾因此在教室端完全不起作用）。本插件对"启动"的要求是
+    /// **尽可能别让宿主失败**：真正的存活由静态守护线程保证（见类注释），
+    /// 所以这里即使 base 抛了，功能也不会丢，只是少了一条启动路径。
+    /// </summary>
+    public override async Task StartAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await base.StartAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            SyncDiag("StartAsync swallowed: " + ex.Message);
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -116,6 +151,14 @@ public sealed class StelarithSyncService : BackgroundService
     /// </summary>
     private static async Task RefreshSync(StelarithSyncOptions opt, ILogger<StelarithSyncService>? logger)
     {
+        // 模块门控：面板/指令把「资源主动同步」停用后，这里必须真的不发请求 ——
+        // 否则既浪费带宽，也会在服务端留下"设备还在同步"的假象。
+        if (!StelarithModules.IsEnabled(StelarithModules.Sync))
+        {
+            SyncDiag("sync skipped: module 'sync' disabled");
+            return;
+        }
+
         var host = $"{opt.Slug}.{opt.BaseDomain}";
 
         // 第 1 步：取清单（manifest）。这是官方协议的资源发现入口。
@@ -137,7 +180,10 @@ public sealed class StelarithSyncService : BackgroundService
             At = DateTimeOffset.UtcNow,
             ManifestJson = manifest,
             ClassPlanJson = bodies.TryGetValue("ClassPlan", out var cp) ? cp : null,
+            TimeLayoutJson = bodies.TryGetValue("TimeLayout", out var tl) ? tl : null,
+            SubjectsJson = bodies.TryGetValue("Subjects", out var sb) ? sb : null,
             ComponentsJson = bodies.TryGetValue("Components", out var co) ? co : null,
+            Resources = new Dictionary<string, string?>(bodies, StringComparer.OrdinalIgnoreCase),
             Ok = manifest is not null,
         });
 
@@ -146,6 +192,27 @@ public sealed class StelarithSyncService : BackgroundService
         logger?.LogInformation(
             "Stelarith sync: manifest {m}B，资源 {ok}/{n} 项已刷新",
             manifest?.Length ?? 0, okCount, sources.Count);
+
+        // ---- 写回宿主档案：让 CIMS 下发的课表/作息/科目在教室端真正生效 ----
+        // 只有拿到内容才写回；且必须同时满足两个开关：配置文件的 ResourceWriteBack
+        // （部署级开关）与模块开关 writeback（运行时可切换）。
+        if (opt.ResourceWriteBack && StelarithModules.IsEnabled(StelarithModules.WriteBack))
+        {
+            StelarithReflection.EnsureResolved();
+            StelarithProfileWriter.WriteBack(
+                bodies.TryGetValue("ClassPlan", out var wcp) ? wcp : null,
+                bodies.TryGetValue("TimeLayout", out var wtl) ? wtl : null,
+                bodies.TryGetValue("Subjects", out var wsb) ? wsb : null,
+                logger);
+
+            var snap = StelarithSyncState.Current;
+            snap.ProfileWriteResult = StelarithProfileWriter.LastResult;
+            SyncDiag("profile writeback: " + StelarithProfileWriter.LastResult);
+        }
+        else
+        {
+            SyncDiag("profile writeback: 已按配置关闭（ResourceWriteBack=false）");
+        }
     }
 
     /// <summary>

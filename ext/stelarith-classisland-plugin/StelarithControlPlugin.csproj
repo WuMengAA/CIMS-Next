@@ -10,6 +10,17 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>StelarithControlPlugin</RootNamespace>
     <AssemblyName>StelarithControlPlugin</AssemblyName>
+    <!--
+      三处版本号必须同步，否则会出现「界面显示旧版本」的假象：
+        · 本行 <Version>            → 程序集版本（错误报告 / 反射读到时用）
+        · manifest.yml 的 version   → ClassIsland 插件清单版本（插件管理页与
+                                      本插件状态遥测 PluginInventory 读的都是它）
+        · 仓库 tag / Release        → 分发版本
+      本轮 1.3.0.0 的教训：manifest.yml 改了但没重新构建，构建产物里的
+      manifest 仍是旧版（Content 项只在构建时复制），部署后界面仍显示 1.2.0.0。
+      改 version 后**必须重新构建并连 manifest.yml 一起部署**。
+    -->
+    <Version>1.3.0.0</Version>
   </PropertyGroup>
 
   <!--
@@ -20,8 +31,11 @@
 
     部署步骤：
       1) dotnet build -c Release
-      2) 把生成的 StelarithControlPlugin.dll（及依赖）放进：
-         %APPDATA%\ClassIsland\Plugins\StelarithControlPlugin\
+      2) 把 bin/Release/net8.0-windows/ 下的
+         StelarithControlPlugin.dll + StelarithControlPlugin.deps.json + manifest.yml
+         一并复制到插件目录（**注意：这里是 ClassIsland 的数据目录，不是 %APPDATA%**）：
+           D:\Classlsland\data\Plugins\StelarithControlPlugin\
+         只复制 dll 而漏掉 manifest.yml，会让插件界面显示的版本号停在旧值。
       3) 重启 ClassIsland；带 [PluginEntrance] 的程序集会被自动扫描加载。
 
     若目标 ClassIsland 版本对以下符号有差异，按该版本源码调整：

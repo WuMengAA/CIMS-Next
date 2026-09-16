@@ -29,7 +29,7 @@ namespace StelarithControlPlugin;
 /// </summary>
 [NotificationProviderInfo(
     "9f1c2b3a-4d5e-6f7a-8b9c-0d1e2f3a4b5c",
-    "星璃·集控",
+    "集控广播",
     "星璃多媒体统一集控播报通道：接收集控端下发的广播与提醒。")]
 public sealed class StelarithNotificationProvider : NotificationProviderBase
 {
@@ -57,7 +57,9 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
             {
                 try
                 {
-                    var safeTitle = string.IsNullOrWhiteSpace(title) ? "星璃·集控" : title;
+                    // 来源名可在 stelarith-sync.json 里自定义（默认「集控广播」）。
+                    // 空标题 = 调用方只想弹正文，此时才回落到来源名。
+                    var safeTitle = string.IsNullOrWhiteSpace(title) ? StelarithBranding.SourceName : title;
                     var duration = TimeSpan.FromSeconds(seconds > 0 ? seconds : 8);
 
                     var mask = NotificationContent.CreateTwoIconsMask(safeTitle);
