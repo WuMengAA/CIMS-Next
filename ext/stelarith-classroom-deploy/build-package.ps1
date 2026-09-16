@@ -77,10 +77,27 @@ if (Test-Path -LiteralPath $OutDir) {
 }
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
 
-function Copy-TextFile([string]$Src, [string]$Dst, [bool]$WithBom) {
+function Copy-TextFile([string]$Src, [string]$Dst, [bool]$WithBom, [bool]$Crlf = $true, [bool]$AsciiOnly = $false) {
     $dir = Split-Path -Parent $Dst
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $txt = [System.IO.File]::ReadAllText($Src, [System.Text.Encoding]::UTF8)
+
+    # 行尾统一成 CRLF：仓库里存 LF（git 友好），但 .cmd / .ps1 在 Windows 上必须是 CRLF。
+    # 不依赖 .gitattributes —— 出包脚本读的是**工作区**文件，checkout 行为不可控。
+    if ($Crlf) {
+        $txt = $txt.Replace("`r`n", "`n").Replace("`r", "`n").Replace("`n", "`r`n")
+    }
+
+    # .cmd 必须纯 ASCII：cmd 解析批处理用的是**当前代码页**，UTF-8 中文在 GBK 控制台上
+    # 会被按字节拆开，轻则乱码、重则把命令行的引号/括号配对搞坏。宁可出包时炸。
+    if ($AsciiOnly) {
+        for ($i = 0; $i -lt $txt.Length; $i++) {
+            if ([int]$txt[$i] -gt 127) {
+                throw ("$Src 含非 ASCII 字符（位置 $i）：'.cmd' 必须纯 ASCII。请改成英文。")
+            }
+        }
+    }
+
     $enc = New-Object System.Text.UTF8Encoding($WithBom)
     [System.IO.File]::WriteAllText($Dst, $txt, $enc)
 }
@@ -95,15 +112,15 @@ Get-ChildItem -LiteralPath $repoPayload -Recurse -File | ForEach-Object {
     if ($ext -eq '.ps1' -or $ext -eq '.md') {
         # PowerShell 5.1 只有在有 UTF-8 BOM 时才正确解析中文；
         # 记事本打开 .md 同理。仓库里保持无 BOM（git 友好），出包时补上。
-        Copy-TextFile $_.FullName $dst $true
+        Copy-TextFile $_.FullName $dst $true $true $false
+    } elseif ($ext -eq '.cmd') {
+        Copy-TextFile $_.FullName $dst $false $true $true
     } else {
-        $dir = Split-Path -Parent $dst
-        if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
+        Copy-TextFile $_.FullName $dst $false $false $false
     }
     if ($ext -eq '.ps1') { $scriptCount = $scriptCount + 1 }
 }
-Ok ("脚本 " + $scriptCount + " 个，文档与配置已就位")
+Ok ("脚本 " + $scriptCount + " 个，文档与配置已就位（行尾/编码已规范化）")
 
 # ---------------------------------------------------------------- 2. app
 if (-not $SkipApp) {
@@ -259,7 +276,7 @@ $seedMB = [math]::Round(((Get-ChildItem $dstSeed -Recurse -File | Measure-Object
 
 $info = [ordered]@{
     BuiltAt            = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-    BuiltFrom          = $SourceRoot
+    BuiltFrom          = '制作机上的 ClassIsland 便携安装（源绝对路径已脱敏，不落包）'
     ClassIslandVersion = ($srcApp.Name -replace '^app-', '')
     PluginVersion      = $pluginVer
     PluginCount        = $plugN
@@ -272,7 +289,7 @@ $info = [ordered]@{
         'data\Config\Plugins\**\*.log（日志）',
         'data\Config\Plugins\ClassIsland.AISmartClass\aisettings.json（含明文 API Key —— 安全红线）'
     )
-    AbsolutePathPolicy = ('种子内所有 ' + $SourceRoot + ' 路径已替换为 {{INSTALL_DIR}}，由 deploy.ps1 在目标机替换为真实安装目录')
+    AbsolutePathPolicy = '种子内所有制作机绝对路径已替换为 {{INSTALL_DIR}}，由 deploy.ps1 在目标机替换为真实安装目录'
 }
 [System.IO.File]::WriteAllText((Join-Path $OutDir 'PACKAGE-INFO.json'),
     ($info | ConvertTo-Json -Depth 5), $utf8)
@@ -292,7 +309,69 @@ Write-Host '    · seed 里不应出现任何 sk- 开头的密钥（本脚本已
 Write-Host '    · 不要把 stelarith-sync.json 的 VoiceHubKey 预先填成真 key' -ForegroundColor Gray
 Write-Host ''
 
-# ---------------------------------------------------------------- 5. 打包 zip
+Write-Host ''
+Write-Host ('=' * 68) -ForegroundColor DarkCyan
+Write-Host '  出包后自检（自动）' -ForegroundColor Cyan
+Write-Host ('=' * 68) -ForegroundColor DarkCyan
+
+$fail = New-Object System.Collections.Generic.List[string]
+$srcEsc2 = $SourceRoot.Replace('\', '\\')
+
+# 5.1 文本类：密钥 + 源机绝对路径残留
+$txtExts = @('.ps1', '.cmd', '.json', '.md', '.html', '.yml', '.txt')
+$scanned = 0
+Get-ChildItem -LiteralPath $OutDir -Recurse -File | Where-Object { $txtExts -contains $_.Extension.ToLower() } | ForEach-Object {
+    $scanned++
+    $t = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
+    if ($t -match 'sk-[A-Za-z0-9]{16,}') {
+        $fail.Add('密钥泄露: ' + $_.FullName)
+    }
+    if ($t.Contains($SourceRoot) -or $t.Contains($srcEsc2)) {
+        $fail.Add('源机绝对路径残留: ' + $_.FullName)
+    }
+}
+Write-Host ("  · 文本文件 " + $scanned + " 个：密钥/绝对路径已扫描") -ForegroundColor Gray
+
+# 5.2 .ps1 必须带 UTF-8 BOM
+$nPs = 0
+Get-ChildItem -LiteralPath (Join-Path $OutDir 'scripts') -File -Filter '*.ps1' | ForEach-Object {
+    $nPs++
+    $b = [System.IO.File]::ReadAllBytes($_.FullName)
+    if ($b.Length -lt 3 -or $b[0] -ne 0xEF -or $b[1] -ne 0xBB -or $b[2] -ne 0xBF) {
+        $fail.Add('缺 UTF-8 BOM: ' + $_.Name)
+    }
+}
+Write-Host ("  · .ps1 " + $nPs + " 个：BOM 已校验") -ForegroundColor Gray
+
+# 5.3 .cmd 必须纯 ASCII + CRLF
+$nCmd = 0
+Get-ChildItem -LiteralPath $OutDir -File -Filter '*.cmd' | ForEach-Object {
+    $nCmd++
+    $b = [System.IO.File]::ReadAllBytes($_.FullName)
+    foreach ($by in $b) { if ($by -gt 127) { $fail.Add('非 ASCII 字符: ' + $_.Name); break } }
+    if ($b -notcontains 13) { $fail.Add('非 CRLF 行尾: ' + $_.Name) }
+}
+Write-Host ("  · .cmd " + $nCmd + " 个：ASCII/CRLF 已校验") -ForegroundColor Gray
+
+# 5.4 所有 JSON 必须能解析（宁可出包时炸，不要到教室机上才发现）
+$nJson = 0
+Get-ChildItem -LiteralPath $OutDir -Recurse -File -Filter '*.json' | ForEach-Object {
+    $nJson++
+    try { $null = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json }
+    catch { $fail.Add('JSON 非法: ' + $_.FullName) }
+}
+Write-Host ("  · JSON " + $nJson + " 个：语法已校验") -ForegroundColor Gray
+
+Write-Host ''
+if ($fail.Count -gt 0) {
+    Write-Host ('  [FAIL] 自检发现 ' + $fail.Count + ' 个问题：') -ForegroundColor Red
+    foreach ($f in $fail) { Write-Host ('    - ' + $f) -ForegroundColor Red }
+    throw '出包自检未通过，请修复后重跑。'
+}
+Write-Host '  [OK]   自检全部通过' -ForegroundColor Green
+Write-Host ''
+
+# ---------------------------------------------------------------- 6. 打包 zip
 if ($Zip) {
     Write-Host '  正在压缩...' -ForegroundColor White
     $zipPath = $OutDir.TrimEnd('\') + '.zip'

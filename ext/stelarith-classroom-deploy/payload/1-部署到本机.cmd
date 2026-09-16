@@ -4,9 +4,10 @@ rem  Stelarith CIMS - Classroom Deploy  (step 1: install to this PC)
 rem  IMPORTANT: keep this file ASCII-only. Chinese lives in the .ps1
 rem  payload (which is shipped as UTF-8 with BOM) and in docs/.
 rem ===================================================================
-chcp 65001 >nul 2>&1
 setlocal
+rem cd first, then chcp: a CJK %~dp0 breaks if the codepage changes first.
 cd /d "%~dp0"
+chcp 65001 >nul 2>&1
 
 rem ---- self elevate: writing to install dir + startup folder needs admin
 net session >nul 2>&1

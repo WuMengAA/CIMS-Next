@@ -217,7 +217,7 @@ if ($DryRun) {
 
     # 4.2 把种子里的 {{INSTALL_DIR}} 占位符换成真实安装目录
     #     为什么必须做：宿主的设置里存的是**绝对路径**（实测 Settings.json 里写死了
-    #     D:\Classlsland\assets\musics\*.wav）。不换掉的话，装到别的机器上提醒音效会
+    #     出包机器的 <源目录>\assets\musics\*.wav）。不换掉的话，装到别的机器上提醒音效会
     #     **静默失效** —— 不报错、不提示，只是上课打铃没声音，极难排查。
     #     注意 JSON 里路径是转义的（\\），所以替换值也要转义，否则会产生非法转义序列。
     $phTarget = $cfg.InstallDir.Replace('\', '\\')

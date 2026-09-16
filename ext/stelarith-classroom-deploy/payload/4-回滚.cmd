@@ -6,9 +6,10 @@ rem    -RestoreSyncOnly only reset the server address config
 rem    -RemoveAutoStart drop autostart + desktop shortcuts (keep data)
 rem  No argument: list available backups and ask which one.
 rem ===================================================================
-chcp 65001 >nul 2>&1
 setlocal
+rem cd first, then chcp: a CJK %~dp0 breaks if the codepage changes first.
 cd /d "%~dp0"
+chcp 65001 >nul 2>&1
 
 net session >nul 2>&1
 if %errorlevel% neq 0 (

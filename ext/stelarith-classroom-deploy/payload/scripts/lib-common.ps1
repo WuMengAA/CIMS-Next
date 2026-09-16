@@ -283,7 +283,7 @@ function Find-ClassIslandRoot {
     }
     # 2) 常见安装位置
     $cands += 'C:\ClassIsland'
-    $cands += 'D:\Classlsland'
+    $cands += 'D:\ClassIsland'
     $cands += (Join-Path $env:LOCALAPPDATA 'ClassIsland')
     $cands += (Join-Path $env:APPDATA 'ClassIsland')
 
