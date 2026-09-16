@@ -33,6 +33,7 @@
 	import ContentSkeleton from "$lib/components/content-skeleton.svelte";
 	import PresenceHeartbeat from "$lib/components/presence-heartbeat.svelte";
 	import SidebarAutoClose from "$lib/components/sidebar-auto-close.svelte";
+	import { getSidebarWidthPx } from "$lib/sidebar-width.svelte.js";
 	import type { LayoutProps } from "./$types";
 
 	// 用 SvelteKit 生成的 LayoutProps（含 data.user / data.canEdit），
@@ -167,7 +168,7 @@
 <!-- 客户端导航后播报新页面标题（仅读屏可闻） -->
 <div class="sr-only" role="status" aria-live="polite">{announced}</div>
 
-<Sidebar.Provider>
+<Sidebar.Provider style="--sidebar-width: {getSidebarWidthPx()}px">
 	<!-- 移动端抽屉：导航后自动收起（必须在 Provider 内才能拿到 sidebar context） -->
 	<SidebarAutoClose />
 

@@ -23,7 +23,7 @@
 		Save, ArrowLeft, Bold, Italic, Strikethrough, Heading2, Quote, List, ListOrdered,
 		ListTodo, Table, Minus, Code, SquareCode, Link as LinkIcon, Image as ImageIcon,
 		Monitor, Tablet, Smartphone, Palette, Type, LayoutTemplate, Eye, LayoutPanelLeft,
-		FileText, User, Rocket, BookOpen, Megaphone, ChevronDown, Sparkles, Columns2, Maximize2
+		FileText, User, Rocket, BookOpen, Megaphone, ChevronDown, Sparkles, Columns2, Maximize2, Archive
 	} from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { page } from "$app/state";
@@ -245,6 +245,32 @@
 		saving = false;
 	}
 
+	// ===== 一键归档 =====
+	// status 置为 archived：前台列表只展示 published，归档即隐藏，
+	// 文件与版本快照保留，可在后台「归档管理」恢复。
+	async function archiveItem() {
+		if (slug === "new") return;
+		if (!confirm("归档后该页面将从列表与前台隐藏，可在后台「归档管理」中恢复。确定归档？")) return;
+		saving = true;
+		try {
+			const payload: Record<string, unknown> = { slug, title, body, status: "archived" };
+			const res = await fetch(apiPath, {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "x-action": "save" },
+				body: JSON.stringify(payload)
+			});
+			if (res.ok) {
+				toast.success("已归档");
+				localStorage.setItem("acofork_need_refresh", "1");
+				window.location.href = backUrl;
+			} else {
+				const r = await res.json();
+				toast.error(r.error || "归档失败，请重试");
+			}
+		} catch (e) { console.error(e); toast.error("归档失败，请重试"); }
+		saving = false;
+	}
+
 	// ---- 正文工具栏：与文章编辑器保持同一套交互，避免两处手感不一致 ----
 	let bodyEl: HTMLTextAreaElement | undefined = $state(undefined);
 
@@ -326,6 +352,11 @@
 				<Save class="mr-1.5 size-3.5" />{saving ? "保存中…" : "保存"}
 			</Button>
 			<Button size="sm" onclick={() => save(true)} disabled={saving}>保存并返回</Button>
+			{#if slug !== "new"}
+				<button class="pe-icon-btn" title="一键归档：从列表与前台隐藏，可在后台归档管理中恢复" onclick={archiveItem}>
+					<Archive class="size-4" />
+				</button>
+			{/if}
 		</div>
 	</header>
 

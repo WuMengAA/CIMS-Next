@@ -8,7 +8,8 @@
 	import { pageIn } from "$lib/transition.js";
 	import { can, roleLevelLabel, type Action } from "$lib/permissions.js";
 	import { Avatar, AvatarImage, AvatarFallback } from "$lib/components/ui/avatar/index.js";
-	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck } from "@lucide/svelte";
+	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
+	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck, Archive } from "@lucide/svelte";
 	import type { LayoutProps } from "./$types";
 
 	const { children, data }: LayoutProps = $props();
@@ -58,6 +59,7 @@
 		// 治理：L5 站长
 		{ title: "用户管理", url: "/admin/users", icon: UsersRound, need: "manageUsers", group: "治理" },
 		{ title: "权限总览", url: "/admin/permissions", icon: ShieldCheck, need: "viewConsole", group: "治理" },
+		{ title: "归档管理", url: "/admin/archives", icon: Archive, need: "moderate", group: "治理" },
 		{ title: "站点设置", url: "/admin/settings", icon: Settings, need: "manageSettings", group: "治理" }
 	];
 
@@ -172,6 +174,7 @@
 	</Sidebar.Footer>
 	<!-- 桌面端：侧栏右缘可点击收起（带宽度过渡），与前台侧栏行为一致 -->
 	<Sidebar.Rail />
+	<SidebarResizer />
 </Sidebar.Root>
 
 <Sidebar.Inset class="transition-[padding] duration-300 ease-in-out md:pl-(--sidebar-width) md:peer-data-[collapsible=icon]:pl-(--sidebar-width-icon)">

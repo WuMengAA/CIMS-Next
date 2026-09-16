@@ -34,6 +34,7 @@
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import { can } from "$lib/permissions.js";
 	import { readMoreOpen, writeMoreOpen } from "$lib/sidebar-memory.js";
+	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
 	import { ICON_MAP } from "$lib/icon-library.js";
 	
 	import { page } from "$app/state";
@@ -251,4 +252,5 @@
 		</div>
 	</Sidebar.Footer>
 	<Sidebar.Rail />
+	<SidebarResizer />
 </Sidebar.Root>

@@ -5,7 +5,7 @@
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import * as Select from "$lib/components/ui/select/index.js";
-	import { Save, ArrowLeft, Bold, Italic, Strikethrough, Heading2, Quote, List, ListOrdered, ListTodo, Table, Minus, Code, SquareCode, Link as LinkIcon, Image as ImageIcon, CornerDownLeft, ChevronRight, MonitorPlay } from "@lucide/svelte";
+	import { Save, ArrowLeft, Bold, Italic, Strikethrough, Heading2, Quote, List, ListOrdered, ListTodo, Table, Minus, Code, SquareCode, Link as LinkIcon, Image as ImageIcon, CornerDownLeft, ChevronRight, MonitorPlay, Archive } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { page } from "$app/state";
 
@@ -96,6 +96,28 @@
 				toast.error("保存失败，请重试");
 			}
 		} catch (e) { console.error(e); toast.error("保存失败，请重试"); }
+		saving = false;
+	}
+
+	// ===== 一键归档 =====
+	// 把当前条目 status 置为 archived：前台列表只展示 published，归档即隐藏，
+	// 但文件与版本快照保留，可在后台「归档管理」恢复。
+	async function archiveItem() {
+		if (slug === "new") return;
+		if (!confirm("归档后该内容将从列表与前台隐藏，可在后台「归档管理」中恢复。确定归档？")) return;
+		saving = true;
+		try {
+			const payload: Record<string, unknown> = { slug, title, body, status: "archived" };
+			const res = await fetch(apiPath, { method: "POST", headers: { "Content-Type": "application/json", "x-action": "save" }, body: JSON.stringify(payload) });
+			if (res.ok) {
+				toast.success("已归档");
+				localStorage.setItem("acofork_need_refresh", "1");
+				window.location.href = backUrl;
+			} else {
+				const r = await res.json();
+				toast.error(r.error || "归档失败，请重试");
+			}
+		} catch (e) { console.error(e); toast.error("归档失败，请重试"); }
 		saving = false;
 	}
 
@@ -442,6 +464,9 @@
 			<Save class="h-4 w-4 mr-2" /> {saving ? "保存中..." : "保存并返回"}
 		</Button>
 		<Button variant="outline" onclick={() => save(false)} disabled={saving || !title.trim() || !body.trim()}>继续编辑</Button>
+		<Button variant="ghost" onclick={archiveItem} disabled={saving || slug === "new"} class="text-destructive hover:text-destructive" title="归档：从列表与前台隐藏，可在后台归档管理中恢复">
+			<Archive class="h-4 w-4 mr-2" /> 归档
+		</Button>
 		{#if saved}<Badge variant="secondary">已保存</Badge>{/if}
 	</div>
 </div>
