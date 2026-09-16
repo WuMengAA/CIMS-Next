@@ -9,7 +9,7 @@
 	import { can, roleLevelLabel, type Action } from "$lib/permissions.js";
 	import { Avatar, AvatarImage, AvatarFallback } from "$lib/components/ui/avatar/index.js";
 	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
-	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Image, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck, Archive } from "@lucide/svelte";
+	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck, Archive, Paperclip } from "@lucide/svelte";
 	import type { LayoutProps } from "./$types";
 
 	const { children, data }: LayoutProps = $props();
@@ -35,7 +35,7 @@
 		{ title: "项目管理", url: "/admin/projects", icon: Rocket, need: "manageContent", group: "内容" },
 		{ title: "教程管理", url: "/admin/docs", icon: BookMarked, need: "manageContent", group: "内容" },
 		{ title: "页面管理", url: "/admin/pages", icon: FileText, need: "managePages", group: "内容" },
-		{ title: "媒体库", url: "/admin/media", icon: Image, need: "manageFiles", group: "内容" },
+		{ title: "附件库", url: "/admin/media", icon: Paperclip, need: "manageFiles", group: "内容" },
 
 		// 审核：L3 审核员及以上
 		{ title: "评论审核", url: "/admin/comments", icon: MessageSquare, need: "moderate", group: "审核" },
@@ -113,7 +113,7 @@
   所以这里不靠 gap，改为由下面的 Inset 自己让出 md:pl-(--sidebar-width)，
   并用 peer-data-[collapsible=icon] 让它跟着折叠一起收回（两侧同 300ms，动画合拍）。
 -->
-<Sidebar.Root class="bg-sidebar text-sidebar-foreground">
+<Sidebar.Root collapsible="icon" class="bg-sidebar text-sidebar-foreground">
 	<ConfirmHost />
 	<Sidebar.Header>
 		<a href="/" class="flex items-center gap-3">

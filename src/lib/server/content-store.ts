@@ -451,22 +451,34 @@ export function renderMarkdown(mdContent: string): RenderedContent {
 
 export function uploadFile(filename: string, data: Buffer): { url: string; error?: string } {
 	ensureDirs();
-	const ALLOWED_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".txt", ".md", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg"]);
-	const MAX_FILE_SIZE = 20 * 1024 * 1024;
+	// 附件库：从「仅图片/媒体」放开为「任意常见附件」——文档、压缩包、安装包、
+	// 表格、字幕等均可入库，满足「上传、保存、读取、删除」全链路。
+	const ALLOWED_EXT = new Set([
+		// 图片
+		".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".ico",
+		// 文档
+		".pdf", ".txt", ".md", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".json",
+		// 音视频
+		".mp4", ".webm", ".mov", ".avi", ".mkv", ".mp3", ".wav", ".ogg", ".flac", ".m4a",
+		// 压缩包 / 安装包 / 其它
+		".zip", ".rar", ".7z", ".tar", ".gz", ".apk", ".vtt", ".srt", ".sub"
+	]);
+	const MAX_FILE_SIZE = 100 * 1024 * 1024;
 	const ext = path.extname(filename).toLowerCase();
 	if (!ALLOWED_EXT.has(ext)) return { url: "", error: "不支持的文件类型: " + ext };
-	if (data.length > MAX_FILE_SIZE) return { url: "", error: "文件超过 20MB 限制" };
+	if (data.length > MAX_FILE_SIZE) return { url: "", error: "文件超过 100MB 限制" };
 	const newFilename = path.basename(filename, ext) + "-" + Date.now() + ext;
 	fs.writeFileSync(path.join(UPLOADS_DIR, newFilename), data);
 	return { url: "/uploads/" + newFilename };
 }
 
-export function listUploads(): { filename: string; url: string; size: number; date: string }[] {
+export function listUploads(): { filename: string; url: string; size: number; date: string; kind: string }[] {
 	ensureDirs();
 	if (!fs.existsSync(UPLOADS_DIR)) return [];
 	return fs.readdirSync(UPLOADS_DIR).filter(f => !f.startsWith(".")).map(f => {
 		const stat = fs.statSync(path.join(UPLOADS_DIR, f));
-		return { filename: f, url: "/uploads/" + f, size: stat.size, date: stat.birthtime.toISOString().slice(0, 10) };
+		const ext = path.extname(f).toLowerCase().replace(".", "");
+		return { filename: f, url: "/uploads/" + f, size: stat.size, date: stat.birthtime.toISOString().slice(0, 10), kind: ext };
 	}).sort((a, b) => b.date.localeCompare(a.date));
 }
 

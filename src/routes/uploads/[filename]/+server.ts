@@ -35,8 +35,15 @@ export async function GET({ url }) {
 		".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
 		".avif": "image/avif", ".ico": "image/x-icon",
 		".pdf": "application/pdf", ".txt": "text/plain", ".md": "text/markdown",
-		".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
-		".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg"
+		".doc": "application/msword", ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		".xls": "application/vnd.ms-excel", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		".ppt": "application/vnd.ms-powerpoint", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		".csv": "text/csv", ".json": "application/json",
+		".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".avi": "video/x-msvideo", ".mkv": "video/x-matroska",
+		".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac", ".m4a": "audio/mp4",
+		".zip": "application/zip", ".rar": "application/vnd.rar", ".7z": "application/x-7z-compressed",
+		".tar": "application/x-tar", ".gz": "application/gzip", ".apk": "application/vnd.android.package-archive",
+		".vtt": "text/vtt", ".srt": "application/x-subrip", ".sub": "text/x-microdvd"
 	};
 	const contentType = mimeMap[ext] || "application/octet-stream";
 	const stat = fs.statSync(filePath);

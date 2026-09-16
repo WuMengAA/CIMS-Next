@@ -71,7 +71,7 @@
 		></button>
 
 		<div
-			class="absolute z-50 mt-2 w-[320px] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-2xl"
+			class="absolute z-50 mt-2 w-[320px] max-w-[calc(100vw-1rem)] rounded-xl border border-border bg-popover p-3 text-popover-foreground shadow-2xl"
 		>
 			<div class="mb-2 flex items-center gap-2">
 				<Input

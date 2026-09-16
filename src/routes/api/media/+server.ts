@@ -3,7 +3,10 @@ import { uploadFile, listUploads, deleteUpload } from "$lib/server/content-store
 import { getApiUser } from "$lib/server/api-auth.js";
 
 
-export async function GET() {
+export async function GET({ request }: { request: Request }) {
+	// 附件库列表属于后台存储能力：未登录不允许枚举文件（防止泄露文件名清单）。
+	const user = getApiUser(request);
+	if (!user) return json({ error: "未登录" }, { status: 401 });
 	return json(listUploads());
 }
 

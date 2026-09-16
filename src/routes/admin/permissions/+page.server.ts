@@ -8,7 +8,7 @@ import type { PageServerLoad } from "./$types";
  * 之所以做成页面而非写死在文档里：权限模型会演进，文档必然漂移；
  * 这里的数据全部由 permissions.ts 的纯函数实时推导，改一处即全站同步。
  *
- * 访问门槛用 viewConsole（L1+）而非 managePermissions（L5）：
+ * 访问门槛用 viewConsole（L2+，访客禁止）而非 managePermissions（L5）：
  * 每个登录用户都该看得清「自己现在能做什么、还差什么」，只有"改权限"
  * 才需要站长身份 —— 而本页是只读展示，没有写操作。
  */

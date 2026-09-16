@@ -2,19 +2,19 @@
 	/**
 	 * 独立页面编辑器 —— 与 content-editor（文章编辑器）刻意分开。
 	 *
-	 * 为什么要独立而不是给文章编辑器加几个开关：
-	 * 文章的核心是「内容 + 元数据」，页面的核心是「内容 + 版式设计」。
-	 * 后者需要版心宽窄、页头形态、主题色、侧栏目录、响应式预览这些
-	 * 视觉维度，塞进文章编辑器会让两边都变复杂。分开后各自演进。
-	 *
-	 * 三段式布局：左 = 模板与结构，中 = 正文，右 = 版式与发布。
-	 * 窄屏下右侧面板折叠为标签页，避免三列挤压。
+	 * 双栏布局（按需求调整）：
+	 *   · 左侧 = 编辑区：快捷模板（可折叠）+ 标题 + 正文工具栏 + Markdown 正文
+	 *   · 右侧 = 实时预览区：随输入防抖重渲，设备档位切换（桌面/平板/手机）
+	 *   · 顶部 = 快捷操作：保存 / 保存并返回 / 一键归档 / 文章暂无发布信息与版式设置抽屉
+	 *     └ 版式设置（版心/页头/封面/图标/主题色）与发布信息（状态/导航标题/分类/标签/摘要）
+	 *       收纳在两个从右滑出的抽屉里，避免挤占编辑与预览的横向空间。
 	 */
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import * as Select from "$lib/components/ui/select/index.js";
+	import * as Sheet from "$lib/components/ui/sheet/index.js";
 	import {
 		PAGE_TEMPLATES, LAYOUT_PRESETS, getTemplate,
 		type PageTemplate
@@ -23,7 +23,7 @@
 		Save, ArrowLeft, Bold, Italic, Strikethrough, Heading2, Quote, List, ListOrdered,
 		ListTodo, Table, Minus, Code, SquareCode, Link as LinkIcon, Image as ImageIcon,
 		Monitor, Tablet, Smartphone, Palette, Type, LayoutTemplate, Eye, LayoutPanelLeft,
-		FileText, User, Rocket, BookOpen, Megaphone, ChevronDown, Sparkles, Columns2, Maximize2, Archive
+		FileText, User, Rocket, BookOpen, Megaphone, ChevronDown, Sparkles, Columns2, Maximize2, Archive, ExternalLink, Settings2, Send
 	} from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { page } from "$app/state";
@@ -62,15 +62,15 @@
 	let previewHtml = $state("");
 	let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
-	// 三栏在窄屏下的显示控制：'edit' 正文，'design' 设计面板
-	let narrowPane = $state<"edit" | "design">("edit");
+	// 抽屉：版式设置 / 发布信息
+	let designOpen = $state(false);
+	let publishOpen = $state(false);
+	// 左栏顶部模板选择器展开
+	let tplOpen = $state(true);
 	// 预览设备尺寸
 	let device = $state<"desktop" | "tablet" | "mobile">("desktop");
-	// 模板选择器展开
-	let tplOpen = $state(true);
 
-	// ---- 站内文件引用（媒体库）----
-	// mediaMode：插入目标，"body" 插正文（Markdown 图片语法），"cover" 设为封面图地址
+	// ---- 站内文件引用（附件库）----
 	let mediaMode = $state<"body" | "cover">("body");
 	let mediaShow = $state(false);
 	let mediaList = $state<{ url: string; filename: string }[]>([]);
@@ -214,8 +214,6 @@
 			const tagsArr = tags.split(",").map((t) => t.trim()).filter(Boolean);
 			const payload: Record<string, unknown> = {
 				title, body, status,
-				// 显式传空串 = 清空该字段（store 的白名单会删除）；页面的设计字段
-				// 必须"传了就生效、不传就保留"，所以这里全量传，不做省略。
 				excerpt, category, cover, navTitle, accent, icon,
 				tags: tagsArr,
 				layout, hero,
@@ -246,8 +244,6 @@
 	}
 
 	// ===== 一键归档 =====
-	// status 置为 archived：前台列表只展示 published，归档即隐藏，
-	// 文件与版本快照保留，可在后台「归档管理」恢复。
 	async function archiveItem() {
 		if (slug === "new") return;
 		if (!confirm("归档后该页面将从列表与前台隐藏，可在后台「归档管理」中恢复。确定归档？")) return;
@@ -271,7 +267,7 @@
 		saving = false;
 	}
 
-	// ---- 正文工具栏：与文章编辑器保持同一套交互，避免两处手感不一致 ----
+	// ---- 正文工具栏 ----
 	let bodyEl: HTMLTextAreaElement | undefined = $state(undefined);
 
 	function insertAtCursor(before: string, after = "", placeholder = "") {
@@ -310,6 +306,9 @@
 	const previewWidth = $derived(
 		device === "mobile" ? "390px" : device === "tablet" ? "768px" : "100%"
 	);
+
+	// 网站访问入口：真实前台地址（未保存的新页无 slug 时禁用）
+	const siteHref = $derived(savedSlug || (slug !== "new" ? slug : ""));
 </script>
 
 <svelte:head>
@@ -318,7 +317,7 @@
 </svelte:head>
 
 <div class="page-editor">
-	<!-- ═══ 顶栏：返回 + 标题状态 + 主要动作 ═══ -->
+	<!-- ═══ 顶栏：返回 + 标题 + 快捷操作 / 版式设置 / 发布信息 / 网站访问 ═══ -->
 	<header class="pe-header">
 		<div class="flex min-w-0 items-center gap-3">
 			<a href={backUrl} class="pe-icon-btn" title="返回页面列表">
@@ -333,12 +332,12 @@
 					{#if saved}<Badge variant="secondary" class="text-[10px]">已保存</Badge>{/if}
 				</div>
 				<p class="truncate text-xs text-muted-foreground">
-					{slug === "new" ? "选择一个模板快速开始" : `/${savedSlug || slug}`}
+					{slug === "new" ? "双栏编辑：左写右看" : `/${savedSlug || slug}`}
 				</p>
 			</div>
 		</div>
-		<!-- 按键位置约定：右侧固定为「预览态切换 + 保存」，与后台其它编辑页一致 -->
-		<div class="flex shrink-0 items-center gap-2">
+		<div class="flex shrink-0 items-center gap-1.5">
+			<!-- 设备预览切换 -->
 			<div class="pe-device-group">
 				{#each [{ k: "desktop", i: Monitor, t: "桌面" }, { k: "tablet", i: Tablet, t: "平板" }, { k: "mobile", i: Smartphone, t: "手机" }] as d (d.k)}
 					<button
@@ -348,31 +347,38 @@
 					><d.i class="size-3.5" /></button>
 				{/each}
 			</div>
-			<Button variant="outline" size="sm" onclick={() => save(false)} disabled={saving}>
-				<Save class="mr-1.5 size-3.5" />{saving ? "保存中…" : "保存"}
+			<!-- 网站在线访问入口 -->
+			{#if siteHref}
+				<a href={"/pages/" + siteHref} target="_blank" rel="noopener noreferrer" class="pe-icon-btn" title="前台访问 /pages/{siteHref}">
+					<ExternalLink class="size-4" />
+				</a>
+			{:else}
+				<button class="pe-icon-btn opacity-40" title="保存后即可访问前台" disabled><ExternalLink class="size-4" /></button>
+			{/if}
+			<!-- 版式设置抽屉 -->
+			<Button variant="outline" size="sm" class="gap-1.5" onclick={() => (designOpen = true)}>
+				<LayoutPanelLeft class="size-3.5" /> 版式
 			</Button>
-			<Button size="sm" onclick={() => save(true)} disabled={saving}>保存并返回</Button>
+			<!-- 发布信息抽屉 -->
+			<Button variant="outline" size="sm" class="gap-1.5" onclick={() => (publishOpen = true)}>
+				<Send class="size-3.5" /> 发布
+			</Button>
 			{#if slug !== "new"}
 				<button class="pe-icon-btn" title="一键归档：从列表与前台隐藏，可在后台归档管理中恢复" onclick={archiveItem}>
 					<Archive class="size-4" />
 				</button>
 			{/if}
+			<Button variant="outline" size="sm" onclick={() => save(false)} disabled={saving}>
+				<Save class="mr-1.5 size-3.5" />{saving ? "保存中…" : "保存"}
+			</Button>
+			<Button size="sm" onclick={() => save(true)} disabled={saving}>保存并返回</Button>
 		</div>
 	</header>
 
-	<!-- 窄屏标签页：三栏在小屏放不下，用两个标签切换"写"与"设计" -->
-	<div class="pe-tabs">
-		<button class="pe-tab {narrowPane === 'edit' ? 'on' : ''}" onclick={() => (narrowPane = "edit")}>
-			<Type class="size-3.5" /> 内容
-		</button>
-		<button class="pe-tab {narrowPane === 'design' ? 'on' : ''}" onclick={() => (narrowPane = "design")}>
-			<LayoutTemplate class="size-3.5" /> 版式与发布
-		</button>
-	</div>
-
+	<!-- ═══ 双栏主体：左 = 编辑区，右 = 实时预览 ═══ -->
 	<div class="pe-body">
-		<!-- ═══ 左栏：模板 + 结构 ═══ -->
-		<aside class="pe-col pe-left" class:hide-narrow={narrowPane !== "design"}>
+		<!-- ── 左栏：编辑区（模板 + 标题 + 工具栏 + 正文） ── -->
+		<main class="pe-col pe-left">
 			<section class="pe-card">
 				<button class="pe-card-head" onclick={() => (tplOpen = !tplOpen)}>
 					<span class="flex items-center gap-2"><Sparkles class="size-3.5" /> 快捷模板</span>
@@ -394,8 +400,25 @@
 				{/if}
 			</section>
 
-			<section class="pe-card">
-				<div class="pe-card-head static"><span class="flex items-center gap-2"><Eye class="size-3.5" /> 实时预览</span></div>
+			<div class="pe-field">
+				<Input bind:value={title} placeholder="页面标题" class="pe-title-input" />
+			</div>
+			<div class="pe-toolbar">
+				{#each TOOLBAR as t (t.title)}
+					<button class="pe-tb-btn" title={t.title} onclick={t.run}>
+						<t.icon class="size-3.5" />
+					</button>
+				{/each}
+			</div>
+			<textarea bind:this={bodyEl} bind:value={body} class="pe-textarea" placeholder="用 Markdown 编写页面内容，右侧实时预览…"></textarea>
+		</main>
+
+		<!-- ── 右栏：实时预览区 ── -->
+		<aside class="pe-col pe-right">
+			<section class="pe-card pe-preview-card">
+				<div class="pe-card-head static">
+					<span class="flex items-center gap-2"><Eye class="size-3.5" /> 实时预览（{device === "desktop" ? "桌面" : device === "tablet" ? "平板 768px" : "手机 390px"}）</span>
+				</div>
 				<div class="pe-preview-wrap">
 					<div class="pe-preview" style="max-width: {previewWidth};">
 						<div class="pe-preview-inner {layout === 'full' ? 'is-full' : ''}">
@@ -416,26 +439,16 @@
 				</div>
 			</section>
 		</aside>
+	</div>
 
-		<!-- ═══ 中栏：正文 ═══ -->
-		<main class="pe-col pe-center" class:hide-narrow={narrowPane !== "edit"}>
-			<div class="pe-field">
-				<Input bind:value={title} placeholder="页面标题" class="pe-title-input" />
-			</div>
-			<div class="pe-toolbar">
-				{#each TOOLBAR as t (t.title)}
-					<button class="pe-tb-btn" title={t.title} onclick={t.run}>
-						<t.icon class="size-3.5" />
-					</button>
-				{/each}
-			</div>
-			<textarea bind:this={bodyEl} bind:value={body} class="pe-textarea" placeholder="用 Markdown 编写页面内容…"></textarea>
-		</main>
-
-		<!-- ═══ 右栏：版式与发布 ═══ -->
-		<aside class="pe-col pe-right" class:hide-narrow={narrowPane !== "design"}>
-			<section class="pe-card">
-				<div class="pe-card-head static"><span class="flex items-center gap-2"><LayoutPanelLeft class="size-3.5" /> 版式</span></div>
+	<!-- ═══ 版式设置抽屉（从右滑出，不占编辑/预览空间） ═══ -->
+	<Sheet.Root bind:open={designOpen}>
+		<Sheet.Content side="right" class="w-full sm:max-w-md">
+			<Sheet.Header>
+				<Sheet.Title class="flex items-center gap-2"><LayoutPanelLeft class="size-4 text-primary" /> 版式设置</Sheet.Title>
+				<Sheet.Description>页面版心、页头、主题色与展示开关，保存后生效</Sheet.Description>
+			</Sheet.Header>
+			<div class="flex flex-col gap-4 overflow-y-auto px-4 pb-6">
 				<div class="pe-fields">
 					<div class="pe-field">
 						<Label class="pe-label">版心宽度</Label>
@@ -469,10 +482,10 @@
 						<div class="flex items-center gap-2">
 							<Input bind:value={cover} placeholder="/uploads/cover.png" class="flex-1" />
 							<Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5" onclick={() => openMedia("cover")}>
-								<ImageIcon class="size-3.5" /> 媒体库
+								<ImageIcon class="size-3.5" /> 附件库
 							</Button>
 						</div>
-						<p class="pe-hint">可从媒体库选择/上传，页头选「横幅」时作为背景图</p>
+						<p class="pe-hint">可从附件库选择/上传，页头选「横幅」时作为背景图</p>
 					</div>
 
 					<div class="pe-field">
@@ -502,10 +515,18 @@
 						<label class="pe-switch"><input type="checkbox" bind:checked={noindex} /> 不参与搜索索引</label>
 					</div>
 				</div>
-			</section>
+			</div>
+		</Sheet.Content>
+	</Sheet.Root>
 
-			<section class="pe-card">
-				<div class="pe-card-head static"><span class="flex items-center gap-2"><Columns2 class="size-3.5" /> 发布信息</span></div>
+	<!-- ═══ 发布信息抽屉 ═══ -->
+	<Sheet.Root bind:open={publishOpen}>
+		<Sheet.Content side="right" class="w-full sm:max-w-md">
+			<Sheet.Header>
+				<Sheet.Title class="flex items-center gap-2"><Send class="size-4 text-primary" /> 发布信息</Sheet.Title>
+				<Sheet.Description>发布状态、导航标题、分类与摘要</Sheet.Description>
+			</Sheet.Header>
+			<div class="flex flex-col gap-4 overflow-y-auto px-4 pb-6">
 				<div class="pe-fields">
 					<div class="pe-field">
 						<Label class="pe-label">状态</Label>
@@ -534,16 +555,16 @@
 						<textarea bind:value={excerpt} class="pe-textarea-sm" placeholder="一句话描述，用于列表页与分享卡片"></textarea>
 					</div>
 				</div>
-			</section>
-		</aside>
-	</div>
+			</div>
+		</Sheet.Content>
+	</Sheet.Root>
 
-	<!-- ═══ 站内文件引用（媒体库）弹层 ═══ -->
+	<!-- ═══ 站内文件引用（附件库）弹层 ═══ -->
 	{#if mediaShow}
-		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onclick={(e) => { if (e.target === e.currentTarget) mediaShow = false; }}>
-			<div class="w-full max-w-2xl rounded-xl border border-border/60 bg-background p-4 shadow-xl">
+		<div class="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" onclick={(e) => { if (e.target === e.currentTarget) mediaShow = false; }}>
+			<div class="flex max-h-[88vh] w-full max-w-2xl flex-col rounded-xl border border-border/60 bg-background p-4 shadow-xl">
 				<div class="mb-3 flex items-center justify-between">
-					<h3 class="font-heading text-base font-semibold">选择图片（媒体库）</h3>
+					<h3 class="font-heading text-base font-semibold">选择图片（附件库）</h3>
 					<button onclick={() => (mediaShow = false)} class="text-muted-foreground hover:text-foreground">✕</button>
 				</div>
 				<p class="mb-3 text-xs text-muted-foreground">{mediaMode === "cover" ? "点击图片设为封面；也可上传新图片。" : "点击图片插入到正文；也可上传新图片。"}</p>
@@ -551,20 +572,22 @@
 					<Button size="sm" variant="outline" onclick={() => fileInput?.click()}>上传新图片</Button>
 					{#if uploadingImg}<span class="text-xs text-muted-foreground">上传中…</span>{/if}
 				</div>
-				{#if mediaLoading}
-					<p class="py-6 text-center text-sm text-muted-foreground">加载中…</p>
-				{:else if mediaList.length === 0}
-					<p class="py-6 text-center text-sm text-muted-foreground">媒体库暂无图片，点击上方上传</p>
-				{:else}
-					<div class="grid max-h-80 grid-cols-4 gap-2 overflow-y-auto">
-						{#each mediaList as m (m.url)}
-							<button type="button" onclick={() => pickMedia(m.url, m.filename)} class="group relative overflow-hidden rounded-lg border border-border/60 hover:border-primary/60">
-								<img src={m.url} alt={m.filename} loading="lazy" class="aspect-square w-full object-cover" />
-								<span class="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1.5 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">{m.filename}</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
+				<div class="min-h-0 flex-1 overflow-y-auto">
+					{#if mediaLoading}
+						<p class="py-6 text-center text-sm text-muted-foreground">加载中…</p>
+					{:else if mediaList.length === 0}
+						<p class="py-6 text-center text-sm text-muted-foreground">附件库暂无图片，点击上方上传</p>
+					{:else}
+						<div class="grid grid-cols-4 gap-2">
+							{#each mediaList as m (m.url)}
+								<button type="button" onclick={() => pickMedia(m.url, m.filename)} class="group relative overflow-hidden rounded-lg border border-border/60 hover:border-primary/60">
+									<img src={m.url} alt={m.filename} loading="lazy" class="aspect-square w-full object-cover" />
+									<span class="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1.5 py-0.5 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">{m.filename}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -632,34 +655,13 @@
 		box-shadow: 0 1px 2px var(--shadow-card);
 	}
 
-	/* ── 窄屏标签页（宽屏隐藏：三栏直接并列） ── */
-	.pe-tabs { display: none; gap: 4px; padding: 3px; border-radius: calc(var(--radius) * 0.9); border: 1px solid var(--border); background: var(--muted); }
-	.pe-tab {
-		flex: 1;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		padding: 7px 10px;
-		border-radius: calc(var(--radius) * 0.7);
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--muted-foreground);
-		transition: background-color .18s ease, color .18s ease;
-	}
-	.pe-tab.on {
-		background: var(--background);
-		color: var(--foreground);
-		box-shadow: 0 1px 2px var(--shadow-card);
-	}
-
-	/* ── 三栏骨架 ──
-	   宽屏：左 300 / 中 自适应 / 右 300。中栏吸收剩余空间，最窄 0 防溢出。 */
+	/* ── 双栏骨架：左编辑 1.1fr / 右预览 1fr，两栏等高铺满 ── */
 	.pe-body {
 		display: grid;
-		grid-template-columns: minmax(0, 300px) minmax(0, 1fr) minmax(0, 300px);
+		grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
 		gap: 0.75rem;
 		align-items: start;
+		flex: 1 1 auto;
 	}
 	.pe-col { min-width: 0; display: flex; flex-direction: column; gap: 0.75rem; }
 
@@ -697,39 +699,42 @@
 	}
 	.pe-tpl:hover { background: var(--accent); }
 
-	/* ── 预览 ── */
+	/* ── 预览（右栏主区，更高更宽） ── */
+	.pe-right { position: sticky; top: 0; }
+	.pe-preview-card { display: flex; flex-direction: column; }
 	.pe-preview-wrap { padding: 0.6rem; }
 	.pe-preview {
 		margin: 0 auto;
 		width: 100%;
-		max-height: 320px;
+		/* 预览区高度跟随视口：笔记本 / 带鱼屏都能看到整屏效果 */
+		max-height: calc(100vh - 210px);
+		min-height: 420px;
 		overflow: auto;
 		border: 1px solid var(--border);
 		border-radius: calc(var(--radius) * 0.9);
 		background: var(--background);
 		transition: max-width .25s ease;
 	}
-	.pe-preview-inner { padding: 0.9rem; }
-	.pe-preview-inner.is-full { padding: 0.4rem; }
+	.pe-preview-inner { padding: 1.1rem; }
+	.pe-preview-inner.is-full { padding: 0.5rem; }
 	.pe-pv-banner {
-		height: 64px;
-		margin: -0.9rem -0.9rem 0.7rem;
+		height: 96px;
+		margin: -1.1rem -1.1rem 0.9rem;
 		background-size: cover;
 		background-position: center;
 	}
 	.pe-pv-title {
 		font-family: var(--font-heading);
-		font-size: 1.1rem;
+		font-size: 1.35rem;
 		font-weight: 600;
-		margin-bottom: 0.5rem;
+		margin-bottom: 0.6rem;
 		color: var(--foreground);
 	}
-	.pe-pv-body { font-size: 12px; line-height: 1.7; color: var(--prose-body, var(--foreground)); }
+	.pe-pv-body { font-size: 13.5px; line-height: 1.7; color: var(--prose-body, var(--foreground)); }
 	.pe-pv-empty { font-size: 12px; color: var(--muted-foreground); }
 	.pe-hint { margin-top: 0.4rem; font-size: 11px; line-height: 1.5; color: var(--muted-foreground); }
 
-	/* ── 中栏：正文 ── */
-	.pe-center { position: sticky; top: 0; }
+	/* ── 左栏：正文 ── */
 	.pe-field { display: flex; flex-direction: column; gap: 0.4rem; }
 	.pe-title-input {
 		height: auto;
@@ -762,9 +767,7 @@
 	.pe-tb-btn:active { transform: scale(0.94); }
 	.pe-textarea {
 		width: 100%;
-		/* 用 vh 而非固定 px：编辑器自身不滚动，正文区高度跟随视口，
-		   笔记本与带鱼屏都不会出现"框太短写两行就要滚"的问题。 */
-		min-height: max(420px, calc(100vh - 260px));
+		min-height: max(480px, calc(100vh - 300px));
 		padding: 1rem 1.1rem;
 		border: 1px solid var(--border);
 		border-radius: calc(var(--radius) * 1.2);
@@ -790,11 +793,10 @@
 		resize: vertical;
 	}
 
-	/* ── 右栏字段 ── */
-	.pe-fields { display: flex; flex-direction: column; gap: 0.85rem; padding: 0.85rem; }
+	/* ── 抽屉内字段 ── */
+	.pe-fields { display: flex; flex-direction: column; gap: 0.85rem; }
 	.pe-label { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
 
-	/* 版心四选一：用宽度示意条让"窄/标准/宽/全"一眼可辨 */
 	.pe-layout-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 	.pe-layout-opt {
 		display: flex;
@@ -847,27 +849,20 @@
 	}
 	.pe-switch input { accent-color: var(--primary); }
 
-	/* ── 响应式 ──
-	   1440 以上三栏；1024–1440 收窄侧栏；1024 以下改双栏（正文 + 右栏换行）；
-	   860 以下用标签页切换 —— 这是"自适应布局/响应式设计"的落点。 */
-	@media (max-width: 1440px) {
-		.pe-body { grid-template-columns: minmax(0, 260px) minmax(0, 1fr) minmax(0, 260px); }
-	}
+	/* ── 响应式：窄屏收成单栏（编辑区在上、预览区在下） ── */
 	@media (max-width: 1120px) {
-		.pe-tabs { display: flex; }
 		.pe-body { grid-template-columns: minmax(0, 1fr); }
-		/* 单栏模式下由标签页控制显示 */
-		.pe-col.hide-narrow { display: none; }
-		.pe-center { position: static; }
+		.pe-right { position: static; }
+		.pe-preview { max-height: 480px; min-height: 320px; }
 		.pe-textarea { min-height: 60vh; }
+		/* 窄屏下把设备档位字样精简 */
 	}
 	@media (max-width: 640px) {
 		.pe-header { gap: 0.5rem; }
-		/* 窄屏把设备预览档位藏掉：手机上没有"桌面预览"的意义 */
 		.pe-device-group { display: none; }
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.pe-preview, .pe-tab, .pe-tpl, .pe-icon-btn, .pe-device-btn, .pe-tb-btn, .pe-layout-opt {
+		.pe-preview, .pe-tpl, .pe-icon-btn, .pe-device-btn, .pe-tb-btn, .pe-layout-opt {
 			transition: none;
 		}
 		.pe-tb-btn:active { transform: none; }

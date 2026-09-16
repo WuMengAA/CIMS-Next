@@ -190,6 +190,10 @@
 	}
 	body {
 		@apply bg-background text-foreground font-sans antialiased;
+		/* 整体布局约束：全站只有「侧边栏 + 右侧区域」两列，
+		   任何元素不得把页面撑出横向滚动条。具体见下方横线防溢出段。 */
+		overflow-x: clip;
+		max-width: 100%;
 	}
 	h1,
 	h2,
@@ -221,6 +225,18 @@
 
 	:where(p, li, dd, dt, blockquote, figcaption, td, th, a, span, h1, h2, h3, h4, h5, h6) {
 		overflow-wrap: break-word;
+	}
+
+	/* 右区域（内容区）自身的溢出防线：
+	   侧边栏固定占左列，内容区必须是唯一可滚动列，任何子元素不得越出。
+	   overflow-x: clip 不创建滚动上下文（区别于 hidden），
+	   不会破坏内部 sticky / 独立滚动子容器。 */
+	[data-slot="sidebar-inset"],
+	[data-slot="sidebar-inset"] > * {
+		max-width: 100%;
+	}
+	[data-slot="sidebar-inset"] {
+		overflow-x: clip;
 	}
 }
 /* --- Scrollbar utilities --- */
@@ -761,5 +777,41 @@
    抽屉停留在 z-50、被 z-55 的透明遮罩盖住 —— 触摸/点击全部被遮罩吞掉，
    表现为移动端侧边栏「无法滑动 / 无法点击 / X 关闭按钮失效」。
    ─────────────────────────────────────────────────────────────────────────── */
+/* ───────────────────────────────────────────────────────────────────────────
+   弹窗 / 浮层层级统一（需求：弹窗永远完整可见、置于内容之上）
+   ───────────────────────────────────────────────────────────────────────────
+   全站 z-axis 规划（从低到高）：
+     z-10  桌面侧栏容器（固定列本体）
+     z-40  页面级哑遮罩（icon-picker 关闭用）
+     z-50  阅读进度条 / 内容层浮层
+     z-55  移动端抽屉遮罩（data-mobile 抽屉用）
+     z-60  移动端抽屉本体（必须高于其遮罩）
+     z-[70] 普通弹窗遮罩（sheet / alert-dialog / 自定义弹层）
+     z-[71] 普通弹窗内容（必须高于其遮罩，否则点不到按钮）
+     z-[80] 搜索面板 / 关键浮层（最高，压过一切）
+   关键约束：
+     ① 普通 sheet 的 content 是 z-50（shadcn 默认类），而 layout.css 曾把
+        [data-slot="sheet-overlay"] 提到 z-55 —— 结果内容(50)被自己的遮罩(55)
+        盖住：透明遮罩吞掉所有点击，弹窗「看得见点不着」。必须 content > overlay。
+     ② 移动端抽屉的 content 被 sidebar.svelte 覆盖为 data-slot="sidebar" +
+        data-mobile="true"，与普通弹窗(data-slot="sheet-content")不冲突，
+        可以各定各的量级：抽屉 60 < 普通弹窗 70，互不干扰。
+     ③ 任何弹窗都不允许超出视口：content 统一 max-h + 内部滚动，
+        长内容时弹窗在本体内滚动，而不是溢出屏幕外。
+   ─────────────────────────────────────────────────────────────────────────── */
 [data-slot="sheet-overlay"] { z-index: 55; }
 [data-mobile="true"] { z-index: 60; }
+[data-slot="sheet-content"]:not([data-mobile="true"]) {
+	z-index: 71;
+	/* 防越界：抽屉/弹窗长内容时本体滚动，宽度也绝不超过视口 */
+	max-height: min(88dvh, 100%);
+	overflow-y: auto;
+}
+[data-slot="alert-dialog-overlay"] { z-index: 70; }
+[data-slot="alert-dialog-content"] {
+	z-index: 71;
+	max-height: min(88dvh, 100%);
+	overflow-y: auto;
+}
+/* 页面里手写的自定义弹层（fixed inset-0 遮罩+内容一体）统一压过侧栏 */
+body > .modal-root-fix { z-index: 80; }
