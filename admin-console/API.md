@@ -96,18 +96,20 @@ CIMS 原生不提供「锁屏 / 截图 / 远程屏幕控制」这类 OS 级动�
 - 代理：`ext/stelarith-agent/`（Rust，常驻、仅绑 localhost）
 - **无后端时这些能力自动降级为演示提示**，不影响面板其余功能。
 
-## 3. 协作类（chat / 工单 / Bug / 审计 → stelarith-website）
+## 3. 协作类（chat / 工单 / Bug / 审计）
 
 「电教委员间交流 / 故障工单 / Bug 提交 / 操作审计」是**人际协作数据**，CIMS 不存储。
-按你的要求，这类数据落到 **stelarith-website**（复用其多用户体系与内容存储），而非另建网关：
+落地分两类承载方，面板按部署形态自动选择，**未配置时一律演示降级，面板永不白屏**：
 
-| 功能 | 承载方 | 说明 |
-|---|---|---|
-| 班级交流 | stelarith-website 内容/消息模型 | 插件经本地代理上报，同年级各班订阅 |
-| 故障上报 / Bug | 网站 `submitFeedback` / 新增 `submitIssue` | 网站后台跟踪状态 |
-| 操作审计 | CIMS audit + 网站操作日志 | 谁在何时做了什么 |
+| 功能 | 首选承载方 | 未配置时回落 | 说明 |
+|---|---|---|---|
+| 班级交流（跨班互通） | 自有扩展网关 `GET/POST /chat?room=`（`ext/stelarith-ext-gateway/`，房间隔离） | 演示数据 | 默认房间 `techrep-global`（全校电教委员群），各班用 `classId` 作房间 |
+| 故障上报 / Bug | **stelarith-website** `POST /api/feedback`（按 `report` / `bug` 标签归档） | 扩展网关 `/reports` `/bugs` → 演示数据 | 仅当面板内嵌网站（`embedded`）或配置了 `siteHost` 时走网站 |
+| 操作审计 | 扩展网关 `/audit` | 演示数据 | CIMS 侧的账户/资源审计另见其 admin 端口 |
+| VNC 会话回执 | 扩展网关 `/vnc-session` | 演示提示 | 代理启 VNC 后回报 `{ip,port,token}`，面板轮询 |
 
-面板对网站侧调用通过**网站同源服务端代理**（`ext/stelarith-website-sync/console-route.md`），浏览器不持网站以外的凭据。
+面板对网站侧调用走**同源服务端代理**（`ext/stelarith-website-sync/console-route.md`），浏览器不持网站以外的凭据；
+对扩展网关直连（CORS 已开）。两者都不是虚构接口——均为本方案包自带的、可运行的代码。
 
 ---
 

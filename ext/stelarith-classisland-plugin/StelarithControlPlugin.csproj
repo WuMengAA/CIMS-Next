@@ -1,47 +1,71 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!--
-      目标版本已切到 ClassIsland 2.1.0.1（本机实际安装版本）。
-      重要：ClassIsland 2.x 的 UI 框架已由 WPF 迁移为 Avalonia，
-      因此本工程改为 net8.0、去掉 UseWPF/UseWindowsForms。
-      按 1.4.3.1（WPF）编译出的插件在 2.1.0.1 中会**被静默跳过、不加载**（已由运行日志证实）。
-    -->
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <OutputType>Library</OutputType>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <!-- 本机已加载成功的插件（AIIsland/ExtraIsland/FancyAnima）目录内均含 X.runtimeconfig.json，
-         本工程此前缺此文件，补齐以对齐实际加载约定。 -->
-    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>StelarithControlPlugin</RootNamespace>
     <AssemblyName>StelarithControlPlugin</AssemblyName>
+    <!--
+      三处版本号必须同步，否则会出现「界面显示旧版本」的假象：
+        · 本行 <Version>            → 程序集版本（错误报告 / 反射读到时用）
+        · manifest.yml 的 version   → ClassIsland 插件清单版本（插件管理页与
+                                      本插件状态遥测 PluginInventory 读的都是它）
+        · 仓库 tag / Release        → 分发版本
+      本轮 1.3.0.0 的教训：manifest.yml 改了但没重新构建，构建产物里的
+      manifest 仍是旧版（Content 项只在构建时复制），部署后界面仍显示 1.2.0.0。
+      改 version 后**必须重新构建并连 manifest.yml 一起部署**。
+    -->
+    <Version>1.3.0.0</Version>
   </PropertyGroup>
 
+  <!--
+    对齐 ClassIsland 真实插件 SDK（公开 NuGet：ClassIsland.PluginSdk）。
+    版本相关：Version 需替换为与「部署目标 ClassIsland 版本」匹配的 PluginSdk 版本号。
+    经本机构建实测，NuGet 当前发布的最新稳定版为 1.4.3.1（原 1.0.0 占位已被 NuGet 自动解析到该版）。
+    如部署目标为其他 ClassIsland 版本，请按该版本对应的 PluginSdk 版本调整下行 Version。
+
+    部署步骤：
+      1) dotnet build -c Release
+      2) 把 bin/Release/net8.0-windows/ 下的
+         StelarithControlPlugin.dll + StelarithControlPlugin.deps.json + manifest.yml
+         一并复制到插件目录（**注意：这里是 ClassIsland 的数据目录，不是 %APPDATA%**）：
+           D:\Classlsland\data\Plugins\StelarithControlPlugin\
+         只复制 dll 而漏掉 manifest.yml，会让插件界面显示的版本号停在旧值。
+      3) 重启 ClassIsland；带 [PluginEntrance] 的程序集会被自动扫描加载。
+
+    若目标 ClassIsland 版本对以下符号有差异，按该版本源码调整：
+      · INotificationHost / NotificationReceived 事件
+      · Notification.MessageContent 字段
+      · PluginBase.GetService<T>()
+  -->
   <ItemGroup>
     <PackageReference Include="ClassIsland.PluginSdk" Version="2.1.0.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.0" />
-    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
   </ItemGroup>
 
   <!--
-    ClassIsland 2.x 的插件清单（YAML）。加载器先读 manifest.yml 才能定位入口程序集；
-    缺此文件时插件会被静默跳过（日志中完全不出现，也不报错）。
-    旧版 plugin.manifest.json 为 1.4.x 格式，2.x 不再识别。
+    集控面板入口需要 Avalonia 的托盘菜单类型（NativeMenuItem 等）。
+    运行时 ClassIsland 已加载这些程序集，此处仅编译期引用（HintPath 指向运行版目录，随部署环境替换）。
   -->
   <ItemGroup>
-    <None Include="manifest.yml" CopyToOutputDirectory="PreserveNewest" />
+    <Reference Include="Avalonia.Base">
+      <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Base.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Avalonia.Controls">
+      <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Controls.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
-  <!--
-    VoiceHub 点歌看板显示组件：源码在 ../classisland-voicehub-display/plugin（无独立 csproj），
-    以 Link 方式并入本程序集，组件与主插件同属一个 dll，ClassIsland 扫描 [ComponentInfo] 即可发现。
-    已随 2.x 迁移为 Avalonia 纯代码 UI，故不再包含原 WPF 的 .xaml（不移动/不复制源文件，仅链接引用）。
-  -->
+  <!-- 插件清单：ClassIsland 要求根目录存在 manifest.yml（YAML），并随构建复制到输出目录 -->
   <ItemGroup>
-    <Compile Include="..\classisland-voicehub-display\plugin\VoiceHubSettings.cs" Link="VoiceHub\VoiceHubSettings.cs" />
-    <Compile Include="..\classisland-voicehub-display\plugin\VoiceHubDisplayComponent.cs" Link="VoiceHub\VoiceHubDisplayComponent.cs" />
+    <Content Include="manifest.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

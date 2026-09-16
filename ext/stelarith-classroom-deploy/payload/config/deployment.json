@@ -1,0 +1,49 @@
+{
+  "_readme": "教室端部署配置。部署前请改本文件（也可以不改，脚本会逐项询问）。",
+  "_字段说明": {
+    "ServerBase": "★必填。学校集控服务端的 CIMS 客户端地址。内网部署填 http://10.0.0.10:8096（不要带结尾斜杠）；公网部署填租户自己的子域名 https://<slug>.<基域>，详见 docs/07",
+    "ServerPanel": "电教委员面板地址。留空则按 ServerBase 的主机名自动推导为 http://<主机>:8090/admin/console。公网部署填 https://panel.example.com/admin/console",
+    "BaseDomain": "租户基域。必须等于服务端 .env 里的 CIMS_BASE_DOMAIN。内网部署用默认 localhost；公网部署改成真实基域，如 cims.example.com",
+    "Slug": "租户标识，必须等于服务端 CIMS 的账户 slug。星璃演示环境为 demo-class",
+    "ClientUid": "★本机唯一标识。留空则自动取计算机名（小写化）。同一租户下不可重复",
+    "ClassName": "班级名（仅用于面板显示与运维识别，可留空）",
+    "ClassPlanName": "班级课表资源名，如 cp_class02。留空则用 default_classplan（由面板按班级绑定后自动生效）",
+    "NotificationSourceName": "广播在教室大屏上显示的发出来源名。默认「集控广播」",
+    "InstallDir": "安装目录。默认 C:\\ClassIsland",
+    "AutoStart": "是否加入开机自启（写入当前用户启动文件夹）",
+    "CreateDesktopShortcut": "是否创建桌面快捷方式（ClassIsland + 电教委员面板）",
+    "ResourceWriteBack": "是否允许插件把同步到的课表写回本机 ClassIsland 档案。若改用官方集控下发课表，请设为 false，避免两套机制互相覆盖",
+    "RefreshIntervalSeconds": "课表/配置拉取间隔（秒，最小 5）",
+    "VoiceHubBase": "点歌站地址，如 https://voicehub.example.edu。留空 = 不启用点歌类组件",
+    "VoiceHubKey": "点歌站开放 API Key（需 songs:read 权限）",
+    "OfficialManagement": "ClassIsland 自带的「集控」功能绑定设置（可选，独立于星璃插件）。详见 docs/03-官方集控与绑定设置.md"
+  },
+
+  "ServerBase": "",
+  "ServerPanel": "",
+
+  "BaseDomain": "localhost",
+  "Slug": "demo-class",
+  "ClientUid": "",
+  "ClassName": "",
+  "ClassPlanName": "",
+
+  "NotificationSourceName": "集控广播",
+
+  "InstallDir": "C:\\ClassIsland",
+  "AutoStart": true,
+  "CreateDesktopShortcut": true,
+  "ResourceWriteBack": true,
+  "RefreshIntervalSeconds": 30,
+
+  "VoiceHubBase": "",
+  "VoiceHubKey": "",
+
+  "OfficialManagement": {
+    "Enabled": false,
+    "ManagementServerKind": 0,
+    "ManagementServer": "",
+    "ManifestUrlTemplate": "",
+    "ClassIdentity": ""
+  }
+}

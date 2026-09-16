@@ -17,10 +17,11 @@
 
 ```
 电教委员集控面板 (admin-console/, 零框架前端 + Tauri 壳)
-      │  REST / gRPC command
+      │  REST（management HTTP，CIMS 原生）
+      │  —— 重启 / 强制同步 / 下发通知 / 资源写，面板直连，无自建网关
       ▼
-CIMS 集控后端 (Go, gRPC command + socket)   ← 只读参考 ../CIMS-backend/
-      │  command 下发 + 资源写入
+CIMS 集控后端 (Python + FastAPI + gRPC，三端口 uvicorn)   ← 只读参考 ../CIMS-backend/
+      │  command 下发 + 资源写入 + Manifest 拉取
       ▼
 ClassIsland 客户端插件 (ext/stelarith-classisland-plugin/, C#)
       │  设备操作 / 屏幕回执 / VNC 按需启停
@@ -38,7 +39,14 @@ ClassIsland 客户端插件 (ext/stelarith-classisland-plugin/, C#)
 
 | 路径 | 说明 |
 |------|------|
+| `README.md` / `交付汇报.md` / `STATUS.md` | 门面文档、最终交付汇报、进度清点 |
+| `docs/` | `实施方案.md`（落地方案）、`扩展能力设计.md`（缺失能力设计）、`field-deploy.md`（现场部署 runbook） |
+| `architecture/架构图.md` | mermaid 架构 / 数据流 / 命令流 / 部署拓扑 |
+| `deploy/` | CIMS + 扩展网关 Docker 一键部署（compose / Dockerfile / nginx / .env.example / README） |
+| `classisland-config/` | 客户端视图与自动化规则模板、内网更新源说明 |
 | `admin-console/` | 电教委员集控面板（前端 `src/` + Tauri 壳）。零框架、轻量、全能、API 友好 |
+| `admin-frontend/` | 早期最小管理前端原型 + `GRPC_COMMAND_PROXY.md`（**已标注历史参考**，见 §4.1） |
+| `verify.mjs` / `verify-report.md` | 交付自检脚本（产物 + 接口契约 + 网关冒烟）与其机跑报告 |
 | `ext/stelarith-classisland-plugin/` | ClassIsland 客户端插件（锁屏 / 截图 / 远程 / VNC / OS 动作） |
 | `ext/stelarith-agent/` | 本地代理（Rust，按需启 VNC + 回执通道；生产常驻） |
 | `ext/stelarith-agent-node/` | 本地代理 **Node 参考实现**（逻辑 1:1 对齐 Rust 版，可免 cargo 直接跑、含端到端冒烟测试） |
@@ -53,10 +61,25 @@ ClassIsland 客户端插件 (ext/stelarith-classisland-plugin/, C#)
 
 ## 4. 真实接口契约（已核实源码，非臆造）
 
-### 4.1 CIMS 集控后端
-- `management` 端口：账户 / 设备 / 组件管理（详见 `../CIMS-backend/` 源码）。
-- `client` 端口：班级客户端注册 / 心跳 / 指令回执。
-- 联调状态：**真实 socket 5/6 通过**；bidi gRPC 因 `grpcio 1.78` 边界未过（已知，修复在跟进）。
+### 4.1 CIMS 集控后端（已逐条在 `../CIMS-backend/app/**` 源码核实）
+
+CIMS 的 **management 端口已原生暴露客户端实时控制 HTTP 接口与资源写接口**，面板直接对接，**无需自建命令网关**。
+
+- 认证：`POST /user/auth` → `{token}`，后续 `Authorization: Bearer <token>`
+- 客户端控制（management）：
+  - `GET  /account/{acct}/client/list` | `/status` | `/{uid}`
+  - `POST /account/{acct}/client/{uid}/command/restart`
+  - `POST /account/{acct}/client/{uid}/command/update-data`
+  - `POST /account/{acct}/client/{uid}/command/send-notification`
+- 资源写（management）：`POST /account/{acct}/{type}/write?name=`，
+  `{type}` ∈ `ClassPlan | TimeLayout | Subjects | Policy | DefaultSettings | Components | Credentials`
+- 配置拉取（client）：`GET /v1/client/{uid}/manifest`、`GET /v1/client/{type}?name=`
+- 账户：`GET /account/list`（取 `id` 作为 `{acct}`）
+- 协作 / 上报类（聊天 / 工单 / Bug / 审计历史）**CIMS 不存储**，由自有扩展网关 `ext/stelarith-ext-gateway/`（可选）承载，未配置则演示降级。
+
+联调状态：**真实 socket 5/6 通过**；bidi gRPC 因 `grpcio 1.78` 边界未过（已知，仅影响双向实时流，**不影响上述单向命令与 HTTP 控制**）。
+
+> 历史说明：`admin-frontend/GRPC_COMMAND_PROXY.md` 是早期「需自建 HTTP→gRPC 命令代理」假设下的产物，**该假设已证伪**，文件保留为特殊场景方案 B 参考，不作为交付主路径。
 
 ### 4.2 voicehub 校园点歌（已读 `server/api/open/*` 源码核实）
 - 鉴权：`x-api-key` 请求头（key 格式 `vhub_...`，对应权限 `songs:read` / `songs:request` / `schedules:read`）。

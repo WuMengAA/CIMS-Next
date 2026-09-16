@@ -72,6 +72,7 @@ __pycache__/
 # .NET / C# 构建产物（ext/*/ 下 ClassIsland 插件）
 bin/
 obj/
+*.user
 # 临时构建备份目录
 build_prev_*/
 

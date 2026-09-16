@@ -43,9 +43,13 @@
 | 文件 | 作用 |
 |---|---|
 | `voicehub-adapter.mjs` | 服务端/CI 推送适配器：拉取 voicehub → 写 CIMS `Components/songboard`（真实接口，详见脚本注释） |
+| `voicehub-embed.mjs` | **浏览器端即插即用模块**（ESM 零依赖）：导出 `VoicehubEmbed`，封装拉队列 / 点歌 / 推上屏 / 渲染迷你 UI；契约与面板 `api.js` 完全一致，任意页面 `import` 即可内嵌点歌模块 |
+| `voicehub-embed.test.mjs` | 模块纯逻辑 / 契约测试（`node --test`，demo 降级 + 真实端点断言） |
 | `../classisland-voicehub-display/bridge/bridge.mjs` | 班级本地桥接代理：轮询 voicehub + 全屏看板 + 可选读 CIMS |
 | `../classisland-voicehub-display/plugin/*` | ClassIsland 点歌看板组件脚手架（C#/XAML） |
 | `../admin-console/src/app.js` 的 `views.voicehub` | 集控面板「校园点歌」模块（已接入真实 API） |
+
+> **即插即用模块已交付**：`voicehub-embed.mjs` 是浏览器端零依赖 ESM，导出 `VoicehubEmbed`，封装 `list()`（当前播放+待播队列）、`request()`（点歌）、`pushToScreen()`（写 CIMS `Components/songboard`）、`render()`（迷你可嵌入 UI）。集控面板 `admin-console` 的内联实现与其契约一致；stelarith-website 侧可直接 `import { VoicehubEmbed } from "ext/voicehub-sync/voicehub-embed.mjs"` 在任意页面内嵌校园点歌模块，无需重复造轮子。模块 `node --test` 已覆盖 demo 降级与真实端点契约。
 
 ## 五、接入步骤（落地）
 

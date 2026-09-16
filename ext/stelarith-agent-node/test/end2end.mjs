@@ -62,6 +62,7 @@ function req(method, url, body) {
 }
 
 let gwProc, agProc;
+const agProcs = [];
 async function main() {
   log("启动扩展网关 @", GATEWAY_PORT);
   gwProc = spawn("node", [GATEWAY], { env: { ...process.env, PORT: String(GATEWAY_PORT), DATA_FILE: tmpData }, stdio: "ignore" });
@@ -126,13 +127,50 @@ async function main() {
   if (after !== null) fail("停止后网关会话未清除");
   log("停止并清除回执 ✓");
 
-  console.log("\n[e2e] ✅ 全部通过：面板签名→代理验签→VNC回执→noVNC可达→停止清理 闭环验证成功");
+  // ===== 第二阶段：Ed25519 非对称验签（生产模型，对应 ext/stelarith-website-sync/sign-task.mjs）=====
+  log("启动 Ed25519 代理 @ 17998（STELARITH_SITE_PUBKEY 已配）");
+  const ed = await crypto.webcrypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+  const pubDer = Buffer.from(await crypto.webcrypto.subtle.exportKey("spki", ed.publicKey));
+  const pubPem = `-----BEGIN PUBLIC KEY-----\n${pubDer.toString("base64").match(/.{1,64}/g).join("\n")}\n-----END PUBLIC KEY-----\n`;
+  const ag2Port = 17998;
+  const ag2Uid = "uid-e2e-ed25519";
+  const ag2Proc = spawn("node", [path.join(ROOT, "agent.mjs"), "--dry-run"], {
+    env: { ...process.env, STELARITH_AGENT_PORT: String(ag2Port), STELARITH_SITE_PUBKEY: pubPem, STELARITH_EXT_URL: `http://127.0.0.1:${GATEWAY_PORT}`, STELARITH_DEVICE_UID: ag2Uid, MOCK_VNC: "1" },
+    stdio: "ignore",
+  });
+  agProcs.push(ag2Proc);
+
+  await waitFor(async () => (await req("GET", `http://127.0.0.1:${ag2Port}/status`)).status === 200, "ed25519 agent up");
+
+  const signEd = async (action) => {
+    const ts = Math.floor(Date.now() / 1000);
+    const sigBuf = await crypto.webcrypto.subtle.sign("Ed25519", ed.privateKey, new TextEncoder().encode(`${action}|${ts}`));
+    const token = Buffer.from(sigBuf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    return { action, token, ts };
+  };
+
+  const edStart = await req("POST", `http://127.0.0.1:${ag2Port}/task`, await signEd("remote_control_start"));
+  if (edStart.status !== 200) fail("Ed25519 合法指令被拒 status=" + edStart.status);
+  if (edStart.body.result !== "vnc_started") fail("Ed25519 未返回 vnc_started: " + JSON.stringify(edStart.body));
+  log("Ed25519 合法指令放行 ✓ port =", edStart.body.vnc_port);
+
+  const edBad = await req("POST", `http://127.0.0.1:${ag2Port}/task`, { action: "lock", token: "not-a-valid-sig", ts: Math.floor(Date.now() / 1000) });
+  if (edBad.status !== 401) fail("Ed25519 非法令牌未被拒绝 status=" + edBad.status);
+  log("Ed25519 非法令牌被正确拒绝 (401) ✓");
+
+  const edStop = await req("POST", `http://127.0.0.1:${ag2Port}/task`, await signEd("remote_control_stop"));
+  if (edStop.body.result !== "vnc_stopped") fail("Ed25519 未停止: " + JSON.stringify(edStop.body));
+  await req("DELETE", `http://127.0.0.1:${GATEWAY_PORT}/vnc-session?uid=${ag2Uid}`);
+  log("Ed25519 停止并清理 ✓");
+
+  console.log("\n[e2e] ✅ 全部通过：HMAC 路径 + Ed25519 生产路径 双模验签→VNC回执→noVNC可达→停止清理 闭环验证成功");
   cleanup(0);
 }
 
 function cleanup(code) {
   try { gwProc.kill(); } catch {}
   try { agProc.kill(); } catch {}
+  for (const p of agProcs) { try { p.kill(); } catch {} }
   try { fs.unlinkSync(tmpData); } catch {}
   process.exit(code);
 }
