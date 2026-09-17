@@ -70,13 +70,26 @@ function Read-Required([string]$Label, [string]$Current, [string]$Example) {
 }
 
 $cfg.ServerBase = Normalize-Url $cfg.ServerBase
+# 公网部署时租户的对外地址就是 <slug>.<基域>，可以直接推出来，不必让人手敲 —— 少一个出错点。
+if (-not $cfg.ServerBase -and $cfg.BaseDomain -and $cfg.BaseDomain -ne 'localhost') {
+    $cfg.ServerBase = Normalize-Url ('https://' + $cfg.Slug + '.' + $cfg.BaseDomain)
+    Write-Info ("服务端地址按「基域 + 租户」自动推导：" + $cfg.ServerBase)
+}
 if (-not $cfg.ServerBase) {
     $cfg.ServerBase = Normalize-Url (Read-Required '学校集控服务端地址（CIMS 客户端端口）' '' 'http://10.0.0.10:8096')
 } else {
     Write-Ok ("服务端地址：" + $cfg.ServerBase)
 }
 
-if (-not $cfg.ServerPanel) { $cfg.ServerPanel = ConvertTo-PanelUrl $cfg.ServerBase }
+if (-not $cfg.ServerPanel) {
+    $cfg.ServerPanel = ConvertTo-PanelUrl $cfg.ServerBase
+    # 公网下这个推导几乎必错：面板通常挂在另一个域名（本项目在 www 上），且公网 8090 不对外。
+    # 与其装一个点不开的快捷方式，不如当场把话说清楚。
+    if ($cfg.BaseDomain -and $cfg.BaseDomain -ne 'localhost') {
+        Write-Warn ("未填 ServerPanel，已按 ServerBase 推导为：" + $cfg.ServerPanel)
+        Write-Warn '公网部署下该推导通常不对（面板与租户 API 常不在同一域名）。请在 config\deployment.json 显式填写 ServerPanel。'
+    }
+}
 $cfg.ServerPanel = Normalize-Url $cfg.ServerPanel
 
 if (-not $cfg.ClientUid) { $cfg.ClientUid = Get-ClientUidDefault }
