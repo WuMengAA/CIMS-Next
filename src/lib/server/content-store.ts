@@ -97,6 +97,20 @@ function ensureDirs() {
 	fs.mkdirSync(ARCHIVE_DIR, { recursive: true });
 }
 
+/**
+ * frontmatter 里的 date/updated 经 gray-matter（js-yaml）解析后，ISO 时间戳
+ * `2026-09-17T00:00:00.000Z` 会被识别成 YAML 时间戳类型 → 变成 JS **Date 对象**，
+ * 而非字符串。ContentItem.date 的契约是 string，`listItems` 排序时调用
+ * `date.localeCompare` 会因 Date 上没有该方法直接抛 TypeError，导致 /pages、
+ * /posts、/projects、/docs 等所有列表页 500。这里统一归一为 YYYY-MM-DD 字符串，
+ * 既满足契约，也避免下游把日期当对象用。
+ */
+function normDate(v: unknown, fallback: string): string {
+	if (typeof v === "string" && v) return v.length >= 10 ? v.slice(0, 10) : v;
+	if (v instanceof Date) return v.toISOString().slice(0, 10);
+	return fallback;
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // 进程内缓存层（adapter-node 单进程长驻，模块级 Map 跨请求复用）
 //
@@ -165,11 +179,11 @@ export function listItems(section: "posts" | "projects" | "docs" | "pages"): Con
 		const base: ContentItem = {
 			slug: file.replace(/\.md$/, ""),
 			title: (data.title as string) || file.replace(/\.md$/, ""),
-			date: (data.date as string) || new Date().toISOString().slice(0, 10),
+			date: normDate(data.date, new Date().toISOString().slice(0, 10)),
 			body: content.trim(),
 			status: (data.status as ContentItem["status"]) || "published"
 		};
-		if (data.updated) base.updated = data.updated;
+		if (data.updated) base.updated = normDate(data.updated, new Date().toISOString().slice(0, 10));
 		if (data.category) base.category = data.category;
 		if (data.tags) base.tags = data.tags;
 		if (data.excerpt) base.excerpt = data.excerpt;
@@ -218,10 +232,10 @@ export function getItem(section: "posts" | "projects" | "docs" | "pages", slug: 
 	return {
 		slug,
 		title: (data.title as string) || slug,
-		date: (data.date as string) || new Date().toISOString().slice(0, 10),
+		date: normDate(data.date, new Date().toISOString().slice(0, 10)),
 		body: content.trim(),
 		status: (data.status as ContentItem["status"]) || "published",
-		...(data.updated ? { updated: data.updated } : {}),
+		...(data.updated ? { updated: normDate(data.updated, new Date().toISOString().slice(0, 10)) } : {}),
 		...(data.category ? { category: data.category } : {}),
 		...(data.tags ? { tags: data.tags } : {}),
 		...(data.excerpt ? { excerpt: data.excerpt } : {}),
