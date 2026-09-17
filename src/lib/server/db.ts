@@ -101,6 +101,15 @@ CREATE TABLE IF NOT EXISTS console_chat (
 CREATE INDEX IF NOT EXISTS idx_console_chat_room ON console_chat(room, created_at);
 
 -- 集控操作日志（谁在哪个班对哪台设备做了什么）
+--
+-- 🔐 防篡改（2026-09-17 加）：每行带一条**哈希链**。
+--    row_hash  = H(prev_hash ‖ id ‖ actor ‖ role ‖ action ‖ target ‖ detail ‖ created_at)
+--    prev_hash = 上一行的 row_hash（链首为空串，或审计被裁剪后的「锚点」）。
+--    为什么需要：库里直连就能改一行记录，而「班级账号不能越权」这条承诺**只能靠审计自证**；
+--    审计本身可被静默改写的话，这条承诺等于不存在。
+--    单条 SHA256 只防「随手改」（改完必须重算后续所有行）—— 所以支持 CONSOLE_AUDIT_KEY 时
+--    改用 **HMAC-SHA256**：没有密钥就算把整张表重写一遍也造不出自洽的链。
+--    旧库（本次迁移前）的行没有哈希，verify 会跳过它们并如实报告「从第 N 行起可校验」。
 CREATE TABLE IF NOT EXISTS console_audit (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   actor      TEXT NOT NULL DEFAULT '',
@@ -108,9 +117,19 @@ CREATE TABLE IF NOT EXISTS console_audit (
   action     TEXT NOT NULL,
   target     TEXT NOT NULL DEFAULT '',
   detail     TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  prev_hash  TEXT NOT NULL DEFAULT '',
+  row_hash   TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_console_audit_created ON console_audit(created_at);
+
+-- 键值小表：放「不属于任何业务实体」的运行期元数据。
+-- 目前只用于审计链：audit_head（链尾哈希）、audit_anchor（裁剪后剩余链的起点哈希）、
+-- audit_pruned_before（裁剪到哪个时间点，便于解释为什么历史少了一段）。
+CREATE TABLE IF NOT EXISTS console_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
 
 -- 班级交流 · 好友关系（2026-09-15）
 -- 一对一行，requester 发起、addressee 接收；status: pending / accepted / rejected。
@@ -170,6 +189,14 @@ function ensureDb(): DatabaseSync {
 	);
 	if (!ncols.has("classes")) db.exec("ALTER TABLE console_notices ADD COLUMN classes TEXT NOT NULL DEFAULT ''");
 	if (!ncols.has("channel")) db.exec("ALTER TABLE console_notices ADD COLUMN channel TEXT NOT NULL DEFAULT ''");
+
+	// console_audit 哈希链字段（向后兼容旧库：老行补空串 = 「本行无链」，
+	// verifyAudit 会从第一条有哈希的行开始校验，并如实报告跳过了多少旧行）。
+	const acols = new Set(
+		(db.prepare("PRAGMA table_info(console_audit)").all() as { name: string }[]).map((c) => c.name)
+	);
+	if (!acols.has("prev_hash")) db.exec("ALTER TABLE console_audit ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''");
+	if (!acols.has("row_hash")) db.exec("ALTER TABLE console_audit ADD COLUMN row_hash TEXT NOT NULL DEFAULT ''");
 
 	seed(db);
 	// 历史 active 账号（本就不经邮箱验证即可登录，含种子 admin）统一视为已验证；

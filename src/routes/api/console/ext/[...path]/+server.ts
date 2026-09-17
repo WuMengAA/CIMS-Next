@@ -26,6 +26,9 @@ import {
 	addChat,
 	listAudit,
 	addAudit,
+	verifyAudit,
+	pruneAudit,
+	auditPolicy,
 	consoleSummary,
 	searchUsers,
 	getUserBrief,
@@ -46,7 +49,9 @@ import {
  *   GET    /api/console/ext/chat?room=xxx      班级交流消息（按房间隔离）
  *   POST   /api/console/ext/chat               发送消息（**@全体/重要等级时自动广播到大屏**）
  *   GET    /api/console/ext/audit?action=xxx   操作日志
+ *   GET    /api/console/ext/audit/verify       审计链自检（哈希链完整性 + 保留策略）
  *   POST   /api/console/ext/audit              记一条操作日志
+ *   POST   /api/console/ext/audit/prune        按保留期裁剪审计（需 device.manage；裁剪本身也留痕）
  *   GET    /api/console/ext/summary            面板汇总计数
  *   GET|DELETE /api/console/ext/vnc-session    设备会话回执（无设备代理时恒为空，保持面板轮询不报错）
  *
@@ -120,6 +125,11 @@ export async function GET(event: RequestEvent) {
 			return json(listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100));
 		case "audit":
 			return json(listAudit(Number(q.get("limit") ?? 100) || 100, q.get("action") || undefined));
+		case "audit/verify":
+			// 审计链自检：走一遍哈希链，回报「从第几行起可校验 / 第一处断在哪 / 为什么」。
+			// 不给「可信/不可信」的二值结论 —— 历史裁剪与旧库迁移都会合法地让链不完整，
+			// 二值化会把「正常裁剪」和「有人改库」混为一谈。
+			return json({ verify: verifyAudit(), policy: auditPolicy() });
 		case "summary":
 			return json(consoleSummary());
 		case "permissions":
@@ -158,6 +168,7 @@ export async function POST(event: RequestEvent) {
 	//   · 其余（audit 等）→ submitIssue：内容轴 L2
 	const need: Action | DeviceTier =
 		path === "notices" ? "control"
+		: path === "audit/prune" ? "manage"
 		: path === "chat" || path === "friends" ? "chatClass"
 		: "submitIssue";
 	const g = guard(event, need);
@@ -333,6 +344,20 @@ export async function POST(event: RequestEvent) {
 				return json({ ok });
 			}
 			return json({ error: "未知 action（request / accept / reject / remove）" }, { status: 400 });
+		}
+		case "audit/prune": {
+			// 按保留期裁剪。**裁剪本身也要留痕** —— 否则「某天的记录去哪了」会成为
+			// 又一个无法自证的疑点，而这正是审计要消灭的东西。
+			const days = Number(body.days) || undefined;
+			const r = pruneAudit(days);
+			addAudit({
+				actor,
+				role: u.role,
+				action: "audit.prune",
+				target: String(r.retentionDays),
+				detail: `裁剪审计：删除 ${r.removed} 条（保留 ${r.retentionDays} 天，截止 ${r.cutoff}），锚点=${(r.anchor || "无").slice(0, 12)}`
+			});
+			return json({ ok: true, ...r }, { status: 201 });
 		}
 		case "audit": {
 			if (!body.action) return json({ error: "缺少 action" }, { status: 400 });
