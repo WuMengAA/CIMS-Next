@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using ClassIsland.Core;
@@ -345,16 +346,51 @@ public static class StelarithDispatch
             case "remote_control_start":
             case "remote_control_stop":
                 if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
-                await Agent.SendAsync(task);
+                await ForwardToAgentAsync(task, "远程控制");
                 break;
             case "shell":
             case "reboot":
                 if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
-                await Agent.SendAsync(task);
+                await ForwardToAgentAsync(task, "系统");
                 break;
             default:
                 break;
         }
+    }
+
+    /// <summary>
+    /// 转发一条指令给本地代理，并**把失败原因变成可见信息**。
+    /// </summary>
+    /// <remarks>
+    /// 代理对「拒绝执行」同样返回 HTTP 200 + {"error":...}（shell 默认关闭、验签失败/防重放、
+    /// 未知动作、VNC 启动失败都会走这条路）。所以这里必须读回执里的 error 字段，不能只看状态码。
+    /// 另一种失败是连接失败 —— 在代理进部署包之前，这是最可能的实际情况。
+    /// 两者会给用户完全一样的现象：「面板下发 200，设备毫无反应」。
+    /// 必须给它一个能被看见的出口，否则同一问题会被反复排查。
+    /// </remarks>
+    private static async Task ForwardToAgentAsync(StelarithTask task, string what)
+    {
+        var r = await Agent.SendAsync(task);
+        if (r.Ok)
+        {
+            Diag($"agent ok: {task.Action}");
+            return;
+        }
+
+        Diag($"agent FAIL: {task.Action} -> {r.Error}");
+        StelarithNotificationProvider.Current?.Push(
+            StelarithBranding.SourceName, $"{what}指令未执行：{r.Error}", 8);
+    }
+
+    internal static void Diag(string msg)
+    {
+        try
+        {
+            File.AppendAllText(
+                Path.Combine(AppContext.BaseDirectory, "ste-dispatch-diag.log"),
+                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+        }
+        catch { /* 忽略 */ }
     }
 
     /// <summary>

@@ -19,13 +19,19 @@
  产出结构：
    <OutDir>\
      1-部署到本机.cmd  2-环境自检.cmd  3-升级或降级.cmd  4-回滚.cmd
-     config\  scripts\  docs\  app\  seed\data\  PACKAGE-INFO.json
+     config\  scripts\  docs\  app\  seed\data\  agent\  PACKAGE-INFO.json
+
+   agent\stelarith-agent.exe —— 本地代理。没有它，面板上的「远程屏幕控制」
+   与「系统级重启」在教室里点不动（其余功能不受影响）。
 =====================================================================
 #>
 [CmdletBinding()]
 param(
     [string]$SourceRoot = 'D:\Classlsland',
     [string]$OutDir = '',
+    # 本地代理二进制。默认从仓库里已编译的 release 产物取；
+    # 取不到时不静默放过 —— 见下方「1.5 本地代理」的处理。
+    [string]$AgentExe = '',
     [switch]$Zip,
     [switch]$SkipApp
 )
@@ -121,6 +127,31 @@ Get-ChildItem -LiteralPath $repoPayload -Recurse -File | ForEach-Object {
     if ($ext -eq '.ps1') { $scriptCount = $scriptCount + 1 }
 }
 Ok ("脚本 " + $scriptCount + " 个，文档与配置已就位（行尾/编码已规范化）")
+
+# ---------------------------------------------------------------- 1.5 本地代理
+Write-Host ''
+Step '纳入本地代理（StelarithAgent）'
+if (-not $AgentExe) {
+    # 默认取仓库里已编译好的 release 产物（与出包脚本同属 ext/ 下）
+    $AgentExe = Join-Path (Split-Path -Parent $PSScriptRoot) 'stelarith-agent\target\release\stelarith-agent.exe'
+}
+$agentIncluded = $false
+$agentSha = ''
+$agentSizeKB = 0
+if (-not (Test-Path -LiteralPath $AgentExe)) {
+    Warn ('未找到本地代理二进制：' + $AgentExe)
+    Warn '  缺它的后果：面板上的「远程屏幕控制」与「系统级重启」在教室里不可用。'
+    Warn '  其余功能（锁屏/截图/课表/广播/切班）不受影响 —— 那些不走代理。'
+    Warn '  补上它： cd ext\stelarith-agent ; cargo build --release'
+} else {
+    $dstAgent = Join-Path $OutDir 'agent\stelarith-agent.exe'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $dstAgent) -Force | Out-Null
+    Copy-Item -LiteralPath $AgentExe -Destination $dstAgent -Force
+    $agentSizeKB = [math]::Round((Get-Item -LiteralPath $dstAgent).Length / 1KB, 0)
+    $agentSha = (Get-FileHash -LiteralPath $dstAgent -Algorithm SHA256).Hash
+    $agentIncluded = $true
+    Ok ('代理已入包：' + $agentSizeKB + ' KB，SHA256 ' + $agentSha.Substring(0, 12) + '...')
+}
 
 # ---------------------------------------------------------------- 2. app
 if (-not $SkipApp) {
@@ -280,6 +311,9 @@ $info = [ordered]@{
     ClassIslandVersion = ($srcApp.Name -replace '^app-', '')
     PluginVersion      = $pluginVer
     PluginCount        = $plugN
+    AgentIncluded      = $agentIncluded
+    AgentSHA256        = $agentSha
+    AgentSizeKB        = $agentSizeKB
     AppSizeMB          = $appMB
     SeedSizeMB         = $seedMB
     TotalSizeMB        = [math]::Round(($appMB + $seedMB), 1)
@@ -361,6 +395,24 @@ Get-ChildItem -LiteralPath $OutDir -Recurse -File -Filter '*.json' | ForEach-Obj
     catch { $fail.Add('JSON 非法: ' + $_.FullName) }
 }
 Write-Host ("  · JSON " + $nJson + " 个：语法已校验") -ForegroundColor Gray
+
+# 5.5 本地代理：必须是真正的 PE 可执行文件
+# 为什么单独查：它是**外部工具链产物**，既不进 git，也不在文本/JSON 校验的覆盖范围内。
+# 源路径写错或产物被截断时，包会「看起来很完整」，但教室里代理根本起不来，
+# 而现象又会退化成「面板点了没反应」——正好是这次要消灭的那类问题。
+$agentPath = Join-Path $OutDir 'agent\stelarith-agent.exe'
+if (Test-Path -LiteralPath $agentPath) {
+    $ab = [System.IO.File]::ReadAllBytes($agentPath)
+    if ($ab.Length -lt 10240) {
+        $fail.Add('本地代理体积异常（' + $ab.Length + ' 字节），疑似截断')
+    } elseif ($ab[0] -ne 0x4D -or $ab[1] -ne 0x5A) {
+        $fail.Add('本地代理不是有效 PE 可执行文件（缺 MZ 头）')
+    } else {
+        Write-Host ('  · 本地代理：PE 头/体积已校验（' + [math]::Round($ab.Length / 1KB, 0) + ' KB）') -ForegroundColor Gray
+    }
+} else {
+    Write-Host '  · 本地代理：未入包 —— 面板上的「远程屏幕控制 / 系统级重启」将不可用' -ForegroundColor Yellow
+}
 
 Write-Host ''
 if ($fail.Count -gt 0) {

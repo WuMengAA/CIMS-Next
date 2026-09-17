@@ -52,6 +52,17 @@ if ($RemoveAutoStart) {
             Write-Info ('不存在，跳过：' + $p)
         }
     }
+    # 本地代理的自启也要一起摘 —— 否则「卸掉自启」只卸了一半，
+    # 重登录后代理照样自己起来，人会以为没卸干净。
+    if (Get-AgentTaskInfo) {
+        try { Stop-ScheduledTask -TaskName $script:AGENT_TASK -ErrorAction SilentlyContinue } catch { }
+        Unregister-ScheduledTask -TaskName $script:AGENT_TASK -Confirm:$false
+        Get-Process -Name 'stelarith-agent' -ErrorAction SilentlyContinue |
+            ForEach-Object { try { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue } catch { } }
+        Write-Ok ('已移除本地代理自启任务：' + $script:AGENT_TASK)
+    } else {
+        Write-Info '本地代理自启任务不存在，跳过。'
+    }
     Write-Warn '已移除开机自启与桌面快捷方式（数据与安装目录保留）。'
     exit 0
 }
@@ -156,6 +167,59 @@ if (-not $hasSrcPlugin) {
         if ($m) { $newVer = $m.Matches[0].Groups[1].Value.Trim() }
     }
     Write-Ok ('版本：' + $(if ($oldVer) { $oldVer } else { '未知' }) + '  ->  ' + $(if ($newVer) { $newVer } else { '未知' }))
+}
+
+# 3.5 本地代理：新包里带了就一起换，否则代理会永远停在旧版本
+#     为什么放在「替换插件」里：两者都是程序文件，且同样不该触碰 data。
+$srcAgentExe = Join-Path $From 'agent\stelarith-agent.exe'
+if (-not (Test-Path -LiteralPath $srcAgentExe)) {
+    Write-Info '来源包内没有本地代理，跳过（当前代理保持原样）。'
+} elseif ($DryRun) {
+    Write-Info ('[演练] 将替换本地代理 -> ' + (Get-AgentExePath $InstallRoot))
+} else {
+    # 配置取值优先级：
+    #   ① 本机已在用的 run-agent.cmd（里面是本机实际生效的密钥）—— 保住「已经跑通的配置」
+    #   ② 新包 config\deployment.json 的 Agent 段 —— 适用于本机还没装过代理的情况
+    #   ③ 都没有 → 不装。半成品代理（没密钥）会让远程控制/重启全部被拒，
+    #      比明确不装更糟：面板上看着有，点了永远失败。
+    $agentCfg = [ordered]@{ DeviceUid = ''; Secret = ''; SitePubKey = ''; ExtUrl = ''; VncCmd = '' }
+    $cfgSource = ''
+    $oldCmd = Get-AgentCmdPath $InstallRoot
+    if (Test-Path -LiteralPath $oldCmd) {
+        $raw = Get-Content -LiteralPath $oldCmd -Raw
+        foreach ($pair in @(
+            @('STELARITH_DEVICE_UID',    'DeviceUid'),
+            @('STELARITH_AGENT_SECRET',  'Secret'),
+            @('STELARITH_SITE_PUBKEY',   'SitePubKey'),
+            @('STELARITH_EXT_URL',       'ExtUrl'),
+            @('STELARITH_VNC_CMD',       'VncCmd'))) {
+            $m = [regex]::Match($raw, ('set "' + $pair[0] + '=([^"]*)"'))
+            if ($m.Success) { $agentCfg[$pair[1]] = $m.Groups[1].Value.Replace('%%', '%') }
+        }
+        $cfgSource = '本机现有启动器'
+    } else {
+        $newCfgPath = Join-Path $From 'config\deployment.json'
+        if (Test-Path -LiteralPath $newCfgPath) {
+            $nc = Get-DeployConfig $newCfgPath
+            $agentCfg.DeviceUid  = [string]$nc.ClientUid
+            $agentCfg.Secret     = [string]$nc.Agent.Secret
+            $agentCfg.SitePubKey = [string]$nc.Agent.SitePubKey
+            $agentCfg.ExtUrl     = [string]$nc.Agent.ExtUrl
+            $agentCfg.VncCmd     = [string]$nc.Agent.VncCmd
+            $cfgSource = '新包 deployment.json'
+        }
+    }
+
+    if (-not $agentCfg.Secret -and -not $agentCfg.SitePubKey) {
+        Write-Warn '本机既没有代理启动器，新包里也没配 Agent.Secret / SitePubKey。'
+        Write-Info '已跳过代理安装 —— 不装半个配置的代理（它只会让按钮「点了永远失败」）。'
+        Write-Info '要用远程控制/重启，请跑一次「1-部署到本机.cmd」并填好 Agent.Secret。'
+    } else {
+        $ar = Install-StelarithAgent -InstallDir $InstallRoot -AgentCfg $agentCfg
+        if ($ar.Skipped)     { Write-Warn $ar.Detail }
+        elseif ($ar.Ok)      { Write-Ok ('本地代理已更新并重启（配置沿用' + $cfgSource + '，' + $ar.Detail + '）') }
+        else                 { Write-Warn ('本地代理已替换，但探活未通过：' + $ar.Detail) }
+    }
 }
 
 # ---------------------------------------------------------------- 4. 替换本体

@@ -385,6 +385,52 @@ if ($OpenFirewall) {
     }
 }
 
+# 6.2 本地代理（StelarithAgent）—— 让「需要 OS 权限」的动作真的能用
+# 为什么单列一步：面板上「远程屏幕控制 / 系统级重启」看着是有的，但它们的执行载体是
+# 本机代理。代理不进包、不自启，这两个按钮就是空的 —— 而现象会退化成「点了没反应」。
+if ($cfg.Agent.Enabled) {
+    Write-Step '安装本地代理并注册自启（远程屏幕控制 / 系统级重启 依赖它）'
+    $agentCfg = [ordered]@{
+        DeviceUid  = $cfg.ClientUid
+        Secret     = [string]$cfg.Agent.Secret
+        SitePubKey = [string]$cfg.Agent.SitePubKey
+        ExtUrl     = [string]$cfg.Agent.ExtUrl
+        VncCmd     = [string]$cfg.Agent.VncCmd
+    }
+    $ar = Install-StelarithAgent -InstallDir $cfg.InstallDir -AgentCfg $agentCfg -DryRun:$DryRun
+
+    if ($ar.Skipped) {
+        Write-Warn $ar.Detail
+        Write-Info '面板上的「远程屏幕控制 / 系统级重启」将不可用；其余功能不受影响。'
+    } elseif ($DryRun) {
+        Write-Info $ar.Detail
+    } elseif ($ar.Ok) {
+        Write-Ok ('本地代理已就绪（' + $ar.Detail + '）')
+        Write-Info ('自启任务：' + $script:AGENT_TASK + '（随登录启动，与 ClassIsland 同一会话，VNC 才看得到桌面）')
+    } else {
+        Write-Warn ('本地代理已安装，但探活未通过：' + $ar.Detail)
+        Write-Info '可手动运行 agent\run-agent.cmd 看输出，或稍后重跑本脚本。'
+    }
+
+    if (-not $DryRun) {
+        if (-not $cfg.Agent.Secret -and -not $cfg.Agent.SitePubKey) {
+            Write-Warn '既没配 Agent.Secret 也没配 Agent.SitePubKey —— 代理会拒绝「远程控制 / 重启」类指令。'
+            Write-Info '请填 config\deployment.json 的 Agent.Secret，且必须与面板「设置 → 指令密钥」完全一致；'
+            Write-Info '或改用更安全的 Agent.SitePubKey（Ed25519 公钥），这样教室机上不必放共享密钥。'
+        }
+        # VNC 是远程屏幕控制的真实前提。教室机默认没有 VNC，这里提前说清楚，
+        # 免得第一次用远程控制时才发现「失败了」。
+        $vnc = [string]$cfg.Agent.VncCmd
+        if ($vnc -and -not (Get-Command $vnc -ErrorAction SilentlyContinue)) {
+            Write-Warn ('本机找不到 VNC 服务命令 «' + $vnc + '» —— 远程屏幕控制会在「启动 VNC」这一步失败。')
+            Write-Info '装好真实 VNC 服务即可；届时若仍失败，面板会显示明确原因（不会静默）。'
+        }
+    }
+} else {
+    Write-Info '按配置跳过本地代理（Agent.Enabled = false）'
+    Write-Info '注意：面板上的「远程屏幕控制 / 系统级重启」将不可用。'
+}
+
 # ---------------------------------------------------------------- 7. 收尾自检
 Write-Head '第 7 步 / 共 7 步 · 部署结果自检'
 $checks = @()
@@ -396,6 +442,13 @@ $checks += ,@('插件清单',       (Test-Path -LiteralPath (Join-Path $pluginDi
 $checks += ,@('同步配置',       (Test-Path -LiteralPath $syncPath))
 $checks += ,@('面板地址配置',   (Test-Path -LiteralPath $panelPath))
 $checks += ,@('课表档案',       (Test-Path -LiteralPath (Join-Path $dataDir 'Profiles\Default.json')))
+if ($cfg.Agent.Enabled -and -not $DryRun) {
+    # 代理这几项单独列出来：它们决定「面板上那些需要 OS 权限的按钮」是否真的可用。
+    $checks += ,@('本地代理 exe',  (Test-Path -LiteralPath (Get-AgentExePath $cfg.InstallDir)))
+    $checks += ,@('代理启动器',    (Test-Path -LiteralPath (Get-AgentCmdPath $cfg.InstallDir)))
+    $checks += ,@('代理自启任务',  ($null -ne (Get-AgentTaskInfo)))
+    $checks += ,@('代理正在运行',  ((Test-AgentStatus).Ok))
+}
 $allOk = $true
 foreach ($c in $checks) {
     if ($c[1]) { Write-Host ("  [OK]   " + $c[0]) -ForegroundColor Green }
@@ -421,6 +474,11 @@ Write-Host '    2) 在集控面板里给这台设备登记班级' -ForegroundCol
 Write-Host ("       面板地址：" + $cfg.ServerPanel) -ForegroundColor Gray
 Write-Host ("       设备标识填：" + $cfg.ClientUid + "（CUID 在 ClassIsland 设置 -> 集控 里可见）") -ForegroundColor Gray
 Write-Host '    3) 跑一次自检：双击「2-环境自检.cmd」' -ForegroundColor Gray
+if ($cfg.Agent.Enabled -and -not $DryRun -and -not $cfg.Agent.Secret -and -not $cfg.Agent.SitePubKey) {
+    Write-Host '    4) 在面板里补上「指令密钥」' -ForegroundColor Yellow
+    Write-Host '       面板 → 设置 → 指令密钥，必须与 config\deployment.json 的 Agent.Secret 完全一致，' -ForegroundColor Gray
+    Write-Host '       否则「远程屏幕控制 / 系统级重启」会被代理拒绝。' -ForegroundColor Gray
+}
 Write-Host ''
 if (-not $KeepRunning) {
     Write-Host '  详细说明见 docs\00-部署指南.html（双击用浏览器打开）' -ForegroundColor DarkGray

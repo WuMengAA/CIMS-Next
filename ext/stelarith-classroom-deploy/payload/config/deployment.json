@@ -16,6 +16,12 @@
     "RefreshIntervalSeconds": "课表/配置拉取间隔（秒，最小 5）",
     "VoiceHubBase": "点歌站地址，如 https://voicehub.example.edu。留空 = 不启用点歌类组件",
     "VoiceHubKey": "点歌站开放 API Key（需 songs:read 权限）",
+    "Agent": "本地代理 StelarithAgent（可选但强烈建议）。它负责那些「面板上看得到、但需要 OS 权限」的动作：远程屏幕控制(VNC) 与 系统级重启。不装它，这两类动作一律不可用；其余功能（锁屏/截图/课表/广播/切班）不受影响",
+    "Agent.Enabled": "是否安装并开机自启本地代理。默认 true。装它是为了消除「面板上有按钮、点了没反应」的情况",
+    "Agent.Secret": "★要用远程控制/重启就必填。必须与面板「设置 → 指令密钥」里的值**完全一致**（HMAC-SHA256 共享密钥）。留空则代理会拒绝这些指令——面板上会显示拒绝原因，不再静默",
+    "Agent.SitePubKey": "可选，更安全。填网站 Ed25519 公钥（SPKI PEM）后，代理改用非对称验签，就不必在每台教室机上放共享密钥了（推荐；密钥生成见 ext/stelarith-website-sync/sign-task.mjs）",
+    "Agent.ExtUrl": "扩展网关地址，用于把 VNC 会话的端口/令牌回报给面板。留空则不回报，面板拿不到 VNC 连接信息，也就无法自动内嵌远程画面",
+    "Agent.VncCmd": "本机 VNC 服务的启动命令，默认 vncserver。**需先在本机装好真实 VNC 服务**，否则远程控制会启动失败（会返回明确错误，不是静默）",
     "OfficialManagement": "ClassIsland 自带的「集控」功能绑定设置（可选，独立于星璃插件）。详见 docs/03-官方集控与绑定设置.md"
   },
 
@@ -38,6 +44,14 @@
 
   "VoiceHubBase": "",
   "VoiceHubKey": "",
+
+  "Agent": {
+    "Enabled": true,
+    "Secret": "",
+    "SitePubKey": "",
+    "ExtUrl": "",
+    "VncCmd": "vncserver"
+  },
 
   "OfficialManagement": {
     "Enabled": false,

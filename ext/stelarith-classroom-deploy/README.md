@@ -227,7 +227,7 @@ chcp 65001 >nul 2>&1          rem 再切代码页，让 PowerShell 子进程的�
 | `ext/stelarith-classisland-plugin` | 本包分发的插件本体；改完插件要重新 `dotnet build -c Release` 并部署到 `D:\Classlsland`，再出包 |
 | `Stelarith-cims-eval/CIMS-backend` | 服务端；`ClientUid`/`Slug`/`BaseDomain` 必须与它的配置对齐 |
 | `Stelarith-website/stelarith` | 面板（`/admin/console`）；包的 `ServerPanel` 指向它 |
-| `ext/stelarith-agent(-node)` | 远程桌面所需的设备代理，**本包不含**，见 `docs/04` |
+| `ext/stelarith-agent(-node)` | 远程桌面/系统级重启所需的设备代理。**已随包分发**（`agent\stelarith-agent.exe`），由 `deploy.ps1` 安装并注册自启；出包时从它的 `target\release` 取，见 `docs/04` |
 | `ext/classisland-voicehub-display/bridge` | 浏览器全屏看板，与插件互补 |
 
 ## 7. 已知边界
@@ -238,4 +238,7 @@ chcp 65001 >nul 2>&1          rem 再切代码页，让 PowerShell 子进程的�
   模式 0（静态配置）可用；与 CIMS 对接需要反代改写 Host，见 `docs/03` 第 4 节。
 - **插件日志无自动轮转**：`ste-*.log` 会持续增长，需纳入月度巡检
   （清空而不是删除 —— 插件以追加方式持有句柄）。
-- **远程桌面需另装代理**：本包只提供插件侧能力（广播/锁屏/截图/切班/模块开关）。
+- **远程桌面还需要本机装 VNC 服务**：包内已含并自动安装**设备代理**
+  （`agent\stelarith-agent.exe`，随登录自启），代理负责按需拉起 VNC；
+  但 VNC 本体不在包内，机器上默认没有 —— 没装的话远程控制会返回明确错误。
+  另外「指令密钥」（面板设置）必须与 `Agent.Secret` 一致，否则代理会拒绝指令。

@@ -117,6 +117,40 @@ if ($procs.Count -gt 0) {
     V 'ClassIsland 进程' 'warn' '未运行（若刚部署还没启动，属正常）'
 }
 
+# --- 本地代理：它决定「面板上需要 OS 权限的按钮」是否真的可用 ---
+# 单独查它的理由：面板上「远程屏幕控制 / 系统级重启」看着是有的，但执行载体是这个代理。
+# 代理没装/没跑，这两个按钮就是空的，而现象会退化成「点了没反应」。
+$agentExe = if ($InstallRoot) { Get-AgentExePath $InstallRoot } else { '' }
+if (-not $agentExe -or -not (Test-Path -LiteralPath $agentExe)) {
+    V '本地代理' 'warn' '未安装 —— 「远程屏幕控制 / 系统级重启」不可用（其余功能正常）'
+} else {
+    $astat = Test-AgentStatus
+    $apx   = Get-Process -Name 'stelarith-agent' -ErrorAction SilentlyContinue
+    if ($astat.Ok) {
+        V '本地代理' 'ok' ('在跑，/status = ' + $astat.Detail)
+    } elseif ($apx) {
+        V '本地代理' 'warn' ('进程在但 /status 不通：' + $astat.Detail)
+    } else {
+        V '本地代理' 'warn' ('已安装但未运行：' + $astat.Detail)
+    }
+
+    $at = Get-AgentTaskInfo
+    V '代理自启任务' $(if ($at) { 'ok' } else { 'warn' }) `
+        $(if ($at) { ($script:AGENT_TASK + "（" + $at.State + "）") } else { '未注册 —— 重新登录后代理不会自动起来' })
+
+    # 只判断「有没有配」，绝不回显密钥本身
+    $acmd = Get-AgentCmdPath $InstallRoot
+    if (Test-Path -LiteralPath $acmd) {
+        $raw = Get-Content -LiteralPath $acmd -Raw
+        $hasPub    = $raw -match 'STELARITH_SITE_PUBKEY='
+        $hasSecret = $raw -match 'STELARITH_AGENT_SECRET='
+        V '代理指令验签' $(if ($hasPub -or $hasSecret) { 'ok' } else { 'warn' }) `
+            $(if ($hasPub) { 'Ed25519 公钥模式（推荐）' }
+              elseif ($hasSecret) { '共享密钥模式（须与面板「设置 → 指令密钥」一致）' }
+              else { '未配置 —— 远程控制/重启会被代理拒绝' })
+    }
+}
+
 # ================================================================ 4. 服务端
 Write-Head '四、服务器连通性'
 $cfgLoaded = $false

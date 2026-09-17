@@ -156,6 +156,21 @@ if (Test-Path -LiteralPath $mv) {
     if ($m) { Write-Ok ('当前插件版本：' + $m.Matches[0].Groups[1].Value.Trim()) }
 }
 
+# 说明：本脚本只还原「插件」，**不还原本地代理** —— 代理装在 <安装根>\agent\，是独立程序。
+# 有意为之：回滚路径最需要的属性是「确定性」，多动一份文件就多一个失败点。
+# 而且插件与代理之间只是 127.0.0.1 上的 HTTP 契约，版本可以各自独立。
+$agentExe = Get-AgentExePath $InstallRoot
+if (Test-Path -LiteralPath $agentExe) {
+    Write-Host ''
+    Write-Info '本地代理未参与本次回滚（独立程序，装在 agent\ 下）。'
+    $abak = Get-ChildItem -LiteralPath (Split-Path -Parent $agentExe) -Filter 'stelarith-agent.exe.before-deploy-*' -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending | Select-Object -First 1
+    if ($abak) {
+        Write-Info ('  如需一并回退代理：把 ' + $abak.Name + ' 改名覆盖回 stelarith-agent.exe，')
+        Write-Info ('  再执行  Restart-ScheduledTask -TaskName ' + $script:AGENT_TASK + '  （或重新登录）。')
+    }
+}
+
 # ---------------------------------------------------------------- 重启
 Write-Head '重启并校验'
 if ($NoRestart) {
