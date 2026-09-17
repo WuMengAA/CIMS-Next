@@ -193,8 +193,29 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
             }
         }
         "shell" => {
-            if let Some(cmd) = &task.cmd {
-                // 仅允许 RBAC 白名单内的受限命令；此处为桩，真实环境需强校验。
+            // ⚠️ 默认拒绝（2026-09-17 收紧）。
+            //
+            // 原实现是 `cmd.exe /c <任意命令>`，而上面那行注释写着
+            // 「仅允许 RBAC 白名单内的受限命令」——**白名单从未实现**。
+            // 这类「注释比实现更安全」的代码最危险：读代码的人会就此放过它。
+            //
+            // 实测全仓库（网站面板 / CIMS 服务端 / ClassIsland 插件）无任何下发方，
+            // 即这个分支只贡献攻击面、没有任何业务用途；而它一旦可用，
+            // 配上签名密钥就等于「对全教室电脑的远程任意命令执行」。
+            //
+            // 故改为默认关闭 + 可显式开启（排障时设 STELARITH_AGENT_ALLOW_SHELL=1）。
+            // 保留分支而不是删除，是为了将来真要做「受限命令下发」时，
+            // 有一个明确的落点去实现白名单，而不是又长出一个隐式通道。
+            if std::env::var("STELARITH_AGENT_ALLOW_SHELL").ok().as_deref() != Some("1") {
+                let _ = write_status(&format!(
+                    "[warn] shell 动作被拒绝（默认关闭，如需排障设 STELARITH_AGENT_ALLOW_SHELL=1）：cmd={:?}\n",
+                    task.cmd
+                ));
+                out.insert(
+                    "error".into(),
+                    "shell action disabled by default (set STELARITH_AGENT_ALLOW_SHELL=1 to enable)".into(),
+                );
+            } else if let Some(cmd) = &task.cmd {
                 let _ = Command::new("cmd.exe").args(["/c", cmd]).spawn();
                 out.insert("result".into(), "shell_dispatched".into());
             } else {
