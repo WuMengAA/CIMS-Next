@@ -11,6 +11,7 @@
  * - 交流消息按 room 隔离：全局群 `techrep-global` + 各班级房间（room = classId）。
  * - 审计只记元数据，不存敏感内容。
  */
+import crypto from "node:crypto";
 import { getDb, nowIso } from "./db.js";
 
 export interface ConsoleNotice {
@@ -204,6 +205,48 @@ export function listAudit(limit = 100, action?: string): ConsoleAuditEntry[] {
 	}));
 }
 
+/**
+ * 审计链的哈希算法。
+ *
+ * 有无 `CONSOLE_AUDIT_KEY` 是两种安全档位，**不是可有可无的开关**：
+ *   · 有（≥16 字符）→ HMAC-SHA256。攻击者即使能改库，没有密钥也造不出自洽的链。
+ *   · 无            → 裸 SHA256。只能防「随手改一行」（改完得把后续全部重算），
+ *                     懂行的人重写整条链仍可自洽 —— verify 的输出里会**如实标出**当前档位，
+ *                     不让运维以为已经万无一失。
+ * 这里不做「没配就自动生成并存库」的兜底：密钥存在同一个库里等于没加锁。
+ */
+const AUDIT_KEY = process.env.CONSOLE_AUDIT_KEY || "";
+const AUDIT_KEYED = AUDIT_KEY.length >= 16;
+
+/** 保留天数策略。未成年人影像/行为记录属合规敏感项，「留多久」必须是个明确的数字而非默认无限。 */
+const AUDIT_RETENTION_DAYS = (() => {
+	const n = Number(process.env.CONSOLE_AUDIT_RETENTION_DAYS ?? 180);
+	return Number.isFinite(n) && n >= 7 ? Math.floor(n) : 180;
+})();
+
+/**
+ * 行长什么样 → 哈希。字段顺序与分隔符都是**契约**：
+ * 改动这里会让所有历史行的校验失败，所以刻意用 `\u0001`（正文里不可能出现的控制符）
+ * 做分隔，避免「把两个字段拼起来恰好等于另外两个字段」的歧义碰撞。
+ */
+function auditRowHash(prevHash: string, r: { id: number; actor: string; role: string; action: string; target: string; detail: string; created_at: string }): string {
+	const payload = [prevHash, r.id, r.actor, r.role, r.action, r.target, r.detail, r.created_at].join("\u0001");
+	return AUDIT_KEYED
+		? crypto.createHmac("sha256", AUDIT_KEY).update(payload).digest("hex")
+		: crypto.createHash("sha256").update(payload).digest("hex");
+}
+
+function metaGet(key: string): string {
+	const row = getDb().prepare("SELECT value FROM console_meta WHERE key = ?").get(key) as { value: string } | undefined;
+	return row?.value ?? "";
+}
+
+function metaSet(key: string, value: string): void {
+	getDb()
+		.prepare("INSERT INTO console_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+		.run(key, value);
+}
+
 export function addAudit(input: {
 	actor?: string;
 	role?: string;
@@ -219,13 +262,180 @@ export function addAudit(input: {
 		detail: cut(input.detail, 500)
 	};
 	const ts = nowIso();
-	const info = getDb()
+	const db = getDb();
+
+	// 读链尾 → 插行 → 回填本行哈希 → 推进链尾：四步必须是一个整体。
+	// 本函数全程**同步**（node:sqlite 的 DatabaseSync），单进程内不会被其它 JS 插队；
+	// 但 SQLite 允许多进程连接，所以仍然显式开事务，防止第二个实例/命令行写入挤在中间，
+	// 那会让两条记录拿到同一个 prev_hash —— 链就此分叉且**事后无法判定谁先谁后**。
+	db.exec("BEGIN IMMEDIATE");
+	try {
+		const prev = metaGet("audit_head");
+		const info = db
+			.prepare(
+				`INSERT INTO console_audit (actor, role, action, target, detail, created_at, prev_hash, row_hash)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, '')`
+			)
+			.run(row.actor, row.role, row.action, row.target, row.detail, ts, prev);
+		const id = Number(info.lastInsertRowid);
+		const hash = auditRowHash(prev, { id, ...row, created_at: ts });
+		db.prepare("UPDATE console_audit SET row_hash = ? WHERE id = ?").run(hash, id);
+		metaSet("audit_head", hash);
+		db.exec("COMMIT");
+		return { id, ...row, createdAt: ts };
+	} catch (err) {
+		try {
+			db.exec("ROLLBACK");
+		} catch {
+			/* 已经回滚或根本没有活动事务，忽略 */
+		}
+		throw err;
+	}
+}
+
+export interface AuditVerifyReport {
+	ok: boolean;
+	/** 实际校验过的行数（不含被跳过的历史遗留行）。 */
+	checked: number;
+	/** 本次迁移之前写入、没有哈希的行数 —— 它们无法校验，必须如实报出来。 */
+	legacyRows: number;
+	/** 第一处断裂的行 id；`null` 表示全链自洽。 */
+	firstBadId: number | null;
+	/** 断裂的具体原因（人话）。 */
+	problem: string | null;
+	/** 链尾是否与登记值一致（防止「把最后几条删掉」这种尾巴截断）。 */
+	tailOk: boolean;
+	/** 当前档位：hmac-sha256（有密钥）或 sha256（无密钥，弱）。 */
+	mode: "hmac-sha256" | "sha256";
+	/** 保留策略天数。 */
+	retentionDays: number;
+	/** 若历史被裁剪过，这里是被裁掉的时间点（便于解释「为什么早期记录不见了」）。 */
+	prunedBefore: string | null;
+}
+
+/**
+ * 走一遍哈希链，找第一处断裂。
+ *
+ * 设计取舍：**不**返回「整体可信/不可信」这种二值结论，而是返回「从第几行起可校验、
+ * 第一处断在哪、为什么」。因为旧库迁移、裁剪保留期都会合法地产生「链不完整」，
+ * 用一个 bool 表达会把「正常的历史裁剪」和「有人改了库」混为一谈 —— 那样报出来也没人信。
+ */
+export function verifyAudit(): AuditVerifyReport {
+	const db = getDb();
+	const anchor = metaGet("audit_anchor");
+	const rows = db
 		.prepare(
-			`INSERT INTO console_audit (actor, role, action, target, detail, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`
+			`SELECT id, actor, role, action, target, detail, created_at, prev_hash, row_hash
+			 FROM console_audit ORDER BY id ASC`
 		)
-		.run(row.actor, row.role, row.action, row.target, row.detail, ts);
-	return { id: Number(info.lastInsertRowid), ...row, createdAt: ts };
+		.all() as unknown as any[];
+
+	let prev = anchor || "";
+	let started = false;
+	let checked = 0;
+	let legacyRows = 0;
+	let firstBadId: number | null = null;
+	let problem: string | null = null;
+
+	for (const r of rows) {
+		if (!r.row_hash) {
+			if (!started) {
+				legacyRows++;
+				continue;
+			}
+			firstBadId = r.id;
+			problem = "链中间出现没有哈希的行（本行被插入或被清空了哈希）";
+			break;
+		}
+		if (!started) {
+			started = true;
+			// 起点行必须接在锚点上：有锚点就必须对上，没锚点则必须是链首（空串）。
+			const want = anchor || "";
+			if (r.prev_hash !== want) {
+				firstBadId = r.id;
+				problem = anchor
+					? "链的起点接不上裁剪锚点 —— 锚点之后的记录被替换或删除过"
+					: "首行的 prev_hash 非空，但它前面没有任何被裁剪的记录";
+				break;
+			}
+		} else if (r.prev_hash !== prev) {
+			firstBadId = r.id;
+			problem = "本行的 prev_hash 与上一行的 row_hash 不一致 —— 中间有行被删除或替换";
+			break;
+		}
+		const h = auditRowHash(r.prev_hash, r);
+		if (h !== r.row_hash) {
+			firstBadId = r.id;
+			problem = "本行内容与其登记的哈希不符 —— 该行被修改过";
+			break;
+		}
+		prev = r.row_hash;
+		checked++;
+	}
+
+	const head = metaGet("audit_head");
+	// 空库时 head 与 prev 都是空串，视为一致；有 head 就必须等于链尾。
+	const tailOk = !head ? checked === 0 : head === prev;
+	if (tailOk === false && firstBadId === null) {
+		problem = "链尾与登记的 head 不一致 —— 最后一条记录之后有内容被删除";
+	}
+
+	return {
+		ok: firstBadId === null && tailOk,
+		checked,
+		legacyRows,
+		firstBadId,
+		problem,
+		tailOk,
+		mode: AUDIT_KEYED ? "hmac-sha256" : "sha256",
+		retentionDays: AUDIT_RETENTION_DAYS,
+		prunedBefore: metaGet("audit_pruned_before") || null
+	};
+}
+
+/**
+ * 按保留期裁剪审计（**只裁前缀**，保住链的连续性）。
+ *
+ * 两个容易做错的地方，这里刻意避开：
+ *   ① 不能 `DELETE WHERE created_at < cutoff` 了事 —— 若时间戳与 id 不完全单调，
+ *      删出来的是「中间挖洞」，链直接从洞断开。改为先取 `MAX(id)` 再按 `id <= m` 删，
+ *      保证删掉的永远是**一段连续的前缀**。
+ *   ② 删完必须把「被删的最后一行」的 row_hash 记成**锚点**，否则剩下的第一行
+ *      prev_hash 会指向一个已经不存在的行，verify 立刻报断裂 —— 这会让人把
+ *      「正常裁剪」误判成「有人篡改」，进而不再信任这个功能。
+ */
+export function pruneAudit(retentionDays = AUDIT_RETENTION_DAYS): {
+	removed: number;
+	anchor: string | null;
+	prunedBefore: string | null;
+	cutoff: string;
+	/** 实际生效的保留天数（入参会被夹到 1~3650 的合理区间）。 */
+	retentionDays: number;
+} {
+	const db = getDb();
+	const days = Math.max(1, Math.min(Math.floor(retentionDays) || AUDIT_RETENTION_DAYS, 3650));
+	const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+
+	const last = db
+		.prepare("SELECT id, row_hash, created_at FROM console_audit WHERE created_at < ? ORDER BY id DESC LIMIT 1")
+		.get(cutoff) as { id: number; row_hash: string; created_at: string } | undefined;
+	if (!last) return { removed: 0, anchor: null, prunedBefore: null, cutoff, retentionDays: days };
+
+	const info = db.prepare("DELETE FROM console_audit WHERE id <= ?").run(last.id);
+	const removed = Number(info.changes ?? 0);
+	if (last.row_hash) metaSet("audit_anchor", last.row_hash);
+	metaSet("audit_pruned_before", last.created_at);
+	return { removed, anchor: last.row_hash || null, prunedBefore: last.created_at, cutoff, retentionDays: days };
+}
+
+/** 审计策略快照（供面板显示「当前保留多久、哪种档位」）。 */
+export function auditPolicy(): { retentionDays: number; mode: "hmac-sha256" | "sha256"; anchored: boolean; prunedBefore: string | null } {
+	return {
+		retentionDays: AUDIT_RETENTION_DAYS,
+		mode: AUDIT_KEYED ? "hmac-sha256" : "sha256",
+		anchored: !!metaGet("audit_anchor"),
+		prunedBefore: metaGet("audit_pruned_before") || null
+	};
 }
 
 /** 面板首页用的汇总计数。 */

@@ -303,16 +303,73 @@
       mine: (m.from != null ? m.from : m.sender) === me,
     }));
   }
+  // 审计动作的中文名（操作日志页展示用）。
+  //
+  // 命名以 2026-09-17 从**真实库**（content/stelarith.db → console_audit）取到的分布为准，
+  // 不靠猜：当初按猜测写 `notice.publish`，实际服务端记的是 `broadcast_notice`。
+  //
+  // ⚠️ 未登记的 action **一律原样显示原始 key**，不要显示"未知动作"或空白 ——
+  // 面板版本总会落后于后端/插件新增的动作，此时宁可让人看到 `xxx.yyy`，
+  // 也胜过把一整条记录变成看不懂的废纸（与 MODULE_CATALOG 同一条原则）。
+  // 原始 key 同时保留在 title 悬浮提示里，排查时不受这层翻译影响。
+  const AUDIT_ACTION_LABELS = {
+    "schedule.push": "下发课表",
+    "plugin.toggle": "启停插件组件",
+    "device.restart": "重启设备",
+    "device.refresh": "刷新设备",
+    "device.lock": "设备锁屏",
+    "device.screenshot": "设备截屏",
+    "classisland.switch_class": "远程切班",
+    "classisland.module": "调整功能模块",
+    "classisland.sync_now": "立即同步资源",
+    "classisland.refresh_profile": "刷新宿主档案",
+    "classisland.show_message": "弹出最近广播",
+    "classisland.lock": "锁屏",
+    "classisland.screenshot": "截图",
+    "classisland.restart": "重启 ClassIsland",
+    "classisland.restart_island": "宿主进程重启",
+    "remote.start": "发起远程控制",
+    notice: "通知仅留痕（未推送）",
+    friend_request: "发起好友申请",
+    friend_accept: "接受好友",
+    friend_reject: "拒绝好友",
+    friend_remove: "删除好友",
+  };
+
+  // `broadcast_<source>` 中 source 的显示名 —— 服务端广播内部把来源拼进动作名
+  // （见 src/lib/server/broadcast.ts），故这里用展开 source 的写法而非穷举，
+  // 以后服务端新增一个来源，界面上也不会突然露出英文 key。
+  const AUDIT_BROADCAST_SOURCES = {
+    notice: "面板通知",
+    chat: "群内喊话",
+    announcement: "网站公告",
+    manual: "手动下发",
+  };
+
+  function auditActionLabel(raw) {
+    if (!raw) return "";
+    if (AUDIT_ACTION_LABELS[raw]) return AUDIT_ACTION_LABELS[raw];
+    if (raw.indexOf("broadcast_") === 0) {
+      const src = raw.slice("broadcast_".length);
+      return "广播至教室大屏（" + (AUDIT_BROADCAST_SOURCES[src] || src || "未标注来源") + "）";
+    }
+    return raw;
+  }
+
   function normAudit(r) {
     if (!Array.isArray(r)) return [];
-    return r.map((a) => ({
-      id: a.id,
-      at: a.at || fmtTime(a.createdAt),
-      who: a.who != null ? a.who : (a.actor || ""),
-      act: a.act != null ? a.act : (a.action || ""),
-      target: a.target || "",
-      detail: a.detail || "",
-    }));
+    return r.map((a) => {
+      const raw = a.act != null ? a.act : (a.action || "");
+      return {
+        id: a.id,
+        at: a.at || fmtTime(a.createdAt),
+        who: a.who != null ? a.who : (a.actor || ""),
+        act: auditActionLabel(raw),
+        rawAct: raw,
+        target: a.target || "",
+        detail: a.detail || "",
+      };
+    });
   }
 
   // 把 CIMS 资源列表响应归一化为 {id,name}
@@ -1003,6 +1060,24 @@
           method: "POST",
           body: JSON.stringify({ action, target, detail }),
         });
+      } catch (e) { return { ok: false, error: e.message }; }
+    },
+    /**
+     * 审计链自检。返回服务端的**原始**报告（含 checked/legacyRows/firstBadId/problem/
+     * tailOk/mode/retentionDays/prunedBefore），刻意不在前端做任何"翻译"：
+     * 这类安全结论一旦被前端加工，就再也没人知道原始判据是什么。
+     * 拿不到后端能力时返回 null，由调用方显示「未校验」——不伪装成"通过"。
+     */
+    auditVerify: async () => {
+      try {
+        const r = await ext("/audit/verify", {}, null);
+        return r && r.verify ? r : null;
+      } catch (e) { return null; }
+    },
+    /** 按保留期裁剪审计（需 device.manage）。 */
+    auditPrune: async (days) => {
+      try {
+        return await ext("/audit/prune", { method: "POST", body: JSON.stringify({ days }) });
       } catch (e) { return { ok: false, error: e.message }; }
     },
 

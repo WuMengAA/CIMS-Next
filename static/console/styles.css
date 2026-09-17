@@ -256,6 +256,18 @@ tbody tr:hover { background: var(--panel2); }
 .tag.warn { background: rgba(216,178,92,.15); color: var(--warn); border-color: rgba(216,178,92,.3); }
 .tag.err { background: rgba(247,93,89,.14); color: var(--err); border-color: rgba(247,93,89,.3); }
 
+/* 设备表分组表头：把同一班的机器在视觉上圈成一段，但不喧宾夺主 */
+tr.dev-group > td {
+  background: var(--panel2);
+  color: var(--mutedx);
+  font-size: 12px;
+  letter-spacing: .02em;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-top: 1px solid var(--line);
+}
+tr.dev-group > td b { color: var(--text); }
+
 .mask {
   position: absolute; inset: 0; background: rgba(27,27,25,.97);
   display: flex; align-items: center; justify-content: center; z-index: 50;
