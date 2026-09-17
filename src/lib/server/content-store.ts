@@ -429,6 +429,19 @@ function fixTableBlocks(src: string): string {
 	return out.join("\n");
 }
 
+// 上传文件名常含空格（如「屏幕截图 2026-09-17 222502.png」）。
+// CommonMark 规定 link/image 的 destination 若不用尖括号 `<>` 包裹，不能含空格，
+// 否则 markdown-it 会把整段「![alt](url)」当成纯文本——图片直接消失，页面上只剩源码文字。
+// 渲染前把「含空格且未用尖括号包裹」的 destination 自动用尖括号包起来，使其被正确解析为 <img>/<a>。
+// 这样历史与未来所有带空格的上传图片链接无需逐个改 md 即可正常显示。
+function fixBareSpaceLinks(src: string): string {
+	return src.replace(/\]\((\S[^)]*?\s[^)]*?)\)/g, (full, inner: string) => {
+		const trimmed = inner.trim();
+		if (trimmed.startsWith("<")) return full; // 已是 <url> 形式，跳过
+		return "](<" + trimmed + ">)";
+	});
+}
+
 export function renderMarkdown(mdContent: string): RenderedContent {
 	// 渲染缓存：markdown 内容 sha1 为键。highlight.js 语法高亮是该路径最贵的部分，
 	// 缓存后同一篇文章的重复访问（含 SWR 重渲染）直接命中，省去整段重解析+高亮。
@@ -439,7 +452,7 @@ export function renderMarkdown(mdContent: string): RenderedContent {
 	// referrerpolicy="no-referrer"：正文图片常引用 B 站图床（i*.hdslb.com）等有防盗链的站点，
 	// 带本站 Referer 会被 403 变成裂图；去掉 Referer 后正常显示。对本站图片无副作用。
 	const html = md
-		.render(fixTableBlocks(mdContent))
+		.render(fixBareSpaceLinks(fixTableBlocks(mdContent)))
 		.replace(/<img /g, '<img loading="lazy" decoding="async" referrerpolicy="no-referrer" ');
 	const toc: { id: string; text: string; level: number }[] = [];
 	const headingRe = /<h([23])\s+id="([^"]*)"[^>]*>([\s\S]*?)<\/h\1>/g;
@@ -481,7 +494,10 @@ export function uploadFile(filename: string, data: Buffer): { url: string; error
 	const ext = path.extname(filename).toLowerCase();
 	if (!ALLOWED_EXT.has(ext)) return { url: "", error: "不支持的文件类型: " + ext };
 	if (data.length > MAX_FILE_SIZE) return { url: "", error: "文件超过 100MB 限制" };
-	const newFilename = path.basename(filename, ext) + "-" + Date.now() + ext;
+	// 文件名去空格：避免「屏幕截图 2026-09-17 ...png」这类带空格文件名导致
+	// markdown 图片链接解析失败（CommonMark destination 不能含空格）。
+	const base = path.basename(filename, ext).replace(/\s+/g, "-");
+	const newFilename = base + "-" + Date.now() + ext;
 	fs.writeFileSync(path.join(UPLOADS_DIR, newFilename), data);
 	return { url: "/uploads/" + newFilename };
 }
