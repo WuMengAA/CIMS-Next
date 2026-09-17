@@ -151,6 +151,26 @@ if (-not $agentExe -or -not (Test-Path -LiteralPath $agentExe)) {
     }
 }
 
+# --- AI 插件（第三方）的密钥：部署包**故意不含**，所以必须明说它会是「未配置」状态 ---
+# 为什么值得单列：密钥被抽走后，插件只是**不工作**，它不会告诉你「配置被删了」——
+# 现象与「这功能坏了」完全一样，正是本项目反复强调的「静默失败」。
+$aiDir = if ($InstallRoot) { Join-Path $InstallRoot 'data\Config\Plugins\ClassIsland.AISmartClass' } else { '' }
+if ($aiDir -and (Test-Path -LiteralPath $aiDir)) {
+    $aiFile = Join-Path $aiDir 'aisettings.json'
+    if (-not (Test-Path -LiteralPath $aiFile)) {
+        V 'AI 插件密钥' 'warn' '插件在但无配置文件 —— 部署包按安全规则不含密钥（见 docs/06 E1），要用就在本机重填'
+    } else {
+        # 只判断「有没有填」，绝不回显密钥本身
+        $aiRaw = Get-Content -LiteralPath $aiFile -Raw
+        $aiM = [regex]::Match($aiRaw, '"apiKey"\s*:\s*"([^"]*)"')
+        if ($aiM.Success -and $aiM.Groups[1].Value.Length -gt 8) {
+            V 'AI 插件密钥' 'ok' ('已配置（长度 ' + $aiM.Groups[1].Value.Length + '，不回显内容）')
+        } else {
+            V 'AI 插件密钥' 'warn' 'apiKey 为空 —— AI 功能不会工作'
+        }
+    }
+}
+
 # ================================================================ 4. 服务端
 Write-Head '四、服务器连通性'
 $cfgLoaded = $false
