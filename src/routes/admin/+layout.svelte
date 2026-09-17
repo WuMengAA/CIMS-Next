@@ -82,6 +82,13 @@
 	// 还多出一列「点了就被 hooks 弹回」的导航。
 	const isLogin = $derived(currentPath.startsWith("/admin/login"));
 
+	// 集控面板也不要后台外壳：它是全屏内嵌的 iframe 应用，自身带一套完整的左侧导航
+	// （总览/课表/设备/通知…）。若套在后台侧栏里，会出现两类问题：
+	//  ① 桌面端后台侧栏（fixed，z-10）与面板 iframe 抢地盘，窄屏/缩放下偶发侧栏盖住面板；
+	//  ② 手机端后台侧栏是浮层抽屉，被面板全屏盖住后既看不见也点不开，等于「没有小侧边栏」。
+	// 故把集控面板当成「沉浸式全屏接管」——跳过后台侧栏+顶栏，面板自己的汉堡抽屉作为导航。
+	const isConsole = $derived(currentPath.startsWith("/admin/console"));
+
 	async function logout() {
 		await fetch("/api/auth", {
 			method: "POST",
@@ -101,7 +108,7 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-{#if isLogin}
+{#if isLogin || isConsole}
 	{@render children()}
 {:else}
 <!--

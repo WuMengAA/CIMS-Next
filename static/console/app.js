@@ -1291,6 +1291,10 @@
   async function go(v) {
     current = v || current;
     document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("active", b.dataset.view === current));
+    // 联动优化：切换视图后把激活项滚进可视区（移动端抽屉里激活指示也能一眼看到）；
+    // #sidebar 自身 overflow:auto，scrollIntoView 只滚侧栏内部、不带动整页。
+    const actBtn = document.querySelector(".nav.active");
+    if (actBtn && actBtn.scrollIntoView) actBtn.scrollIntoView({ block: "nearest" });
     // 视图级权限：无权限直接给一句人话，比进去看一屏禁用按钮友好
     const need = VIEW_NEED[current];
     if (!allow(need)) {
@@ -1328,6 +1332,25 @@
   }
 
   document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
+
+  // 联动优化：侧栏内方向键导航（ArrowUp/Down 在可见项间移动焦点，Enter/Space 由按钮原生触发）。
+  // 让纯键盘用户也能在集控面板里顺畅切换视图，不依赖鼠标/触摸。
+  if (navEl) {
+    navEl.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const items = Array.prototype.filter.call(
+        navEl.querySelectorAll(".nav"),
+        (b) => b.offsetParent !== null && !b.classList.contains("hidden")
+      );
+      if (!items.length) return;
+      const idx = items.indexOf(document.activeElement);
+      e.preventDefault();
+      const next = e.key === "ArrowDown"
+        ? Math.min(items.length - 1, idx + 1)
+        : Math.max(0, idx - 1);
+      if (items[next]) items[next].focus();
+    });
+  }
   $("#btn-settings").addEventListener("click", () => {
     document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
     current = "settings"; go("settings"); setNav(false);
