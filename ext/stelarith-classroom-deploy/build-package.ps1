@@ -33,7 +33,12 @@ param(
     # 取不到时不静默放过 —— 见下方「1.5 本地代理」的处理。
     [string]$AgentExe = '',
     [switch]$Zip,
-    [switch]$SkipApp
+    [switch]$SkipApp,
+    # 本地代理的 HMAC 共享密钥（远程控制/重启校验用）。
+    # 刻意**不写进源码**：那是共享密钥，进版本库就失去意义（谁拿到包谁知道）。
+    # 出包时用 -AgentSecret <值> 注入；不传则保持源码里的空值 ——
+    # 代理会明确拒绝远程控制类指令（面板显示拒绝原因，不会静默失败）。
+    [string]$AgentSecret = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -160,14 +165,18 @@ if (-not $SkipApp) {
     $dstApp = Join-Path $OutDir 'app'
     New-Item -ItemType Directory -Path $dstApp -Force | Out-Null
 
-    # 顶层文件（排除 data / 快捷方式 / 备份）
-    Get-ChildItem -LiteralPath $SourceRoot -File | Where-Object { $_.Extension -ne '.lnk' } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $dstApp -Force
-    }
+    # 顶层文件（排除 data / 快捷方式 / 备份 / 日志）
+    Get-ChildItem -LiteralPath $SourceRoot -File |
+        Where-Object { $_.Extension -ne '.lnk' -and $_.Extension -ne '.log' } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $dstApp -Force
+        }
     Ok '顶层文件（ClassIsland.exe / PackageType / files.json）'
 
     # app-<版本> 目录
-    $r = & robocopy $srcApp.FullName (Join-Path $dstApp $srcApp.Name) /E /NFL /NDL /NJH /NJS /R:1 /W:1
+    # 排除 *.log：应用目录里躺着宿主/插件的运行时诊断日志（ste-*-diag.log 等）。
+    # 打进包的后果：新装教室机跑 preflight 时会读到「出包机」的日志，
+    # 误报「集控插件日志 N 分钟前」，看上去像插件刚跑过、其实一次都没跑 —— 极易误导排障。
+    $r = & robocopy $srcApp.FullName (Join-Path $dstApp $srcApp.Name) /E /NFL /NDL /NJH /NJS /R:1 /W:1 /XF '*.log'
     if ($LASTEXITCODE -ge 8) { throw ("复制 app 目录失败，robocopy 返回码 " + $LASTEXITCODE) }
     Ok ("程序目录 " + $srcApp.Name)
 
@@ -318,6 +327,7 @@ $info = [ordered]@{
     SeedSizeMB         = $seedMB
     TotalSizeMB        = [math]::Round(($appMB + $seedMB), 1)
     Excluded           = @(
+        'app\**\*.log（出包机运行时诊断日志 ste-*-diag.log —— 否则新机 preflight 会误报「插件日志 N 分钟前」）',
         'data\Logs / Cache / Temp / Backups（运行时产物）',
         'data\Plugins\*.bak-*（历史备份）',
         'data\Config\Plugins\**\*.log（日志）',
@@ -325,6 +335,24 @@ $info = [ordered]@{
     )
     AbsolutePathPolicy = '种子内所有制作机绝对路径已替换为 {{INSTALL_DIR}}，由 deploy.ps1 在目标机替换为真实安装目录'
 }
+
+# Agent.Secret 注入（可选，见 param 说明）：只在出包产物里落值，源码保持空。
+# 否则下次出包会把上一次手工填好的密钥洗回空 —— 现场表现为「远程控制昨天还好好的」。
+if ($AgentSecret) {
+    $cfgPath = Join-Path $OutDir 'config\deployment.json'
+    if (Test-Path -LiteralPath $cfgPath) {
+        $cfgJ = Get-Content -LiteralPath $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $cfgJ.Agent.Secret = $AgentSecret
+        [System.IO.File]::WriteAllText(
+            $cfgPath,
+            ($cfgJ | ConvertTo-Json -Depth 6),
+            (New-Object System.Text.UTF8Encoding($false)))
+        Ok ("已注入 Agent.Secret（长度 " + $AgentSecret.Length + "）—— 面板「设置 → 指令密钥」须填同一个值")
+    } else {
+        Warn '未找到 config\deployment.json，跳过 Agent.Secret 注入'
+    }
+}
+
 [System.IO.File]::WriteAllText((Join-Path $OutDir 'PACKAGE-INFO.json'),
     ($info | ConvertTo-Json -Depth 5), $utf8)
 
@@ -413,6 +441,18 @@ if (Test-Path -LiteralPath $agentPath) {
 } else {
     Write-Host '  · 本地代理：未入包 —— 面板上的「远程屏幕控制 / 系统级重启」将不可用' -ForegroundColor Yellow
 }
+
+# 5.6 全包不得残留任何 *.log
+# 出包机的运行时诊断日志（ste-*-diag.log 在应用目录、插件日志在 data 下）一旦入包，
+# 新装教室机的 preflight 会读到出包机的日志并误报「插件日志 N 分钟前」，
+# 排障时会被带偏：以为插件跑过，其实根本没跑。
+$allLogs = @(Get-ChildItem -LiteralPath $OutDir -Recurse -File -Filter '*.log' -ErrorAction SilentlyContinue)
+if ($allLogs.Count -gt 0) {
+    foreach ($l in $allLogs) {
+        $fail.Add('包内残留日志文件: ' + $l.FullName.Substring($OutDir.Length).TrimStart('\'))
+    }
+}
+Write-Host ("  · 全包日志文件：" + $allLogs.Count + " 个（必须为 0）") -ForegroundColor Gray
 
 Write-Host ''
 if ($fail.Count -gt 0) {
