@@ -341,12 +341,74 @@
   /** 设备状态标签：未接入 / 在线 / 离线，三态而不是两态。 */
   const stateTag = (d) => `<span class="tag ${d.stateKind}">${esc(d.stateLabel)}</span>`;
 
+  // 设备表的交互状态**外提**到模块作用域：`go()` 是整块替换 `view.innerHTML`，
+  // 状态若留在闭包里，用户输好搜索词点一次「刷新」就白输了 —— 60 班时这很烦。
+  let devQuery = "";
+  let devGrouped = true;
+
   views.devices = async () => {
     const [st, map] = await Promise.all([API.deviceStatus(), API.deviceClassMap()]);
     const ds = st.devices || [];
     const unbound = ds.filter((d) => !classCell(d, map).bound).length;
     const online = ds.filter((d) => d.online).length;
     const never = ds.filter((d) => !d.reported).length;
+
+    // 先把每台设备的「班级标签」与「搜索串」算一遍，渲染与过滤共用同一份数据 ——
+    // 过滤若另写一套字段清单，早晚会与表格列不一致（加了列却搜不到）。
+    const rows = ds.map((d) => {
+      const c = classCell(d, map);
+      const cls = c.bound ? c.label : "未绑定";
+      return {
+        d,
+        cls,
+        bound: c.bound,
+        q: [d.name, d.id, d.ip, d.ver, d.className, d.classId, cls]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+      };
+    });
+
+    // 按班级分组；「未绑定」恒定排最后（它是待办事项，插在正常班级中间会看不见）。
+    const groups = new Map();
+    for (const r of rows) {
+      if (!groups.has(r.cls)) groups.set(r.cls, []);
+      groups.get(r.cls).push(r);
+    }
+    const groupNames = [...groups.keys()].sort((a, b) => {
+      if (a === "未绑定") return 1;
+      if (b === "未绑定") return -1;
+      return a.localeCompare(b, "zh-Hans-CN");
+    });
+
+    const devRow = ({ d, bound, cls, q }) => `<tr class="dev-row" data-dev-q="${esc(q)}">
+          <td>${esc(d.name)}<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>
+          <td><span class="tag ${bound ? "ok" : "warn"}">${esc(cls)}</span></td>
+          <td>${esc(d.ip || "—")}</td><td>${esc(d.ver)}</td><td>${esc(d.last)}</td>
+          <td>${stateTag(d)}</td>
+          <td>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart" ${d.online ? "" : "disabled"}>重启</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh" ${d.online ? "" : "disabled"}>刷新</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
+          </td></tr>`;
+
+    const body = !rows.length
+      ? emptyRow(7, "该账户下暂无已注册设备")
+      : devGrouped
+        ? groupNames
+            .map((g) => {
+              const list = groups.get(g);
+              const on = list.filter((r) => r.d.online).length;
+              return (
+                `<tr class="dev-group"><td colspan="7"><b>${esc(g)}</b>` +
+                `<span class="muted"> · ${list.length} 台${on ? ` · 在线 ${on}` : ""}</span></td></tr>` +
+                list.map(devRow).join("")
+              );
+            })
+            .join("")
+        : rows.map(devRow).join("");
+
     return `
       <div class="card"><h3>设备控制</h3>
         <p class="muted">
@@ -363,31 +425,48 @@
             ? `<p class="muted" style="color:var(--warn)">⚠ 有 ${unbound} 台设备尚未绑定班级，定向广播不会覆盖到它们。</p>`
             : ""
         }
-        <div class="row" style="margin-bottom:8px"><button data-act="reload">刷新</button></div>
-        <table><thead><tr><th>设备</th><th>所属班级</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${
-          ds.length
-            ? ds
-                .map((d) => {
-                  const c = classCell(d, map);
-                  return `<tr><td>${esc(d.name)}<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>
-          <td><span class="tag ${c.bound ? "ok" : "warn"}">${esc(c.label)}</span></td>
-          <td>${esc(d.ip || "—")}</td><td>${esc(d.ver)}</td><td>${esc(d.last)}</td>
-          <td>${stateTag(d)}</td>
-          <td>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart" ${d.online ? "" : "disabled"}>重启</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh" ${d.online ? "" : "disabled"}>刷新</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
-          </td></tr>`;
-                })
-                .join("")
-            : emptyRow(7, "该账户下暂无已注册设备")
-        }
-        </tbody></table>
+        <div class="row" style="margin-bottom:8px">
+          <input type="search" data-devfilter="1" value="${esc(devQuery)}" aria-label="筛选设备"
+                 placeholder="搜索 班级 / 设备名 / 设备号 / IP / 版本…" style="min-width:240px;flex:1">
+          <button data-act="dev-group">${devGrouped ? "改为平铺" : "按班级分组"}</button>
+          <button data-act="reload">刷新</button>
+          <span class="muted" id="dev-shown" aria-live="polite"></span>
+        </div>
+        <table><thead><tr><th>设备</th><th>所属班级</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="dev-body">${body}</tbody></table>
         <p class="muted">重启/刷新经 CIMS management 原生指令通道；锁屏/截图经命令队列下发 <code>stelarith_task</code>，由本机 ClassIsland 插件 + 本地代理执行。</p>
       </div>`;
   };
+
+  /**
+   * 设备表筛选：**只切 DOM 可见性，不重渲染**。
+   * 逐字符重渲染会把输入焦点打断（打第二个字就丢焦点）—— 搜索框最常见的坏味道。
+   * 组头在「组内全被过滤掉」时一并隐藏，否则会留下一串空标题。
+   */
+  function applyDevFilter() {
+    const body = document.getElementById("dev-body");
+    if (!body) return;
+    const q = devQuery.trim().toLowerCase();
+    let shown = 0;
+    let total = 0;
+    body.querySelectorAll("tr.dev-row").forEach((tr) => {
+      total++;
+      const hit = !q || tr.dataset.devQ.includes(q);
+      tr.classList.toggle("hidden", !hit);
+      if (hit) shown++;
+    });
+    body.querySelectorAll("tr.dev-group").forEach((head) => {
+      let any = false;
+      let n = head.nextElementSibling;
+      while (n && n.classList.contains("dev-row")) {
+        if (!n.classList.contains("hidden")) { any = true; break; }
+        n = n.nextElementSibling;
+      }
+      head.classList.toggle("hidden", !any);
+    });
+    const box = document.getElementById("dev-shown");
+    if (box) box.textContent = q ? `命中 ${shown} / ${total} 台` : `${total} 台`;
+  }
 
   views.remote = async () => {
     const [st, map] = await Promise.all([API.deviceStatus(), API.deviceClassMap()]);
@@ -1111,11 +1190,56 @@
 
   views.audit = async () => {
     const logs = await API.listAudit();
-    return `<div class="card"><h3>操作日志</h3>
+    // 完整性自检。拿不到结果时显示「未校验」—— 安全结论不允许伪装成「通过」。
+    const v = await API.auditVerify();
+    const chip = !v
+      ? `<span class="tag warn">未校验</span>`
+      : v.ok
+        ? `<span class="tag ok">链完整</span>`
+        : `<span class="tag err">链断裂</span>`;
+    const integrity = !v
+      ? `<p class="muted">后端未提供完整性校验（或本部署尚未启用），本行只表示「未校验」，不代表通过。</p>`
+      : `<p class="muted">
+           已校验 <b>${v.checked}</b> 条${
+             v.legacyRows
+               ? `；另有 <b>${v.legacyRows}</b> 条启用哈希链之前的旧记录，无哈希、无法校验（如实跳过，不算异常）`
+               : ""
+           }。<br>
+           算法 <b>${esc(v.mode)}</b>${
+             v.mode === "sha256"
+               ? "（未配置 CONSOLE_AUDIT_KEY，只能防「随手改一行」；配了密钥才防得住整表重写）"
+               : "（有密钥：即使能改库，没有密钥也造不出自洽的链）"
+           }。<br>
+           保留策略 <b>${v.retentionDays}</b> 天${
+             v.prunedBefore ? `，已裁剪 ${esc(v.prunedBefore)} 之前的记录（裁剪动作本身也留痕）` : ""
+           }。
+         </p>
+         ${
+           v.tailOk
+             ? ""
+             : `<p class="muted" style="color:var(--err)">⚠ 链尾与登记值不一致 —— 最后若干条记录可能被删除。</p>`
+         }
+         ${
+           v.ok
+             ? ""
+             : `<p class="muted" style="color:var(--err)">⚠ 第一处异常在 #${v.firstBadId}：${esc(v.problem || "未知")}</p>`
+         }`;
+    return `<div class="card"><h3>日志完整性 ${chip}</h3>
+        <p class="muted">
+          每条操作记录都带着一串哈希，且与上一条首尾相连。改一行、删一行、插入一行都会让链对不上 ——
+          这样「谁在哪个班对哪台设备做了什么」才有资格被当作证据。
+        </p>
+        ${integrity}
+        <div class="row">
+          <button data-act="reload">刷新</button>
+          <button data-act="audit-verify">重新校验</button>
+          <button data-act="audit-prune" data-need="manage">按保留期裁剪</button>
+        </div>
+      </div>
+      <div class="card"><h3>操作日志</h3>
       <p class="muted">集控内的关键操作（下发课表/配置、设备指令、通知、远程控制、点歌推送）都会在此留痕，便于事后追溯。</p>
-      <div class="row" style="margin-bottom:8px"><button data-act="reload">刷新</button></div>
       <table><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>对象</th><th>详情</th></tr></thead><tbody>
-      ${logs.length ? logs.map(a=>`<tr><td>${esc(a.at)}</td><td>${esc(a.who)}</td><td><span class="tag">${esc(a.act)}</span></td><td>${esc(a.target)}</td><td class="muted">${esc(a.detail||"")}</td></tr>`).join("") : emptyRow(5, "暂无操作记录")}
+      ${logs.length ? logs.map(a=>`<tr><td>${esc(a.at)}</td><td>${esc(a.who)}</td><td><span class="tag" title="${esc(a.rawAct||a.act)}">${esc(a.act)}</span></td><td>${esc(a.target)}</td><td class="muted">${esc(a.detail||"")}</td></tr>`).join("") : emptyRow(5, "暂无操作记录")}
       </tbody></table></div>`;
   };
 
@@ -1181,6 +1305,9 @@
     try {
       view.innerHTML = await views[current]();
       applyGating();
+      // 设备表的筛选词跨重渲染保留，所以渲染完要把过滤重新套一遍，
+      // 否则「搜索 → 点刷新」会看到全部设备，像是搜索失效了。
+      if (current === "devices") applyDevFilter();
       toast("就绪");
     } catch (e) {
       // 把真实抛错与视图名一起打出来：像「Cannot read properties of undefined
@@ -1207,6 +1334,14 @@
   });
 
   // ============ 事件委托 ============
+  // 设备表搜索：用 input 事件（不是 click），且只切可见性、不重渲染 —— 保住输入焦点。
+  document.addEventListener("input", (e) => {
+    const el = e.target && e.target.closest && e.target.closest("[data-devfilter]");
+    if (!el) return;
+    devQuery = el.value;
+    applyDevFilter();
+  });
+
   document.addEventListener("click", async (e) => {
     const el = e.target.closest("[data-act]");
     if (!el) return;
@@ -1215,6 +1350,34 @@
       if (act === "reload") return go(current);
       // 通用跳转：任意按钮都能把用户送到另一个视图（免得为了"去某页"写一个专用 action）
       if (act === "go") return go(el.dataset.v);
+      // 设备表：分组 ↔ 平铺。顺序变了必须重渲染，但重渲染后要立刻把筛选套回去，
+      // 否则用户输入的关键词会看起来"失效了一次"。
+      if (act === "dev-group") {
+        devGrouped = !devGrouped;
+        await go(current);
+        applyDevFilter();
+        return;
+      }
+      // 审计完整性：手动重算一次并直接把结论说出来（不只在页面上换个标签，
+      // 否则用户点了按钮没有反馈，会以为按钮没生效）。
+      if (act === "audit-verify") {
+        const v = await API.auditVerify();
+        toast(
+          !v ? "后端未提供完整性校验"
+            : v.ok ? `审计链完整（已校验 ${v.checked} 条${v.legacyRows ? `，跳过 ${v.legacyRows} 条无哈希旧记录` : ""}）`
+            : `审计链异常：第 ${v.firstBadId} 行 —— ${v.problem || "未知"}`
+        );
+        return go(current);
+      }
+      if (act === "audit-prune") {
+        const r = await API.auditPrune();
+        toast(
+          r && r.ok
+            ? `已裁剪 ${r.removed} 条（保留 ${r.retentionDays} 天${r.anchor ? "，已登记裁剪锚点" : ""}）`
+            : `裁剪失败：${(r && r.error) || "未知原因"}`
+        );
+        return go(current);
+      }
 
       if (act === "save-schedule") {
         const s = await API.getSchedule();
@@ -1228,6 +1391,15 @@
         });
         const r = await API.putSchedule(API.state.classId, s);
         const drops = (r && r.dropped) || [];
+        // 审计留痕（2026-09-17 补）：课表下发会直接改写教室大屏的当天课程，
+        // 「哪天谁把某班的课表改了」在学期中途是高频争议点，必须可倒查。
+        // 送达节次数一并记账：节次数异常（如 0）说明这次下发很可能是误操作。
+        API.audit(
+          "schedule.push",
+          API.state.classId || "—",
+          `课表下发｜节次=${(s.days || []).reduce((n, d) => n + (d.items || []).length, 0)}` +
+            `｜未识别科目=${drops.length}`
+        );
         if (drops.length) {
           toast(`已保存并下发，但有 ${drops.length} 节科目无法识别，未写入：${drops.slice(0, 3).join("；")}${drops.length > 3 ? " …" : ""}`);
           console.warn("未写入的课表格子：", drops);
@@ -1358,6 +1530,12 @@
         // 勾选的班级 = 定向推送目标（多选）。为空则交给「范围」决定。
         const cls = Array.from(view.querySelectorAll("input.nt-cls:checked")).map((x) => x.value);
         try {
+          // ⚠️ 这里刻意**不**补 API.audit —— 广播的审计由服务端负责：
+          //   · 真正推送时 src/lib/server/broadcast.ts 内部记 `broadcast_<source>`；
+          //   · ext 路由仅在「没走 broadcast」时补一条 `notice`（仅留痕），
+          //     且该处注释明确写着「broadcast 内部已记，避免审计双份」。
+          // 前端再记一次，会让每次广播在操作日志里出现三条记录，
+          // 真正的失败原因反而被淹掉（2026-09-17 实测真实数据确认）。
           const r = await API.sendNotice(t, $("#nt-scope").value, cls, c);
           const b = r && r.broadcast;
           if (b && b.deduped) {
