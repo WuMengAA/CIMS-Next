@@ -815,3 +815,305 @@
 }
 /* 页面里手写的自定义弹层（fixed inset-0 遮罩+内容一体）统一压过侧栏 */
 body > .modal-root-fix { z-index: 80; }
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Rhine Lab 终端风格 —— 作用域限定在文档库 /docs
+   ───────────────────────────────────────────────────────────────────────────
+   提炼自《明日方舟》「莱茵生命：访问」终端界面的视觉语言：
+     暖灰纸底 · 墨黑文字 · 暖杏金信号 · 细线分区 · 紧凑大写标签 · 终端等宽编号。
+
+   ⚠️ 关键约束：这套令牌**只挂在 .rhine-docs 作用域**下，不写进 :root。
+      全站其余页面（首页/博客/后台）继续用各自令牌，观感完全不受影响。
+      在 .rhine-docs 内部，我们把标准令牌（--background/--foreground/…）
+      就地覆盖 —— 于是子元素照常写 bg-background / text-foreground /
+      border-border / text-primary，自动落到莱茵色板上，无需逐处改类名。
+
+   配色来源：RhineLabUI src/theme-ui.ts 的 palette
+     亮色 ink #080a08 / paper #eae5e1 / panel #edebe4 / field #e7e3d9
+          line #aaa59a / muted #77756d / accent #9b7247
+     深色 ink #e0e3dc / paper #11181b / panel #202a2f / field #2a363b
+          line #536166 / muted #a6b0b1 / accent #c5a16b
+   另补 style.css 中实测出现频率最高的印刷金 #a67d48 / #946b3c 作为加深态。
+   ─────────────────────────────────────────────────────────────────────────── */
+.rhine-docs {
+	/* 亮色：暖灰纸底 + 墨黑字 + 暖杏金 */
+	--background: #eae5e1;
+	--foreground: #080a08;
+	--card: #edebe4;
+	--card-nested: #e7e3d9;
+	--card-foreground: #080a08;
+	--popover: #edebe4;
+	--popover-foreground: #080a08;
+	/* 强调金在浅底上需压深才达 AA：印刷金 #946b3c 对 #eae5e1 约 4.9:1 */
+	--primary: #8a6234;
+	--primary-foreground: #f5f2e9;
+	--secondary: #e7e3d9;
+	--secondary-foreground: #080a08;
+	--muted: #e7e3d9;
+	--muted-foreground: #5f5d55; /* 对 #eae5e1 实测 5.6:1，达 AA */
+	--accent: #e7e3d9;
+	--accent-foreground: #080a08;
+	--border: rgba(8, 10, 8, 0.22);
+	--input: rgba(8, 10, 8, 0.14);
+	--ring: #8a6234;
+
+	/* 终端专有令牌 —— 莱茵界面的骨相：细线、标签、刻度 */
+	--rhine-line: #aaa59a;
+	--rhine-line-strong: #817b70;
+	--rhine-label: #6d6a60; /* 小号大写标签 */
+	--rhine-signal: #8a6234; /* 选中/激活信号（暖杏金） */
+	--rhine-signal-soft: rgba(138, 98, 52, 0.12);
+	--rhine-paper: #eae5e1;
+	--rhine-panel: #edebe4;
+	--rhine-ink: #080a08;
+	--rhine-rule-alpha: rgba(8, 10, 8, 0.16);
+	--rhine-grid: rgba(8, 10, 8, 0.05);
+}
+
+.dark .rhine-docs {
+	--background: #11181b;
+	--foreground: #e0e3dc;
+	--card: #202a2f;
+	--card-nested: #2a363b;
+	--card-foreground: #e0e3dc;
+	--popover: #202a2f;
+	--popover-foreground: #e0e3dc;
+	--primary: #c5a16b;
+	--primary-foreground: #11181b;
+	--secondary: #2a363b;
+	--secondary-foreground: #e0e3dc;
+	--muted: #2a363b;
+	--muted-foreground: #a6b0b1;
+	--accent: #2a363b;
+	--accent-foreground: #e0e3dc;
+	--border: rgba(224, 227, 220, 0.22);
+	--input: rgba(224, 227, 220, 0.14);
+	--ring: #c5a16b;
+
+	--rhine-line: #536166;
+	--rhine-line-strong: #6d7a7f;
+	--rhine-label: #8d979a;
+	--rhine-signal: #c5a16b;
+	--rhine-signal-soft: rgba(197, 161, 107, 0.16);
+	--rhine-paper: #11181b;
+	--rhine-panel: #202a2f;
+	--rhine-ink: #e0e3dc;
+	--rhine-rule-alpha: rgba(224, 227, 220, 0.18);
+	--rhine-grid: rgba(224, 227, 220, 0.05);
+}
+
+/* 终端小号大写标签：莱茵界面用得最多的字阶（PERMISSION / ARCHIVE INDEX）
+   中文没有大写，故只对拉丁字母生效；中文保持原样靠字重与字距区分。 */
+.rhine-label {
+	font-size: 0.625rem; /* 10px */
+	line-height: 1;
+	font-weight: 500;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--rhine-label);
+}
+.rhine-label-sm {
+	font-size: 0.5625rem; /* 9px */
+	letter-spacing: 0.18em;
+}
+
+/* 等宽终端编号：档案号 / 序号 / 统计，用制表数字对齐 */
+.rhine-num {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.02em;
+}
+
+/* 细线分区（替代圆角卡片）：顶部一条 1px 线，像印刷表格 */
+.rhine-rule {
+	border-top: 1px solid var(--rhine-rule-alpha);
+}
+.rhine-rule-b {
+	border-bottom: 1px solid var(--rhine-rule-alpha);
+}
+
+/* 档案条目：默认无背景，悬停时左侧浮出暖杏金信号条 + 极淡底色 */
+.rhine-row {
+	position: relative;
+	transition: background-color 0.22s ease, color 0.22s ease;
+}
+.rhine-row::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: var(--rhine-signal);
+	transform: scaleY(0);
+	transform-origin: center;
+	transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rhine-row:hover {
+	background: var(--rhine-signal-soft);
+}
+.rhine-row:hover::before,
+.rhine-row[data-active="true"]::before {
+	transform: scaleY(1);
+}
+.rhine-row[data-active="true"] {
+	background: var(--rhine-signal-soft);
+}
+
+/* 终端信号灯：选中态的小方块，呼应莱茵的状态指示 */
+.rhine-tick {
+	width: 4px;
+	height: 4px;
+	background: var(--rhine-signal);
+	display: inline-block;
+	flex-shrink: 0;
+}
+
+/* ── 开头打字机（终端逐字显现）────────────────────────────────────────────
+   用 CSS 宽度动画逐字揭开 + 光标闪烁，无需 JS 计时器，SSR 友好。
+   尊重 prefers-reduced-motion：动效关闭时直接显示全文。 */
+.rhine-typing {
+	display: inline-block;
+	overflow: hidden;
+	white-space: nowrap;
+	max-width: 100%;
+	border-right: 2px solid var(--rhine-signal);
+	animation: rhine-typing-reveal 1.15s steps(var(--rhine-chars, 18), end) both,
+		rhine-caret 0.72s steps(1) infinite;
+	vertical-align: bottom;
+}
+@keyframes rhine-typing-reveal {
+	from {
+		clip-path: inset(0 100% 0 0);
+	}
+	to {
+		clip-path: inset(0 0 0 0);
+	}
+}
+@keyframes rhine-caret {
+	0%, 49% { border-color: var(--rhine-signal); }
+	50%, 100% { border-color: transparent; }
+}
+
+/* ── 编号滚动（莱茵招牌的数字/标题连续滚动）──────────────────────────────
+   译自 RhineLabUI 使用的 @kitlangton/rolling-number createRollingText：
+   每位数字纵向滚动一格的经典机械翻牌，向上滚动、460ms 缓动。 */
+.rhine-roll {
+	display: inline-flex;
+	overflow: hidden;
+	line-height: 1;
+	height: 1em;
+	vertical-align: bottom;
+}
+.rhine-roll > span {
+	display: inline-block;
+	height: 1em;
+	transition: transform 0.46s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rhine-roll > span > i {
+	display: block;
+	height: 1em;
+	font-style: normal;
+	font-variant-numeric: tabular-nums;
+}
+
+/* 归档网格纹（极淡，仅在终端区块内出现，给"仪器面板"的质感） */
+.rhine-screen {
+	position: relative;
+	background-image: linear-gradient(var(--rhine-grid) 1px, transparent 1px),
+		linear-gradient(90deg, var(--rhine-grid) 1px, transparent 1px);
+	background-size: 28px 28px;
+}
+
+/* 进场淡入上浮：文档库条目依次浮现（配合 --reveal-delay 错峰） */
+.rhine-in {
+	animation: rhine-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes rhine-in {
+	from {
+		opacity: 0;
+		transform: translateY(8px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* 减少动态效果：关掉打字/滚动/进场，全部直接落到终态 */
+@media (prefers-reduced-motion: reduce) {
+	.rhine-typing {
+		animation: none;
+		clip-path: none;
+		border-right: 0;
+	}
+	.rhine-roll > span {
+		transition: none;
+	}
+	.rhine-in {
+		animation: none;
+	}
+	.rhine-row,
+	.rhine-row::before {
+		transition: none;
+	}
+}
+
+/* ── 文档库正文的终端化排版 ───────────────────────────────────────────────
+   把 .rhine-docs 内的 prose 从"圆角卡片"改造成"细线分区"：
+   标题带首行标记、引用块用左侧信号条、表格用细线网格。 */
+.rhine-docs .prose h2 {
+	position: relative;
+	padding-top: 0.65rem;
+	border-top: 1px solid var(--rhine-rule-alpha);
+}
+.rhine-docs .prose h2::before {
+	content: "";
+	position: absolute;
+	top: -1px;
+	left: 0;
+	width: 2.25rem;
+	height: 1px;
+	background: var(--rhine-signal);
+}
+.rhine-docs .prose blockquote {
+	border-left: 2px solid var(--rhine-signal);
+	background: var(--rhine-signal-soft);
+	padding: 0.75rem 1rem;
+	font-style: normal;
+}
+.rhine-docs .prose table {
+	border-collapse: collapse;
+	border: 1px solid var(--rhine-rule-alpha);
+}
+.rhine-docs .prose th {
+	background: var(--rhine-signal-soft);
+	font-size: 0.75rem;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--rhine-label);
+}
+.rhine-docs .prose th,
+.rhine-docs .prose td {
+	border: 1px solid var(--rhine-rule-alpha);
+	padding: 0.5rem 0.75rem;
+}
+.rhine-docs .prose a {
+	color: var(--primary);
+	text-underline-offset: 3px;
+	text-decoration-thickness: 1px;
+}
+.rhine-docs .prose hr {
+	border: 0;
+	border-top: 1px solid var(--rhine-rule-alpha);
+}
+/* 正文里的行内代码：去掉圆角，改成细线方框，更像终端 */
+.rhine-docs .prose code:not(pre code) {
+	border-radius: 2px;
+	border: 1px solid var(--rhine-rule-alpha);
+	background: var(--rhine-signal-soft);
+}
+.rhine-docs .prose pre {
+	border-radius: 2px;
+	border: 1px solid var(--rhine-rule-alpha);
+}
