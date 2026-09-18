@@ -45,30 +45,72 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
         Diag($"ctor: 提醒提供方已创建并自动注册（Guid={ProviderGuid}）");
     }
 
-    /// <summary>推送一条播报：遮罩显示标题，正文显示内容。任何异常都被吞掉，绝不影响命令执行。</summary>
+    /// <summary>最近一次推送时间（抑制同一秒刷屏）。</summary>
+    private static long _lastPushTicks;
+    private static readonly object _gate = new();
+
+    /// <summary>同内容去重窗口（秒）：窗口内推送过完全相同的标题+正文则丢弃，防「远程连接报错」这类轮询错误疯狂霸屏。</summary>
+    private const double DedupWindowSeconds = 20.0;
+    private static string? _recentKey;
+    private static long _recentPushTicks;
+
+    /// <summary>两次不同内容的推送最小间隔（秒），避免连续报错把通知刷爆。</summary>
+    private const double MinGapSeconds = 1.5;
+
+    /// <summary>推一条播报：遮罩显示标题，正文显示内容。带同内容去重 + 短时限频 + 字数自适应时长。
+    /// 任何异常都被吞掉，绝不影响命令执行。</summary>
     public void Push(string title, string? content, double seconds = 8)
     {
         try
         {
+            var now = DateTime.UtcNow.Ticks;
+            var safeTitle = string.IsNullOrWhiteSpace(title) ? StelarithBranding.SourceName : title;
+            var key = safeTitle + "\u0001" + (content ?? "");
+
+            lock (_gate)
+            {
+                // 1) 同内容去重：窗口内已弹过完全一样的内容 → 丢弃（远程连接报错这类轮询错误不重复霸屏）
+                if (_recentKey == key && (now - _recentPushTicks) < TimeSpan.FromSeconds(DedupWindowSeconds).Ticks)
+                {
+                    Diag($"Push dedup-skip: {safeTitle} (same content within {DedupWindowSeconds}s)");
+                    return;
+                }
+                // 2) 短时限频：两次不同内容太密，也丢弃，避免刷爆
+                if (_recentKey != null && (now - _lastPushTicks) < TimeSpan.FromSeconds(MinGapSeconds).Ticks)
+                {
+                    Diag($"Push rate-skip: {safeTitle} (gap<{MinGapSeconds}s)");
+                    return;
+                }
+                _lastPushTicks = now;
+                _recentKey = key;
+                _recentPushTicks = now;
+            }
+
+            // 3) 时长随字数自适应：默认时长(8)按「读速≈每字0.4s +基线」推导，长广播不被掐断、
+            //    短提示不长时间占屏；外部显式传2/5/6等特殊时长依然保留。
+            var effective = seconds;
+            if (seconds == 8.0) // 默认 → 自适应
+                effective = Math.Clamp(2.5 + (content?.Length ?? 0) * 0.12, 3.0, 20.0);
+
             // 构造 NotificationContent / LucideIconSource 等 Avalonia 控件必须在 UI 线程进行，
             // 而本方法由后台轮询线程（守护线程/ThreadPool）调用，直接构造会抛 "Call from invalid thread"。
             // 因此整体 marshal 到 Dispatcher.UIThread 执行。
+            var effTitle = safeTitle;
+            var effContent = content;
+            var effDuration = effective;
             Dispatcher.UIThread.InvokeAsync(() =>
             {
                 try
                 {
-                    // 来源名可在 stelarith-sync.json 里自定义（默认「集控广播」）。
-                    // 空标题 = 调用方只想弹正文，此时才回落到来源名。
-                    var safeTitle = string.IsNullOrWhiteSpace(title) ? StelarithBranding.SourceName : title;
-                    var duration = TimeSpan.FromSeconds(seconds > 0 ? seconds : 8);
+                    var duration = TimeSpan.FromSeconds(effDuration > 0 ? effDuration : 8);
 
-                    var mask = NotificationContent.CreateTwoIconsMask(safeTitle);
+                    var mask = NotificationContent.CreateTwoIconsMask(effTitle);
                     mask.Duration = duration;
 
                     NotificationContent? overlay = null;
-                    if (!string.IsNullOrWhiteSpace(content))
+                    if (!string.IsNullOrWhiteSpace(effContent))
                     {
-                        overlay = NotificationContent.CreateSimpleTextContent(content!);
+                        overlay = NotificationContent.CreateSimpleTextContent(effContent!);
                         overlay.Duration = duration;
                     }
 
@@ -78,7 +120,7 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
                         OverlayContent = overlay,
                     });
 
-                    Diag($"Push ok: title={safeTitle} contentLen={content?.Length ?? 0} duration={seconds}s");
+                    Diag($"Push ok: title={effTitle} contentLen={effContent?.Length ?? 0} duration={effDuration:N1}s");
                 }
                 catch (Exception ex)
                 {
