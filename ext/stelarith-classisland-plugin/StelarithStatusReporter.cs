@@ -320,7 +320,12 @@ public sealed class StelarithStatusReporter : BackgroundService
             using var doc = JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("class_id", out var cid))
                 _authoritativeClassId = cid.GetString() ?? "";
-            ReportDiag($"readback class_id={_authoritativeClassId}");
+            // bound 缺失（旧后端）时用 class_id 是否为空兜底推导；OOBE 状态机据此决定是否弹引导。
+            bool bound = doc.RootElement.TryGetProperty("bound", out var bEl)
+                ? bEl.ValueKind == System.Text.Json.JsonValueKind.True
+                : !string.IsNullOrEmpty(_authoritativeClassId);
+            StelarithOobE.Update(bound, _authoritativeClassId);
+            ReportDiag($"readback class_id={_authoritativeClassId} bound={bound}");
         }
         catch (Exception ex)
         {

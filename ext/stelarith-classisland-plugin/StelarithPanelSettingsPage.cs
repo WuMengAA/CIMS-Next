@@ -57,6 +57,10 @@ public class StelarithPanelSettingsPage : SettingsPageBase
     private StackPanel _pluginPanel = null!;
     private TextBox _groupBox = null!;
 
+    // OOBE 引导横幅：本机尚未绑定班级时渲染，把"去面板绑定"显式告诉电教委员。
+    private Border _oobEBorder = null!;
+    private TextBlock _oobEText = null!;
+
     private DispatcherTimer? _timer;
 
     public StelarithPanelSettingsPage()
@@ -105,6 +109,18 @@ public class StelarithPanelSettingsPage : SettingsPageBase
             StelarithTheme.SubtleOpacity, 14, wrap: true));
 
         root.Children.Add(SectionHeader("设备运行状态"));
+        // OOBE 引导横幅（默认隐藏，未绑定班级时由 RefreshStatus 显示）
+        _oobEText = Body("", 1.0, 14, wrap: true);
+        _oobEBorder = new Border
+        {
+            BorderThickness = new Avalonia.Thickness(3, 0, 0, 0),
+            Padding = new Avalonia.Thickness(10, 8),
+            BorderBrush = StelarithTheme.ForState(false),
+            Background = StelarithTheme.CardBackground,
+            Child = _oobEText,
+            IsVisible = false,
+        };
+        root.Children.Add(_oobEBorder);
         root.Children.Add(BuildStatusCard());
 
         root.Children.Add(SectionHeader("快捷操作"));
@@ -257,6 +273,19 @@ public class StelarithPanelSettingsPage : SettingsPageBase
             var group = StelarithProfileWriter.CurrentActiveClassGroupName();
             var classId = string.IsNullOrEmpty(st.ClassId) ? "未绑定" : st.ClassId;
             _classText.Text = $"管理端指派：{classId} · 本机生效课表群：{(string.IsNullOrEmpty(group) ? "未设置" : group)}";
+
+            // ③-B OOBE 引导横幅：本机尚未在管理端绑定班级时显式提示（否则会一直停留在
+            // 本地默认档案，看起来像"自动归到 1 班"）。绑定后由回读线程翻转 Unbound 自动隐藏。
+            if (StelarithOobE.Unbound)
+            {
+                _oobEBorder.IsVisible = true;
+                _oobEText.Text = "⚠ 本机尚未绑定班级：请打开集控面板 → 设备控制 → 本设备 → 选择班级完成绑定。"
+                    + "绑定前将停留在默认档案，收不到本班课表与定向广播。";
+            }
+            else
+            {
+                _oobEBorder.IsVisible = false;
+            }
 
             // ④ 下发同步
             var snap = StelarithSyncState.Current;
