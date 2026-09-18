@@ -3,6 +3,8 @@
 	import Container from "$lib/components/container.svelte";
 	import RollingNumber from "$lib/components/rhine/rolling-number.svelte";
 	import TypingText from "$lib/components/rhine/typing-text.svelte";
+	import ArchiveArray from "$lib/components/rhine/archive-array.svelte";
+	import { mode } from "mode-watcher";
 
 	let { data }: { data: { docs: any[]; canEdit?: boolean } } = $props();
 
@@ -86,56 +88,75 @@
 				{/if}
 			</div>
 		{:else}
-			<div class="flex flex-col gap-10">
-				{#each groups as [category, docs], gi (category)}
-					<section class="flex flex-col">
-						<!-- 分组头：编号 + 名称 + 计数，细线下压 -->
-						<div class="flex items-baseline gap-3 border-b border-border/70 pb-2">
-							<span class="rhine-num text-xs text-muted-foreground">
-								<RollingNumber value={gi + 1} pad={2} label="分组序号" />
-							</span>
-							<h2 class="text-lg font-semibold tracking-tight">{category}</h2>
-							<span class="rhine-label ml-auto">
-								{docs.length} {docs.length === 1 ? "item" : "items"}
-							</span>
-						</div>
+			<!-- ══ 三维档案阵列：可左右切分组、上下切文章 ══════════════════ -->
+			<section class="flex flex-col gap-3">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<div class="flex items-center gap-2.5">
+						<span class="rhine-tick"></span>
+						<span class="rhine-label">Card Array</span>
+					</div>
+					<span class="rhine-label rhine-label-sm">
+						← → 切分组 · ↑ ↓ 切文章 · Enter 打开
+					</span>
+				</div>
 
-						<!-- 档案行：细线分隔、悬停浮出信号条 -->
-						<div class="flex flex-col">
-							{#each docs as doc, di (doc.slug)}
-								<a
-									href="/docs/{doc.slug}"
-									data-active={false}
-									class="rhine-row rhine-in group flex items-start gap-3 border-b border-border/50 px-3 py-3.5 md:gap-4 md:px-4"
-									style="animation-delay: {(gi * 60 + di * 40) % 480}ms"
-								>
-									<!-- 档案编号：全册连续 -->
-									<span class="rhine-num mt-0.5 w-9 shrink-0 text-xs text-muted-foreground/80">
-										<RollingNumber value={indexOf.get(doc.slug) ?? 0} pad={2} />
-									</span>
+				<ArchiveArray docs={data.docs} dark={mode.current === "dark"} />
+			</section>
 
-									<div class="flex min-w-0 flex-1 flex-col gap-1">
-										<div class="flex flex-wrap items-center gap-2">
-											<h3 class="font-medium transition-colors group-hover:text-primary">{doc.title}</h3>
+			<!-- ══ 文本索引：阵列之外的另一种进入方式，便于检索与复制链接 ═══ -->
+			<section class="flex flex-col gap-4">
+				<div class="rhine-rule flex items-center gap-2.5 pt-4">
+					<span class="rhine-tick"></span>
+					<span class="rhine-label">Text Index</span>
+				</div>
+
+				<div class="flex flex-col gap-8">
+					{#each groups as [category, docs], gi (category)}
+						<section class="flex flex-col">
+							<div class="flex items-baseline gap-3 border-b border-border/70 pb-2">
+								<span class="rhine-num text-xs text-muted-foreground">
+									<RollingNumber value={gi + 1} pad={2} label="分组序号" />
+								</span>
+								<h2 class="text-lg font-semibold tracking-tight">{category}</h2>
+								<span class="rhine-label ml-auto">
+									{docs.length} {docs.length === 1 ? "item" : "items"}
+								</span>
+							</div>
+
+							<div class="flex flex-col">
+								{#each docs as doc, di (doc.slug)}
+									<a
+										href="/docs/{doc.slug}"
+										data-active={false}
+										class="rhine-row rhine-in group flex items-start gap-3 border-b border-border/50 px-3 py-3.5 md:gap-4 md:px-4"
+										style="animation-delay: {(gi * 60 + di * 40) % 480}ms"
+									>
+										<span class="rhine-num mt-0.5 w-9 shrink-0 text-xs text-muted-foreground/80">
+											<RollingNumber value={indexOf.get(doc.slug) ?? 0} pad={2} />
+										</span>
+
+										<div class="flex min-w-0 flex-1 flex-col gap-1">
+											<div class="flex flex-wrap items-center gap-2">
+												<h3 class="font-medium transition-colors group-hover:text-primary">{doc.title}</h3>
+											</div>
+											{#if doc.excerpt}
+												<p class="line-clamp-1 text-xs text-muted-foreground">{doc.excerpt}</p>
+											{/if}
 										</div>
-										{#if doc.excerpt}
-											<p class="line-clamp-1 text-xs text-muted-foreground">{doc.excerpt}</p>
-										{/if}
-									</div>
 
-									<!-- 右侧元信息：分类标签 + 日期 -->
-									<div class="flex shrink-0 flex-col items-end gap-1">
-										{#if doc.category}
-											<span class="rhine-label rhine-label-sm border border-border/60 px-1.5 py-0.5">{doc.category}</span>
-										{/if}
-										<span class="rhine-num text-[10px] text-muted-foreground/70">{doc.date}</span>
-									</div>
-								</a>
-							{/each}
-						</div>
-					</section>
-				{/each}
-			</div>
+										<div class="flex shrink-0 flex-col items-end gap-1">
+											{#if doc.category}
+												<span class="rhine-label rhine-label-sm border border-border/60 px-1.5 py-0.5">{doc.category}</span>
+											{/if}
+											<span class="rhine-num text-[10px] text-muted-foreground/70">{doc.date}</span>
+										</div>
+									</a>
+								{/each}
+							</div>
+						</section>
+					{/each}
+				</div>
+			</section>
 		{/if}
 
 		<!-- 页脚署名：呼应莱茵界面右下角 -->

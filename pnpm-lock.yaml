@@ -83,6 +83,9 @@ importers:
       tailwind-variants:
         specifier: ^3.3.1
         version: 3.3.1(tailwind-merge@3.6.0)(tailwindcss@4.3.3)
+      three:
+        specifier: 0.183.2
+        version: 0.183.2
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
@@ -2145,6 +2148,9 @@ packages:
   tapable@2.3.3:
     resolution: {integrity: sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A==}
     engines: {node: '>=6'}
+
+  three@0.183.2:
+    resolution: {integrity: sha512-di3BsL2FEQ1PA7Hcvn4fyJOlxRRgFYBpMTcyOgkwJIaDOdJMebEFPA+t98EvjuljDx4hNulAGwF6KIjtwI5jgQ==}
 
   tiny-case@1.0.3:
     resolution: {integrity: sha512-Eet/eeMhkO6TX8mnUteS9zgPbUMQa4I6Kkp5ORiBD5476/m+PIRiumP5tmh5ioJpH7k51Kehawy2UDfsnxxY8Q==}
@@ -4279,6 +4285,8 @@ snapshots:
   tailwindcss@4.3.3: {}
 
   tapable@2.3.3: {}
+
+  three@0.183.2: {}
 
   tiny-case@1.0.3:
     optional: true
