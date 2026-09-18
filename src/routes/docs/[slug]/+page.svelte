@@ -7,6 +7,38 @@
 	import RollingNumber from "$lib/components/rhine/rolling-number.svelte";
 	import TypingText from "$lib/components/rhine/typing-text.svelte";
 
+	/**
+	 * 站内锚点平滑滚动。
+	 *
+	 * 为什么不能只靠 CSS 的 `scroll-behavior: smooth`：
+	 * 本站根布局用 View Transitions API 接管了**每一次**导航。点 `<a href="#xxx">` 时
+	 * SvelteKit 把它当成一次导航去跑 View Transition，浏览器对整页做快照 → 复原，
+	 * 这会把原生平滑滚动**打断**，表现为「点了一下，画面闪一下就直接跳到位置」，
+	 * 看起来就像锚点跳转失效。
+	 *
+	 * 所以这里显式接管同页锚点点击：阻止 SvelteKit 的导航接管，自己算目标位置
+	 * 并用带行为参数的原生滚动滚过去（尊重用户系统的减少动态效果设置）。
+	 */
+	function onAnchorClick(e: MouseEvent) {
+		const a = (e.target as HTMLElement)?.closest?.('a[href^="#"]') as HTMLAnchorElement | null;
+		if (!a) return;
+		const hash = a.getAttribute("href") || "";
+		// 只接管「本页锚点」（#xxx），不碰跨页链接与空锚点
+		if (hash.length < 2 || a.dataset.noSmooth === "true") return;
+		let id = hash.slice(1);
+		try { id = decodeURIComponent(id); } catch { /* 保留原样 */ }
+		const el = document.getElementById(id);
+		if (!el) return;
+		e.preventDefault();
+		const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+		// 同步地址栏 hash（用 replaceState 避免再触发一次导航/滚动）
+		history.replaceState(null, "", hash);
+		// 键盘可达性：焦点也跟过去，方便读屏与继续 Tab
+		el.setAttribute("tabindex", "-1");
+		el.focus({ preventScroll: true });
+	}
+
 	let { data }: {
 		data: {
 			doc: any;
@@ -82,7 +114,7 @@
 <ViewTracker target={"docs:" + data.doc.slug} />
 <ReadingTracker target={"docs:" + data.doc.slug} title={data.doc.title} section="docs" />
 
-<div class="rhine-docs min-h-screen bg-background text-foreground">
+<div class="rhine-docs min-h-screen bg-background text-foreground" onclick={onAnchorClick}>
 	<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 py-8 md:flex-row md:px-8">
 		<!-- ══ 左栏：档案索引（终端目录树） ══════════════════════════════ -->
 		<nav class="shrink-0 md:w-56">
@@ -175,8 +207,8 @@
 				</dl>
 			</header>
 
-			<!-- 正文 -->
-			<div class="prose max-w-none border-t border-border/70 px-5 py-6 md:px-7">
+			<!-- 正文：rhine-reveal 提供莱茵招牌的「磨砂盖板自上而下揭开」解密入场 -->
+			<div class="prose rhine-reveal max-w-none border-t border-border/70 px-5 py-6 md:px-7">
 				{@html data.html}
 			</div>
 

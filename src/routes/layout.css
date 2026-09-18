@@ -1017,6 +1017,88 @@ body > .modal-root-fix { z-index: 80; }
 	font-variant-numeric: tabular-nums;
 }
 
+/* ── 解密遮盖（莱茵招牌：磨砂盖板自上而下揭开露出正文）────────────────────
+   原作里抽出的档案先是磨砂玻璃，随后盖板自上而下变清晰、遮挡条退开。
+   这里用一层伪元素盖板 + clip-path 自上而下收束来复刻：
+   进入详情页时，正文先被"磨砂"盖住，随后自上而下揭开，露出标题与正文。
+   纯 CSS、无 JS 计时器；SSR 下若不播动画（reduced-motion）直接是揭开态。 */
+.rhine-reveal {
+	position: relative;
+}
+.rhine-reveal::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background: linear-gradient(
+		180deg,
+		var(--rhine-paper) 0%,
+		color-mix(in srgb, var(--rhine-paper) 88%, transparent) 60%,
+		color-mix(in srgb, var(--rhine-paper) 72%, transparent) 100%
+	);
+	backdrop-filter: blur(6px);
+	transform-origin: top;
+	animation: rhine-decrypt 1.05s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+}
+@keyframes rhine-decrypt {
+	from {
+		clip-path: inset(0 0 0 0);
+		opacity: 1;
+	}
+	to {
+		clip-path: inset(0 0 100% 0);
+		opacity: 0.9;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.rhine-reveal::after {
+		animation: none;
+		display: none;
+	}
+}
+
+/* ── 站内锚点跳转（#xxx）─────────────────────────────────────────────────
+   ① 平滑滚动：全站默认是 scroll-behavior:auto（硬跳，视觉上像"闪一下没动"），
+      这里在文档库内开启 smooth，让点到哪一条就丝滑滚过去。
+   ② 落点让位：莱茵详情页的正文标题会被顶部固定元素（阅读进度条等）压住一截，
+      纯锚点跳转会把标题顶到视口最上沿而被遮住。给标题留 scroll-margin-top。
+   ③ 用 :target 给落点标题一个短暂的信号金高亮，明确"跳到了这里"。
+   ─────────────────────────────────────────────────────────────────────────── */
+.rhine-docs {
+	scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+	.rhine-docs {
+		scroll-behavior: auto;
+	}
+}
+/* 正文标题的锚点落点留白（顶栏约 56px + 呼吸 16px） */
+.rhine-docs .prose :is(h1, h2, h3, h4, h5, h6)[id] {
+	scroll-margin-top: 5rem;
+}
+/* 跳转落点高亮：短暂染上信号金，1.6s 后退回常态 */
+.rhine-docs .prose :is(h1, h2, h3, h4, h5, h6)[id]:target {
+	animation: rhine-target-flash 1.6s ease-out;
+}
+@keyframes rhine-target-flash {
+	0% {
+		background: var(--rhine-signal-soft);
+		box-shadow: inset 3px 0 0 var(--rhine-signal);
+	}
+	100% {
+		background: transparent;
+		box-shadow: inset 3px 0 0 transparent;
+	}
+}
+/* 目录里的当前项：靠 :target 无法标记链接本身，用 hover/focus 给足反馈即可 */
+.rhine-docs aside a[href^="#"] {
+	transition: color 0.2s ease, border-color 0.2s ease, padding-left 0.2s ease;
+}
+.rhine-docs aside a[href^="#"]:hover,
+.rhine-docs aside a[href^="#"]:focus-visible {
+	padding-left: 0.75rem;
+}
+
 /* 归档网格纹（极淡，仅在终端区块内出现，给"仪器面板"的质感） */
 .rhine-screen {
 	position: relative;
