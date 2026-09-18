@@ -69,6 +69,8 @@
 	let tplOpen = $state(true);
 	// 预览设备尺寸
 	let device = $state<"desktop" | "tablet" | "mobile">("desktop");
+	// 移动端：编辑 / 预览页签（≤640px 显示，桌面双栏同显）
+	let mobileView = $state<"edit" | "preview">("edit");
 
 	// ---- 站内文件引用（附件库）----
 	let mediaMode = $state<"body" | "cover">("body");
@@ -279,7 +281,7 @@
 		const text = sel || placeholder;
 		body = body.slice(0, start) + before + text + after + body.slice(end);
 		const caret = start + before.length + text.length;
-		queueMicrotask(() => {
+		requestAnimationFrame(() => {
 			el.focus();
 			el.setSelectionRange(caret, caret);
 		});
@@ -375,10 +377,16 @@
 		</div>
 	</header>
 
+	<!-- ═══ 移动端页签：编辑 / 预览（≤640px 显示，桌面双栏同显） ═══ -->
+	<div class="pe-tabs">
+		<button type="button" class="pe-tab {mobileView === 'edit' ? 'on' : ''}" onclick={() => (mobileView = "edit")}>编辑</button>
+		<button type="button" class="pe-tab {mobileView === 'preview' ? 'on' : ''}" onclick={() => (mobileView = "preview")}>预览</button>
+	</div>
+
 	<!-- ═══ 双栏主体：左 = 编辑区，右 = 实时预览 ═══ -->
 	<div class="pe-body">
 		<!-- ── 左栏：编辑区（模板 + 标题 + 工具栏 + 正文） ── -->
-		<main class="pe-col pe-left">
+		<main class="pe-col pe-left {mobileView === 'preview' ? 'pe-mobile-hide' : ''}">
 			<section class="pe-card">
 				<button class="pe-card-head" onclick={() => (tplOpen = !tplOpen)}>
 					<span class="flex items-center gap-2"><Sparkles class="size-3.5" /> 快捷模板</span>
@@ -414,7 +422,7 @@
 		</main>
 
 		<!-- ── 右栏：实时预览区 ── -->
-		<aside class="pe-col pe-right">
+		<aside class="pe-col pe-right {mobileView === 'edit' ? 'pe-mobile-hide' : ''}">
 			<section class="pe-card pe-preview-card">
 				<div class="pe-card-head static">
 					<span class="flex items-center gap-2"><Eye class="size-3.5" /> 实时预览（{device === "desktop" ? "桌面" : device === "tablet" ? "平板 768px" : "手机 390px"}）</span>
@@ -578,7 +586,7 @@
 					{:else if mediaList.length === 0}
 						<p class="py-6 text-center text-sm text-muted-foreground">附件库暂无图片，点击上方上传</p>
 					{:else}
-						<div class="grid grid-cols-4 gap-2">
+						<div class="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
 							{#each mediaList as m (m.url)}
 								<button type="button" onclick={() => pickMedia(m.url, m.filename)} class="group relative overflow-hidden rounded-lg border border-border/60 hover:border-primary/60">
 									<img src={m.url} alt={m.filename} loading="lazy" class="aspect-square w-full object-cover" />
@@ -650,6 +658,29 @@
 	}
 	.pe-device-btn:hover { color: var(--foreground); }
 	.pe-device-btn.on {
+		background: var(--background);
+		color: var(--foreground);
+		box-shadow: 0 1px 2px var(--shadow-card);
+	}
+
+	/* ── 移动端页签：编辑 / 预览（默认隐藏，≤640px 显示） ── */
+	.pe-tabs {
+		display: none;
+		gap: 4px;
+		padding: 3px;
+		border: 1px solid var(--border);
+		border-radius: calc(var(--radius) * 0.9);
+		background: var(--muted);
+	}
+	.pe-tab {
+		flex: 1 1 auto;
+		padding: 0.45rem 0.5rem;
+		border-radius: calc(var(--radius) * 0.7);
+		font-size: 13px;
+		color: var(--muted-foreground);
+		transition: background-color .18s ease, color .18s ease;
+	}
+	.pe-tab.on {
 		background: var(--background);
 		color: var(--foreground);
 		box-shadow: 0 1px 2px var(--shadow-card);
@@ -860,6 +891,18 @@
 	@media (max-width: 640px) {
 		.pe-header { gap: 0.5rem; }
 		.pe-device-group { display: none; }
+		/* 移动端页签显示，非激活栏隐藏 */
+		.pe-tabs { display: flex; }
+		.pe-mobile-hide { display: none; }
+		/* iOS 输入聚焦不自动放大（<16px 触发） */
+		.pe-title-input { font-size: 17px; }
+		.pe-textarea { min-height: 40vh; max-height: 65vh; font-size: 16px; }
+		.pe-textarea-sm { font-size: 16px; }
+		/* 工具栏横向滚动，按钮不被压缩 */
+		.pe-toolbar { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+		.pe-tb-btn { flex: 0 0 auto; }
+		/* 预览（页签模式下尽量撑满视口） */
+		.pe-preview { max-height: calc(100vh - 250px); min-height: 300px; }
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.pe-preview, .pe-tpl, .pe-icon-btn, .pe-device-btn, .pe-tb-btn, .pe-layout-opt {

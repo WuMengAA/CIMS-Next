@@ -42,6 +42,8 @@
 	let mediaShow = $state(false);
 	let mediaList = $state<any[]>([]);
 	let mediaLoading = $state(false);
+	// 移动端：编辑 / 预览页签切换（桌面 md 起双栏同显）
+	let mobileView = $state<"edit" | "preview">("edit");
 
 	const apiPath = $derived("/api/" + section);
 
@@ -339,7 +341,7 @@
 		<Label>标题</Label>
 		<Input placeholder="标题" bind:value={title} />
 	</div>
-	<div class="grid grid-cols-3 gap-4">
+	<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 		{#if section === "docs"}<div class="grid gap-2"><Label>文件夹</Label><Input placeholder="例如：AI 入门" bind:value={folder} /></div>{/if}
 		<div class="grid gap-2"><Label>分类</Label><Input placeholder="开发、追番..." bind:value={category} /></div>
 		<div class="grid gap-2"><Label>标签（逗号分隔）</Label><Input placeholder="AI, Svelte" bind:value={tags} /></div>
@@ -352,7 +354,7 @@
 		</Select.Root></div>
 	</div>
 {#if isProject}
-	<div class="grid grid-cols-2 gap-4">
+	<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 		<div class="grid gap-2"><Label>GitHub 仓库</Label><Input placeholder="https://github.com/..." bind:value={repoUrl} /></div>
 		<div class="grid gap-2"><Label>项目站点</Label><Input placeholder="https://..." bind:value={siteUrl} /></div>
 	</div>
@@ -363,9 +365,14 @@
 	</div>
 
 	<div class="grid gap-2">
-		<div class="flex items-center justify-between"><Label>正文（Markdown · 左侧编辑，右侧实时预览）</Label></div>
+		<div class="flex items-center justify-between"><Label>正文（Markdown）</Label></div>
+		<!-- 移动端页签：编辑 / 预览（桌面 md 起双栏同显） -->
+		<div class="grid grid-cols-2 gap-1 rounded-md border border-border/60 bg-muted/30 p-1 md:hidden">
+			<button type="button" onclick={() => { mobileView = "edit"; closeSlash(); }} class="rounded-md py-1.5 text-sm font-medium transition-colors {mobileView === 'edit' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}">编辑</button>
+			<button type="button" onclick={() => { mobileView = "preview"; closeSlash(); }} class="rounded-md py-1.5 text-sm font-medium transition-colors {mobileView === 'preview' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}">预览</button>
+		</div>
 		<!-- Toolbar (Halo-style) -->
-		<div class="flex flex-wrap items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 p-1">
+		<div class="ce-toolbar-scroll flex flex-nowrap items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 p-1 md:flex-wrap {mobileView === 'preview' ? 'hidden md:flex' : ''}">
 			<button type="button" onclick={toolbarBold} class="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="加粗"><Bold class="size-4" /></button>
 			<button type="button" onclick={toolbarItalic} class="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="斜体"><Italic class="size-4" /></button>
 			<button type="button" onclick={toolbarStrike} class="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" title="删除线"><Strikethrough class="size-4" /></button>
@@ -388,7 +395,7 @@
 
 		<!-- Table size picker -->
 		{#if tableShow}
-			<div class="mb-2 flex items-center gap-3 rounded-md border border-border/60 bg-muted/30 p-2">
+			<div class="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-border/60 bg-muted/30 p-2 {mobileView === 'preview' ? 'hidden' : ''}">
 				<label class="flex items-center gap-2 text-xs">行 <input type="number" min="1" max="10" bind:value={tableRows} class="h-7 w-14 rounded border bg-background px-2 text-sm" /></label>
 				<label class="flex items-center gap-2 text-xs">列 <input type="number" min="1" max="8" bind:value={tableCols} class="h-7 w-14 rounded border bg-background px-2 text-sm" /></label>
 				<Button size="sm" onclick={insertTable}>插入表格</Button>
@@ -399,7 +406,7 @@
 		<!-- Media library picker -->
 		{#if mediaShow}
 			<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onclick={(e) => { if (e.target === e.currentTarget) mediaShow = false; }}>
-				<div class="w-full max-w-2xl rounded-xl border border-border/60 bg-background p-4 shadow-xl">
+				<div class="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border/60 bg-background p-4 shadow-xl">
 					<div class="mb-3 flex items-center justify-between">
 						<h3 class="font-heading text-base font-semibold">选择图片（媒体库）</h3>
 						<button onclick={() => (mediaShow = false)} class="text-muted-foreground hover:text-foreground">✕</button>
@@ -414,7 +421,7 @@
 					{:else if mediaList.length === 0}
 						<p class="py-6 text-center text-sm text-muted-foreground">媒体库暂无图片，点击上方上传</p>
 					{:else}
-						<div class="grid max-h-80 grid-cols-4 gap-2 overflow-y-auto">
+						<div class="grid max-h-80 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 md:grid-cols-4">
 							{#each mediaList as m (m.url)}
 								<button type="button" onclick={() => pickMedia(m.url, m.filename.replace(/\.[^.]+$/, ""))} class="group relative overflow-hidden rounded-lg border border-border/60 hover:border-primary/60">
 									<img src={m.url} alt={m.filename} loading="lazy" class="aspect-square w-full object-cover" />
@@ -427,7 +434,7 @@
 			</div>
 		{/if}
 		<div class="grid gap-0 overflow-hidden rounded-lg border border-border/60 md:grid-cols-2">
-			<div class="relative">
+			<div class="relative {mobileView === 'preview' ? 'hidden md:block' : ''}">
 				<textarea
 					bind:this={bodyEl}
 					bind:value={body}
@@ -435,7 +442,7 @@
 					onkeydown={onEditorKeydown}
 					rows={22}
 					placeholder="输入 / 可唤起快捷工具；支持 Markdown 语法"
-					class="h-[480px] resize-none border-0 bg-background p-4 font-mono text-sm outline-none focus:ring-0 md:border-r md:border-border/60"
+					class="h-[50vh] min-h-[320px] resize-none border-0 bg-background p-4 font-mono text-[16px] outline-none focus:ring-0 md:h-[480px] md:border-r md:border-border/60 md:text-sm"
 				></textarea>
 				<!-- Slash command menu -->
 				{#if slashOpen}
@@ -449,7 +456,7 @@
 					</div>
 				{/if}
 			</div>
-			<div class="prose prose-invert max-w-none h-[480px] overflow-y-auto border-0 bg-card/40 p-4">
+			<div class="prose prose-invert max-w-none h-[50vh] min-h-[320px] overflow-y-auto border-0 bg-card/40 p-4 md:h-[480px] {mobileView === 'edit' ? 'hidden md:block' : ''}">
 				{@html previewHtml || "<p class=\"text-muted-foreground\">开始输入，右侧会实时预览排版效果…</p>"}
 			</div>
 		</div>
@@ -459,7 +466,7 @@
 		</div>
 	</div>
 
-	<div class="flex items-center gap-3">
+	<div class="flex flex-wrap items-center gap-3">
 		<Button onclick={() => save(true)} disabled={saving || !title.trim() || !body.trim()}>
 			<Save class="h-4 w-4 mr-2" /> {saving ? "保存中..." : "保存并返回"}
 		</Button>
@@ -470,3 +477,21 @@
 		{#if saved}<Badge variant="secondary">已保存</Badge>{/if}
 	</div>
 </div>
+
+<style>
+	/* 移动端工具栏：横向滚动、按钮不被压缩（桌面 md 起恢复换行） */
+	:global(.ce-toolbar-scroll) {
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: thin;
+	}
+	:global(.ce-toolbar-scroll > button) {
+		flex: 0 0 auto;
+	}
+	/* iOS 输入聚焦不自动放大：正文 textarea 移动端字号提到 16px */
+	@media (max-width: 767px) {
+		:global(.ce-toolbar-scroll) {
+			-webkit-tap-highlight-color: transparent;
+		}
+	}
+</style>
