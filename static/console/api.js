@@ -937,6 +937,19 @@
       } catch (_) { return { devices: {}, classes: [] }; }
     },
 
+    // ---- 设备 ↔ 班级 绑定（一键指派下拉的真实落点）----
+    // 端点：POST /class/device/assign?class_id=&client_id=（CIMS management，Bearer 鉴权）。
+    // 后端保证「一班一号」：已属别的班时返回 409（需 force 才转移），不静默抢占。
+    // 未配后端（纯演示）时本地模拟，不报错。
+    assignDevice: async (clientId, classId) => {
+      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟绑定到 " + classId };
+      return cims(
+        `/class/device/assign?class_id=${encodeURIComponent(classId)}&client_id=${encodeURIComponent(clientId)}`,
+        { method: "POST", body: "{}" },
+        null
+      );
+    },
+
     // ---- 班级交流（站点侧 SQLite，支持房间/班级隔离，跨班互通）----
     // room 约定：
     //   "techrep-global"      全校电教委员群

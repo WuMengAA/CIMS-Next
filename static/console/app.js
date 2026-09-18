@@ -381,11 +381,23 @@
       return a.localeCompare(b, "zh-Hans-CN");
     });
 
+    // 绑定班级下拉选项：当前已绑定的班默认选中；未绑定则落在「选择班级」占位项。
+    const suggestList = st.suggest || [];
+    const assignOptions = (selId) =>
+      `<option value="">— 选择班级 —</option>` +
+      suggestList
+        .map((c) => `<option value="${esc(c.class_id)}" ${c.class_id === selId ? "selected" : ""}>${esc(c.name)}</option>`)
+        .join("");
+
     const devRow = ({ d, bound, cls, q }) => `<tr class="dev-row" data-dev-q="${esc(q)}">
           <td>${esc(d.name)}<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>
           <td><span class="tag ${bound ? "ok" : "warn"}">${esc(cls)}</span></td>
           <td>${esc(d.ip || "—")}</td><td>${esc(d.ver)}</td><td>${esc(d.last)}</td>
           <td>${stateTag(d)}</td>
+          <td>
+            <select class="ci-assign" data-id="${esc(d.id)}" aria-label="绑定班级" style="max-width:160px">${assignOptions(d.classId)}</select>
+            <button data-act="assign" data-need="manage" data-id="${esc(d.id)}">${bound ? "改绑" : "绑定"}</button>
+          </td>
           <td>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart" ${d.online ? "" : "disabled"}>重启</button>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh" ${d.online ? "" : "disabled"}>刷新</button>
@@ -401,7 +413,7 @@
               const list = groups.get(g);
               const on = list.filter((r) => r.d.online).length;
               return (
-                `<tr class="dev-group"><td colspan="7"><b>${esc(g)}</b>` +
+                `<tr class="dev-group"><td colspan="8"><b>${esc(g)}</b>` +
                 `<span class="muted"> · ${list.length} 台${on ? ` · 在线 ${on}` : ""}</span></td></tr>` +
                 list.map(devRow).join("")
               );
@@ -432,7 +444,7 @@
           <button data-act="reload">刷新</button>
           <span class="muted" id="dev-shown" aria-live="polite"></span>
         </div>
-        <table><thead><tr><th>设备</th><th>所属班级</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead>
+        <table><thead><tr><th>设备</th><th>所属班级</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>绑定班级</th><th>操作</th></tr></thead>
         <tbody id="dev-body">${body}</tbody></table>
         <p class="muted">重启/刷新经 CIMS management 原生指令通道；锁屏/截图经命令队列下发 <code>stelarith_task</code>，由本机 ClassIsland 插件 + 本地代理执行。</p>
       </div>`;
@@ -1504,6 +1516,24 @@
         await API.deviceAction(el.dataset.id, el.dataset.a);
         API.audit("device." + el.dataset.a, el.dataset.id, "下发设备指令");
         toast(`已下发指令：${el.dataset.a} → ${el.dataset.id}`);
+      }
+      else if (act === "assign") {
+        const id = el.dataset.id;
+        const sel = document.querySelector(`select.ci-assign[data-id="${id}"]`);
+        const cid = sel && sel.value;
+        if (!cid) return toast("请先在下拉里选择班级");
+        el.disabled = true;
+        try {
+          const r = await API.assignDevice(id, cid);
+          API.audit("device.assign", id, "绑定到 " + cid);
+          const detail = r && (r.message || r.status) ? `（${r.message || r.status}）` : "";
+          toast(`已${el.textContent}：${cid} ${detail}`);
+        } catch (e) {
+          toast("绑定失败：" + (e && e.message ? e.message : e));
+        } finally {
+          el.disabled = false;
+        }
+        go("devices");
       }
       // ---- ClassIsland 专页 ----
       else if (act === "ci-reload") {
