@@ -178,26 +178,31 @@ public class StelarithMessagePage : SettingsPageBase
         return b;
     }
 
-    /// <summary>拉取消息并刷新界面（可在后台线程调用，内部切回 UI 线程更新控件）。</summary>
+    /// <summary>拉取消息并刷新界面。可在任意线程调用，内部把网络请求放线程池，再切回 UI 更新。</summary>
     private void Refresh(bool alsoPushNotification)
     {
-        StelarithSyncOptions opt;
-        try
+        // 网络请求（同步阻塞版 Fetch）必须离开 UI 线程，否则公网慢时会把整条 UI 事件循环卡死。
+        var t = new System.Threading.Tasks.Task(() =>
         {
-            opt = StelarithSyncOptions.Load();
-        }
-        catch (Exception ex)
-        {
-            UpdateUi(new StelarithMessageFeed.FeedResult
+            StelarithSyncOptions opt;
+            try
             {
-                Ok = false,
-                Error = "配置读取失败：" + ex.Message,
-            }, alsoPushNotification);
-            return;
-        }
+                opt = StelarithSyncOptions.Load();
+            }
+            catch (Exception ex)
+            {
+                UpdateUi(new StelarithMessageFeed.FeedResult
+                {
+                    Ok = false,
+                    Error = "配置读取失败：" + ex.Message,
+                }, alsoPushNotification);
+                return;
+            }
 
-        var result = StelarithMessageFeed.Fetch(opt);
-        UpdateUi(result, alsoPushNotification);
+            var result = StelarithMessageFeed.Fetch(opt);
+            UpdateUi(result, alsoPushNotification);
+        }, System.Threading.Tasks.TaskCreationOptions.LongRunning);
+        t.Start();
     }
 
     private void UpdateUi(StelarithMessageFeed.FeedResult result, bool alsoPushNotification)
