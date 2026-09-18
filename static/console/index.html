@@ -4,7 +4,16 @@
 <meta charset="UTF-8" data-page-node-id="C03ET8W5T1XuUB5nonv8yr" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="ERvyaE0LZ6liexGzk2feMH" />
 <title>星集控 · 电教委员面板</title>
-<link rel="stylesheet" href="styles.css" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
+<!--
+  资源引用必须带 ?v=<版本>。原因（2026-09-19 线上事故）：
+    1) Cloudflare 对本域的 .js/.css 走默认边缘缓存（Cache-Control: max-age=14400），
+       不带查询串的 URL 会被缓存 4 小时 —— 改了代码、重启了服务，用户端却仍是旧版；
+       实测带任意查询串的请求为 cf-cache-status: MISS（每次都回源），故 query 是可靠的破缓存手段。
+    2) 改动本目录下任何 console 资源后，必须同步递增下面的 v 值，
+       并且**必须重启 StelarithServer**（adapter-node 的 sirv 会缓存文件 size，
+       文件被替换后仍按旧长度发送，表现为 HTML/JS 被拦腰截断、面板只剩线框）。
+-->
+<link rel="stylesheet" href="styles.css?v=20260919a" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
 </head>
 <body data-page-node-id="poMxhzuD8ICT6zZOOZDeGB">
 
@@ -85,7 +94,7 @@
   </div>
 </div>
 
-<script src="api.js"></script>
-<script src="app.js"></script>
+<script src="api.js?v=20260919a"></script>
+<script src="app.js?v=20260919a"></script>
 </body>
 </html>
