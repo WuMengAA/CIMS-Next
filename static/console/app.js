@@ -1284,6 +1284,71 @@
       <p class="muted">用于「校园点歌」视图拉取队列 / 点歌。需在 voicehub 后台生成具备 songs:read 与 songs:request 权限的 API Key。</p>
     </div>`;
 
+  // ============ 定时广播（P2）============
+  let schedEditId = null;
+  const _sbTypeLabel = (t) => ({ once: "一次性", daily: "每天", weekly: "每周" }[t] || t);
+  const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString() : "—");
+  // UTC ISO -> 浏览器本地 datetime-local 值（用于回填编辑表单）
+  const toLocalInput = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  views.scheduled = async () => {
+    const [list, devs] = await Promise.all([API.listScheduled(), API.listDevices()]);
+    const items = (list && list.items) || [];
+    const classes = (devs && devs.suggest) || [];
+    const nameOf = (cid) => (classes.find((c) => c.class_id === cid) || {}).name || cid;
+    const rows = items.length
+      ? items.map((it) => `
+        <tr data-id="${it.id}">
+          <td>${esc(it.name || "(未命名)")}</td>
+          <td><span class="tag">${_sbTypeLabel(it.schedule_type)}</span>${it.schedule_type === "weekly" ? " 周" + "日一二三四五六"[it.weekday || 0] : ""}</td>
+          <td>${esc(fmtTime(it.run_at))}</td>
+          <td>${it.target_class_id ? esc(nameOf(it.target_class_id)) : "<b>全校</b>"}</td>
+          <td>${it.enabled ? '<span class="tag ok">启用</span>' : '<span class="tag dim">停用</span>'}</td>
+          <td>${esc(fmtTime(it.next_run_at))}</td>
+          <td>${esc(fmtTime(it.last_run_at))}</td>
+          <td class="acts">
+            <button data-act="sb-edit" data-id="${it.id}">编辑</button>
+            <button data-act="sb-toggle" data-id="${it.id}" data-on="${it.enabled ? 0 : 1}">${it.enabled ? "停用" : "启用"}</button>
+            <button data-act="sb-fire" data-id="${it.id}">立即触发</button>
+            <button class="danger" data-act="sb-del" data-id="${it.id}">删除</button>
+          </td>
+        </tr>`).join("")
+      : `<tr><td colspan="8" class="muted" style="text-align:center;padding:18px 0">暂无定时广播，新建一条试试。</td></tr>`;
+    const wdOpts = [0, 1, 2, 3, 4, 5, 6].map((w) => `<option value="${w}">周${"日一二三四五六"[w]}</option>`).join("");
+    return `
+    <div class="card">
+      <h3>${schedEditId ? "编辑定时广播" : "新建定时广播"}</h3>
+      <div class="row"><span class="muted" style="width:70px">名称</span><input id="sb-name" style="width:240px" placeholder="如 早读提醒"/></div>
+      <div class="row"><span class="muted" style="width:70px">类型</span>
+        <select id="sb-type">
+          <option value="once">一次性</option><option value="daily">每天</option><option value="weekly">每周</option>
+        </select></div>
+      <div class="row" id="sb-weekday-row" style="display:none"><span class="muted" style="width:70px">星期</span>
+        <select id="sb-weekday">${wdOpts}</select></div>
+      <div class="row"><span class="muted" style="width:70px">时间</span><input id="sb-runat" type="datetime-local" style="width:220px"/></div>
+      <div class="row"><span class="muted" style="width:70px">标题</span><input id="sb-title" style="width:320px" placeholder="大屏通知标题"/></div>
+      <div class="row"><span class="muted" style="width:70px">正文</span><textarea id="sb-content" style="width:420px;height:60px" placeholder="要广播的内容"></textarea></div>
+      <div class="row"><span class="muted" style="width:70px">目标</span>
+        <select id="sb-target"><option value="">全校</option>${classes.map((c) => `<option value="${esc(c.class_id)}">${esc(c.name)}</option>`).join("")}</select></div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" data-act="sb-save">${schedEditId ? "保存修改" : "新建"}</button>
+        <button data-act="sb-cancel" ${schedEditId ? "" : 'style="display:none"'}>取消编辑</button>
+      </div>
+      <p class="muted">后台调度器每 30s 巡检一次，到点自动向目标设备推送大屏通知（复用现有命令通道，教室端无需更新）。</p>
+    </div>
+    <div class="card">
+      <h3>定时广播列表（${items.length}）</h3>
+      <table class="tbl"><thead><tr><th>名称</th><th>类型</th><th>锚定时间</th><th>目标</th><th>状态</th><th>下次</th><th>上次</th><th>操作</th></tr></thead>
+      <tbody id="sb-list">${rows}</tbody></table>
+    </div>`;
+  };
+
   // ============ 移动端侧栏抽屉 ============
   // 窄屏下侧栏是浮层（见 styles.css 的 @media(max-width:760px)）：默认收起，
   // 由顶栏汉堡按钮开合，点菜单项 / 遮罩 / Esc 自动收起。
@@ -1534,6 +1599,70 @@
           el.disabled = false;
         }
         go("devices");
+      }
+      // ---- 定时广播（P2）----
+      else if (act === "sb-save") {
+        const runat = $("#sb-runat").value;
+        if (!runat) return toast("请选择时间");
+        const type = $("#sb-type").value;
+        const body = {
+          name: $("#sb-name").value.trim(),
+          schedule_type: type,
+          run_at: new Date(runat).toISOString(),
+          weekday: type === "weekly" ? Number($("#sb-weekday").value) : null,
+          title: $("#sb-title").value.trim(),
+          content: $("#sb-content").value,
+          target_class_id: $("#sb-target").value || "",
+          enabled: true,
+        };
+        try {
+          const r = schedEditId ? await API.updateScheduled(schedEditId, body) : await API.createScheduled(body);
+          if (!r || r.status === "error") throw new Error((r && r.message) || "保存失败");
+          schedEditId = null;
+          toast(schedEditId === null ? "已新建定时广播" : "已保存修改");
+          go("scheduled");
+        } catch (e) { toast("保存失败：" + (e && e.message ? e.message : e)); }
+      }
+      else if (act === "sb-cancel") { schedEditId = null; go("scheduled"); }
+      else if (act === "sb-edit") {
+        const id = Number(el.dataset.id);
+        const r = await API.listScheduled();
+        const it = (r && r.items || []).find((x) => x.id === id);
+        if (!it) return toast("未找到该配置");
+        schedEditId = id;
+        go("scheduled");
+        setTimeout(() => {
+          if ($("#sb-name")) $("#sb-name").value = it.name || "";
+          if ($("#sb-type")) $("#sb-type").value = it.schedule_type;
+          if ($("#sb-weekday")) $("#sb-weekday").value = String(it.weekday || 0);
+          if ($("#sb-weekday-row")) $("#sb-weekday-row").style.display = it.schedule_type === "weekly" ? "" : "none";
+          if ($("#sb-runat")) $("#sb-runat").value = toLocalInput(it.run_at);
+          if ($("#sb-title")) $("#sb-title").value = it.title || "";
+          if ($("#sb-content")) $("#sb-content").value = it.content || "";
+          if ($("#sb-target")) $("#sb-target").value = it.target_class_id || "";
+        }, 30);
+      }
+      else if (act === "sb-toggle") {
+        const id = Number(el.dataset.id);
+        const on = el.dataset.on === "1";
+        try { await API.toggleScheduled(id, on); toast(on ? "已启用" : "已停用"); go("scheduled"); }
+        catch (e) { toast("操作失败：" + (e && e.message ? e.message : e)); }
+      }
+      else if (act === "sb-fire") {
+        const id = Number(el.dataset.id);
+        el.disabled = true;
+        try {
+          const r = await API.fireScheduled(id);
+          API.audit("scheduled.fire", id, "手动触发");
+          toast("已触发，触达 " + ((r && r.delivered) || 0) + " 台");
+        } catch (e) { toast("触发失败：" + (e && e.message ? e.message : e)); }
+        finally { el.disabled = false; go("scheduled"); }
+      }
+      else if (act === "sb-del") {
+        const id = Number(el.dataset.id);
+        if (!confirm("确认删除这条定时广播？")) return;
+        try { await API.deleteScheduled(id); toast("已删除"); go("scheduled"); }
+        catch (e) { toast("删除失败：" + (e && e.message ? e.message : e)); }
       }
       // ---- ClassIsland 专页 ----
       else if (act === "ci-reload") {
@@ -1805,6 +1934,12 @@
       if (!/^dm:/.test(v) || (chatPeer && API.dmRoom(PERM.uid, chatPeer.id) !== v)) chatPeer = null;
       chatRoom = v;
       go("chat");
+      return;
+    }
+    // 定时广播：每周才需要选星期
+    if (e.target && e.target.id === "sb-type") {
+      const row = $("#sb-weekday-row");
+      if (row) row.style.display = e.target.value === "weekly" ? "" : "none";
       return;
     }
 

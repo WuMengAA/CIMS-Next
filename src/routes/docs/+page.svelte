@@ -1,12 +1,14 @@
 <script lang="ts">
-	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { BookMarked, FileText } from "@lucide/svelte";
+	import { BookMarked } from "@lucide/svelte";
 	import Container from "$lib/components/container.svelte";
-	import PageHeader from "$lib/components/page-header.svelte";
+	import RollingNumber from "$lib/components/rhine/rolling-number.svelte";
+	import TypingText from "$lib/components/rhine/typing-text.svelte";
+	import ArchiveArray from "$lib/components/rhine/archive-array.svelte";
+	import { mode } from "mode-watcher";
 
 	let { data }: { data: { docs: any[]; canEdit?: boolean } } = $props();
 
-	// Group docs by category for wiki-style listing
+	// 按分组归集（保持原有的 folder → category 兜底逻辑）
 	const groups = (() => {
 		const map = new Map<string, any[]>();
 		for (const doc of data.docs) {
@@ -16,44 +18,151 @@
 		}
 		return [...map.entries()];
 	})();
+
+	// 全局序号：档案编号在整册里连续，而不是每组分头从 01 开始
+	const indexOf = (() => {
+		const m = new Map<string, number>();
+		let i = 0;
+		for (const [, list] of groups) for (const d of list) m.set(d.slug, ++i);
+		return m;
+	})();
+
+	const total = $derived(data.docs.length);
+	const groupCount = $derived(groups.length);
 </script>
 
 <svelte:head>
 	<title>教程 | Stelarith</title>
 </svelte:head>
 
-<Container>
-	<PageHeader title="教程" description="AI 与大模型入门教程，以及 DeepSeek Harness 的使用指南。" />
+<!-- 作用域根：.rhine-docs 让莱茵令牌只在这一页生效 -->
+<div class="rhine-docs min-h-screen bg-background text-foreground">
+	<Container>
+		<!-- ══ 终端抬头：品牌行 + 打字标题 + 统计数字滚动 ══════════════════ -->
+		<header class="rhine-screen relative flex flex-col gap-5 border border-border/70 px-5 py-6 md:px-8 md:py-8">
+			<!-- 顶行：索引标签 + 署名 -->
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<div class="flex items-center gap-2.5">
+					<span class="rhine-tick"></span>
+					<span class="rhine-label">Archive Index</span>
+				</div>
+				<span class="rhine-label rhine-label-sm">Stelarith · Documentation</span>
+			</div>
 
-	{#if data.docs.length === 0}
-		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
-			<BookMarked class="size-8" />
-		<p class="text-sm">还没有教程，去后台创建第一篇吧。</p>
-		{#if data.canEdit}
-			<a href="/admin/docs/new" class="text-primary hover:underline">创建教程</a>
-		{/if}
-		</div>
-{:else}
-	<div class="flex flex-col gap-8">
-		{#each groups as [category, docs] (category)}
+			<!-- 主标题：终端逐字打字 -->
+			<div class="flex flex-col gap-2">
+				<h1 class="text-3xl font-semibold tracking-tight md:text-4xl">
+					<TypingText text="教程库" duration={720} />
+				</h1>
+				<p class="max-w-2xl text-sm text-muted-foreground">
+					AI 与大模型入门教程，以及 DeepSeek Harness 的使用指南。
+				</p>
+			</div>
+
+			<!-- 底部统计：数字滚动（档案总数 / 分组数） -->
+			<div class="rhine-rule flex flex-wrap items-center gap-x-8 gap-y-3 pt-4">
+				<div class="flex items-baseline gap-2">
+					<span class="rhine-num text-2xl font-semibold tracking-tight">
+						<RollingNumber value={total} pad={2} label="教程总数" />
+					</span>
+					<span class="rhine-label">Entries</span>
+				</div>
+				<div class="flex items-baseline gap-2">
+					<span class="rhine-num text-2xl font-semibold tracking-tight">
+						<RollingNumber value={groupCount} pad={2} label="分组数" />
+					</span>
+					<span class="rhine-label">Sections</span>
+				</div>
+				{#if data.canEdit}
+					<a href="/admin/docs/new" class="rhine-label ml-auto hover:text-primary">+ New Entry</a>
+				{/if}
+			</div>
+		</header>
+
+		{#if total === 0}
+			<div class="flex flex-col items-start gap-3 border border-dashed border-border/70 p-12">
+				<BookMarked class="size-6 text-muted-foreground" />
+				<p class="text-sm text-muted-foreground">还没有教程，去后台创建第一篇吧。</p>
+				{#if data.canEdit}
+					<a href="/admin/docs/new" class="rhine-label hover:text-primary">Create Entry →</a>
+				{/if}
+			</div>
+		{:else}
+			<!-- ══ 三维档案阵列：可左右切分组、上下切文章 ══════════════════ -->
 			<section class="flex flex-col gap-3">
-				<h2 class="font-heading text-xl font-semibold">{category}</h2>
-				<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
-					{#each docs as doc (doc.slug)}
-						<a href="/docs/{doc.slug}" class="group flex items-center gap-3 p-4 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
-							<FileText class="size-4 shrink-0 text-muted-foreground" />
-							<div class="flex-1">
-								<h3 class="font-medium group-hover:text-primary">{doc.title}</h3>
-								{#if doc.excerpt}
-									<p class="line-clamp-1 text-xs text-muted-foreground">{doc.excerpt}</p>
-								{/if}
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<div class="flex items-center gap-2.5">
+						<span class="rhine-tick"></span>
+						<span class="rhine-label">Card Array</span>
+					</div>
+					<span class="rhine-label rhine-label-sm">
+						← → 切分组 · ↑ ↓ 切文章 · Enter 打开
+					</span>
+				</div>
+
+				<ArchiveArray docs={data.docs} dark={mode.current === "dark"} />
+			</section>
+
+			<!-- ══ 文本索引：阵列之外的另一种进入方式，便于检索与复制链接 ═══ -->
+			<section class="flex flex-col gap-4">
+				<div class="rhine-rule flex items-center gap-2.5 pt-4">
+					<span class="rhine-tick"></span>
+					<span class="rhine-label">Text Index</span>
+				</div>
+
+				<div class="flex flex-col gap-8">
+					{#each groups as [category, docs], gi (category)}
+						<section class="flex flex-col">
+							<div class="flex items-baseline gap-3 border-b border-border/70 pb-2">
+								<span class="rhine-num text-xs text-muted-foreground">
+									<RollingNumber value={gi + 1} pad={2} label="分组序号" />
+								</span>
+								<h2 class="text-lg font-semibold tracking-tight">{category}</h2>
+								<span class="rhine-label ml-auto">
+									{docs.length} {docs.length === 1 ? "item" : "items"}
+								</span>
 							</div>
-							<span class="text-xs text-muted-foreground">{doc.date}</span>
-						</a>
+
+							<div class="flex flex-col">
+								{#each docs as doc, di (doc.slug)}
+									<a
+										href="/docs/{doc.slug}"
+										data-active={false}
+										class="rhine-row rhine-in group flex items-start gap-3 border-b border-border/50 px-3 py-3.5 md:gap-4 md:px-4"
+										style="animation-delay: {(gi * 60 + di * 40) % 480}ms"
+									>
+										<span class="rhine-num mt-0.5 w-9 shrink-0 text-xs text-muted-foreground/80">
+											<RollingNumber value={indexOf.get(doc.slug) ?? 0} pad={2} />
+										</span>
+
+										<div class="flex min-w-0 flex-1 flex-col gap-1">
+											<div class="flex flex-wrap items-center gap-2">
+												<h3 class="font-medium transition-colors group-hover:text-primary">{doc.title}</h3>
+											</div>
+											{#if doc.excerpt}
+												<p class="line-clamp-1 text-xs text-muted-foreground">{doc.excerpt}</p>
+											{/if}
+										</div>
+
+										<div class="flex shrink-0 flex-col items-end gap-1">
+											{#if doc.category}
+												<span class="rhine-label rhine-label-sm border border-border/60 px-1.5 py-0.5">{doc.category}</span>
+											{/if}
+											<span class="rhine-num text-[10px] text-muted-foreground/70">{doc.date}</span>
+										</div>
+									</a>
+								{/each}
+							</div>
+						</section>
 					{/each}
 				</div>
 			</section>
-		{/each}
-	</div>
-{/if}
-</Container>
+		{/if}
+
+		<!-- 页脚署名：呼应莱茵界面右下角 -->
+		<footer class="flex items-center justify-between border-t border-border/50 pt-4">
+			<span class="rhine-label rhine-label-sm">End of Index</span>
+			<span class="rhine-label rhine-label-sm">Stelarith OS</span>
+		</footer>
+	</Container>
+</div>

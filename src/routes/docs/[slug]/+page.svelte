@@ -1,10 +1,43 @@
 <script lang="ts">
-	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
-	import { BookMarked, FileText, ListTree, Pencil, MessageSquareWarning } from "@lucide/svelte";
+	import { MessageSquareWarning, Pencil } from "@lucide/svelte";
 	import Comments from "$lib/components/comments.svelte";
 	import ViewTracker from "$lib/components/view-tracker.svelte";
 	import ReadingTracker from "$lib/components/reading-tracker.svelte";
+	import RollingNumber from "$lib/components/rhine/rolling-number.svelte";
+	import TypingText from "$lib/components/rhine/typing-text.svelte";
+
+	/**
+	 * 站内锚点平滑滚动。
+	 *
+	 * 为什么不能只靠 CSS 的 `scroll-behavior: smooth`：
+	 * 本站根布局用 View Transitions API 接管了**每一次**导航。点 `<a href="#xxx">` 时
+	 * SvelteKit 把它当成一次导航去跑 View Transition，浏览器对整页做快照 → 复原，
+	 * 这会把原生平滑滚动**打断**，表现为「点了一下，画面闪一下就直接跳到位置」，
+	 * 看起来就像锚点跳转失效。
+	 *
+	 * 所以这里显式接管同页锚点点击：阻止 SvelteKit 的导航接管，自己算目标位置
+	 * 并用带行为参数的原生滚动滚过去（尊重用户系统的减少动态效果设置）。
+	 */
+	function onAnchorClick(e: MouseEvent) {
+		const a = (e.target as HTMLElement)?.closest?.('a[href^="#"]') as HTMLAnchorElement | null;
+		if (!a) return;
+		const hash = a.getAttribute("href") || "";
+		// 只接管「本页锚点」（#xxx），不碰跨页链接与空锚点
+		if (hash.length < 2 || a.dataset.noSmooth === "true") return;
+		let id = hash.slice(1);
+		try { id = decodeURIComponent(id); } catch { /* 保留原样 */ }
+		const el = document.getElementById(id);
+		if (!el) return;
+		e.preventDefault();
+		const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+		// 同步地址栏 hash（用 replaceState 避免再触发一次导航/滚动）
+		history.replaceState(null, "", hash);
+		// 键盘可达性：焦点也跟过去，方便读屏与继续 Tab
+		el.setAttribute("tabindex", "-1");
+		el.focus({ preventScroll: true });
+	}
 
 	let { data }: {
 		data: {
@@ -18,7 +51,7 @@
 		}
 	} = $props();
 
-	// Group docs by folder for the left nav
+	// 按分组归集左栏索引
 	const groupedDocs = (() => {
 		const map = new Map<string, any[]>();
 		for (const d of data.allDocs) {
@@ -28,6 +61,17 @@
 		}
 		return [...map.entries()];
 	})();
+
+	// 档案编号（全册连续），与列表页同一套编号规则
+	const indexOf = (() => {
+		const m = new Map<string, number>();
+		let i = 0;
+		for (const [, list] of groupedDocs) for (const d of list) m.set(d.slug, ++i);
+		return m;
+	})();
+
+	const currentIndex = $derived(indexOf.get(data.doc.slug) ?? 0);
+	const totalDocs = $derived(data.allDocs.length);
 
 	// 文档纠错（用户贡献）
 	let showCorrect = $state(false);
@@ -68,106 +112,157 @@
 </svelte:head>
 
 <ViewTracker target={"docs:" + data.doc.slug} />
-<!-- 阅读进度：滚动时记录位置，下次进入可续读；同时写入浏览轨迹 -->
 <ReadingTracker target={"docs:" + data.doc.slug} title={data.doc.title} section="docs" />
 
-<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-10 md:flex-row md:px-8">
-	<!-- Left: docs nav grouped by folder -->
-	<nav class="shrink-0 md:w-52">
-		<div class="mb-3 flex items-center justify-between">
-			<a href="/docs" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-				<BookMarked class="size-4" />
-				教程库
-			</a>
-			{#if data.canEdit}
-				<a href="/admin/docs/{data.doc.slug}" class="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
-					<Pencil class="size-3" />
-					编辑
+<div class="rhine-docs min-h-screen bg-background text-foreground" onclick={onAnchorClick}>
+	<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 py-8 md:flex-row md:px-8">
+		<!-- ══ 左栏：档案索引（终端目录树） ══════════════════════════════ -->
+		<nav class="shrink-0 md:w-56">
+			<div class="mb-4 flex items-center justify-between border-b border-border/70 pb-2">
+				<a href="/docs" class="flex items-center gap-1.5 transition-colors hover:text-primary">
+					<span class="rhine-tick"></span>
+					<span class="rhine-label">Archive Index</span>
 				</a>
-			{/if}
-		</div>
-		<div class="flex flex-col gap-0.5">
-			{#each groupedDocs as [folder, list] (folder)}
-				{#if folder !== "未分组"}<p class="px-3 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">{folder}</p>{/if}
-				{#each list as d (d.slug)}
+				{#if data.canEdit}
 					<a
-						href="/docs/{d.slug}"
-						class="flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors {d.slug === data.doc.slug
-							? 'bg-accent font-medium text-foreground'
-							: 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}"
+						href="/admin/docs/{data.doc.slug}"
+						class="flex items-center gap-1 border border-border/60 px-1.5 py-0.5 text-[10px] tracking-wider text-muted-foreground uppercase transition-colors hover:border-primary/50 hover:text-primary"
 					>
-						<FileText class="size-3.5 shrink-0" />
-						<span class="truncate">{d.title}</span>
+						<Pencil class="size-3" />
+						编辑
 					</a>
-				{/each}
-			{/each}
-		</div>
-	</nav>
-
-	<!-- Content -->
-	<article class="min-w-0 flex-1">
-		<header class="mb-6 flex flex-col gap-3">
-			<div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-				{#if data.doc.category}<Badge variant="outline">{data.doc.category}</Badge>{/if}
-				{#if data.doc.folder}<Badge variant="secondary">{data.doc.folder}</Badge>{/if}
-				<span>{data.doc.date} · {data.words.toLocaleString()} 字</span>
-			</div>
-			<h1 class="font-heading text-3xl font-semibold tracking-tight">{data.doc.title}</h1>
-		</header>
-
-		<div class="prose prose-invert max-w-none">
-			{@html data.html}
-		</div>
-
-		<Comments target={"docs:" + data.doc.slug} user={data.user} />
-
-		<!-- 文档纠错（用户贡献） -->
-		<section class="mt-8 rounded-xl border border-border/60 bg-card p-4">
-			{#if data.user}
-				{#if !showCorrect}
-					<Button variant="outline" size="sm" onclick={() => (showCorrect = true)} class="gap-1.5">
-						<MessageSquareWarning class="size-4" /> 发现错误？纠错
-					</Button>
-				{:else}
-					<h3 class="mb-3 text-sm font-medium">提交纠错</h3>
-					<input bind:value={correctionSection} placeholder="相关章节（可选）" maxlength="120" class="mb-2 h-9 w-full max-w-xs rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
-					<textarea bind:value={correctionSuggestion} rows={3} maxlength="2000" placeholder="正确的写法或表述…" class="mb-2 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"></textarea>
-					<input bind:value={correctionNote} placeholder="补充说明（可选）" maxlength="500" class="mb-2 h-9 w-full max-w-md rounded-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
-					{#if correctionErr}<p class="mb-2 text-xs text-destructive">{correctionErr}</p>{/if}
-					<div class="flex justify-end gap-2">
-						<Button variant="ghost" size="sm" onclick={() => (showCorrect = false)}>取消</Button>
-						<Button size="sm" onclick={submitCorrection}>提交</Button>
-					</div>
 				{/if}
-			{:else}
-				<a href="/admin/login" class="text-xs text-muted-foreground hover:text-primary">登录后可纠错教程</a>
-			{/if}
-			{#if correctionMsg}<p class="mt-2 text-xs text-primary">{correctionMsg}</p>{/if}
-		</section>
-
-		<footer class="mt-8 border-t border-border/40 pt-6">
-			<a href="/docs" class="text-xs text-muted-foreground hover:text-primary">← 返回教程库</a>
-		</footer>
-	</article>
-
-	<!-- TOC -->
-	{#if data.toc.length > 0}
-		<aside class="hidden w-52 shrink-0 lg:block">
-			<div class="sticky top-6 rounded-lg border border-border/60 bg-card p-4">
-				<p class="mb-3 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-					<ListTree class="size-3" />
-					目录
-				</p>
-				<nav class="flex flex-col gap-1.5">
-					{#each data.toc as item (item.id)}
-						<a
-							href="#{item.id}"
-							class="text-xs transition-colors hover:text-primary {item.level === 2 ? 'font-medium text-foreground' : 'pl-3 text-muted-foreground'}"
-						>{item.text}</a
-						>
-					{/each}
-				</nav>
 			</div>
-		</aside>
-	{/if}
+
+			<div class="flex flex-col gap-4">
+				{#each groupedDocs as [folder, list] (folder)}
+					<div class="flex flex-col">
+						{#if folder !== "未分组"}
+							<p class="rhine-label rhine-label-sm mb-1.5">{folder}</p>
+						{/if}
+						<div class="flex flex-col">
+							{#each list as d (d.slug)}
+								<a
+									href="/docs/{d.slug}"
+									data-active={d.slug === data.doc.slug}
+									class="rhine-row flex items-center gap-2 py-1.5 pr-2 pl-3 text-sm {d.slug === data.doc.slug
+										? 'font-medium text-foreground'
+										: 'text-muted-foreground hover:text-foreground'}"
+								>
+									<span class="rhine-num w-5 shrink-0 text-[10px] text-muted-foreground/60">
+										<RollingNumber value={indexOf.get(d.slug) ?? 0} pad={2} />
+									</span>
+									<span class="truncate">{d.title}</span>
+								</a>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</div>
+		</nav>
+
+		<!-- ══ 正文：档案阅读终端 ═══════════════════════════════════════ -->
+		<article class="rhine-screen min-w-0 flex-1 border border-border/70">
+			<!-- 档案抬头：编号 + 权限字段 + 打字标题 -->
+			<header class="flex flex-col gap-4 px-5 py-5 md:px-7 md:py-6">
+				<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+					<div class="flex items-baseline gap-2">
+						<span class="rhine-label">File</span>
+						<span class="rhine-num text-sm font-semibold">
+							<RollingNumber value={currentIndex} pad={2} label="档案编号" />
+						</span>
+						<span class="rhine-num text-[10px] text-muted-foreground/60">/ {String(totalDocs).padStart(2, "0")}</span>
+					</div>
+					{#if data.doc.category}
+						<span class="rhine-label rhine-label-sm border border-border/60 px-1.5 py-0.5">{data.doc.category}</span>
+					{/if}
+					{#if data.doc.folder}
+						<span class="rhine-label rhine-label-sm border border-border/60 px-1.5 py-0.5">{data.doc.folder}</span>
+					{/if}
+					<span class="rhine-num ml-auto text-[10px] text-muted-foreground/70">{data.doc.date}</span>
+				</div>
+
+				<h1 class="text-2xl font-semibold tracking-tight md:text-3xl">
+					<TypingText text={data.doc.title} duration={980} />
+				</h1>
+
+				<!-- 元信息字段表：细线分隔的键值对，像档案卡 -->
+				<dl class="rhine-rule grid grid-cols-2 gap-x-6 gap-y-2 pt-3 md:grid-cols-4">
+					<div class="flex flex-col gap-0.5">
+						<dt class="rhine-label rhine-label-sm">Entries</dt>
+						<dd class="rhine-num text-sm">{String(totalDocs).padStart(2, "0")}</dd>
+					</div>
+					<div class="flex flex-col gap-0.5">
+						<dt class="rhine-label rhine-label-sm">Words</dt>
+						<dd class="rhine-num text-sm">{data.words.toLocaleString()}</dd>
+					</div>
+					<div class="flex flex-col gap-0.5">
+						<dt class="rhine-label rhine-label-sm">Sections</dt>
+						<dd class="rhine-num text-sm">{String(data.toc.length).padStart(2, "0")}</dd>
+					</div>
+					<div class="flex flex-col gap-0.5">
+						<dt class="rhine-label rhine-label-sm">Status</dt>
+						<dd class="rhine-label text-primary">Authorized</dd>
+					</div>
+				</dl>
+			</header>
+
+			<!-- 正文：rhine-reveal 提供莱茵招牌的「磨砂盖板自上而下揭开」解密入场 -->
+			<div class="prose rhine-reveal max-w-none border-t border-border/70 px-5 py-6 md:px-7">
+				{@html data.html}
+			</div>
+
+			<!-- 纠错 -->
+			<section class="border-t border-border/70 px-5 py-4 md:px-7">
+				{#if data.user}
+					{#if !showCorrect}
+						<Button variant="outline" size="sm" onclick={() => (showCorrect = true)} class="gap-1.5">
+							<MessageSquareWarning class="size-4" /> 发现错误？纠错
+						</Button>
+					{:else}
+						<h3 class="rhine-label mb-3">Submit Correction</h3>
+						<input bind:value={correctionSection} placeholder="相关章节（可选）" maxlength="120" class="mb-2 h-9 w-full max-w-xs border bg-background px-3 text-sm outline-none focus:border-primary/60" />
+						<textarea bind:value={correctionSuggestion} rows={3} maxlength="2000" placeholder="正确的写法或表述…" class="mb-2 w-full resize-y border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"></textarea>
+						<input bind:value={correctionNote} placeholder="补充说明（可选）" maxlength="500" class="mb-2 h-9 w-full max-w-md border bg-background px-3 text-sm outline-none focus:border-primary/60" />
+						{#if correctionErr}<p class="mb-2 text-xs text-destructive">{correctionErr}</p>{/if}
+						<div class="flex justify-end gap-2">
+							<Button variant="ghost" size="sm" onclick={() => (showCorrect = false)}>取消</Button>
+							<Button size="sm" onclick={submitCorrection}>提交</Button>
+						</div>
+					{/if}
+				{:else}
+					<a href="/admin/login" class="rhine-label hover:text-primary">登录后可纠错教程</a>
+				{/if}
+				{#if correctionMsg}<p class="mt-2 text-xs text-primary">{correctionMsg}</p>{/if}
+			</section>
+
+			<!-- 评论 -->
+			<div class="border-t border-border/70 px-5 py-4 md:px-7">
+				<Comments target={"docs:" + data.doc.slug} user={data.user} />
+			</div>
+
+			<footer class="flex items-center justify-between border-t border-border/70 px-5 py-3 md:px-7">
+				<a href="/docs" class="rhine-label hover:text-primary">← 返回索引</a>
+				<span class="rhine-label rhine-label-sm">Stelarith OS</span>
+			</footer>
+		</article>
+
+		<!-- ══ 右栏：目录（终端刻度） ═══════════════════════════════════ -->
+		{#if data.toc.length > 0}
+			<aside class="hidden w-52 shrink-0 lg:block">
+				<div class="sticky top-6 border border-border/70 p-4">
+					<p class="rhine-label mb-3">Contents</p>
+					<nav class="flex flex-col gap-1">
+						{#each data.toc as item (item.id)}
+							<a
+								href="#{item.id}"
+								class="border-l-2 border-transparent py-1 pl-2 text-xs transition-colors hover:border-primary hover:text-primary {item.level === 2 ? 'font-medium text-foreground' : 'pl-4 text-muted-foreground'}"
+							>{item.text}</a
+							>
+						{/each}
+					</nav>
+				</div>
+			</aside>
+		{/if}
+	</div>
 </div>

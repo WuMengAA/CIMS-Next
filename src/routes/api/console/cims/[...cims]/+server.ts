@@ -38,6 +38,7 @@ const ALLOW = [
 	/^\/account\//,
 	/^\/user\/auth/,
 	/^\/class\//,
+	/^\/scheduled-broadcast\//,
 	/^\/v1\/client\//,
 	/^\/api\/v1\/client\//
 ];
@@ -60,6 +61,9 @@ function requiredTier(rel: string, method: string, body: string | undefined): De
 	if (/^\/class\/[^/]+\/activate$/.test(rel)) return "control";
 	// 班级增删改、设备划班/移班、班级资源写：影响面超出单个班 → manage。
 	if (/^\/class\//.test(rel)) return "manage";
+	// 定时广播：立即触发相当于一次定向广播（control）；配置增删改影响面更大（manage）。
+	if (/^\/scheduled-broadcast\/[^/]+\/fire-now$/.test(rel)) return "control";
+	if (/^\/scheduled-broadcast\//.test(rel)) return "manage";
 	if (/^\/account\/[^/]+\/client\/[^/]+\/command\//.test(rel)) return "control";
 	return "manage";
 }

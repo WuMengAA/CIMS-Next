@@ -950,6 +950,18 @@
       );
     },
 
+    // ---- 定时广播（P2）----
+    // 后端管理端 8097 /scheduled-broadcast/* ；后台调度器到点触发 command_queue 广播。
+    listScheduled: async () => {
+      if (state.demo) return { status: "demo", items: [] };
+      return cims("/scheduled-broadcast/list", {}, null);
+    },
+    createScheduled: async (body) => cims("/scheduled-broadcast/create", { method: "POST", body: JSON.stringify(body) }, null),
+    updateScheduled: async (id, body) => cims(`/scheduled-broadcast/${id}`, { method: "PUT", body: JSON.stringify(body) }, null),
+    toggleScheduled: async (id, enabled) => cims(`/scheduled-broadcast/${id}/toggle`, { method: "POST", body: JSON.stringify({ enabled }) }, null),
+    fireScheduled: async (id) => cims(`/scheduled-broadcast/${id}/fire-now`, { method: "POST", body: "{}" }, null),
+    deleteScheduled: async (id) => cims(`/scheduled-broadcast/${id}`, { method: "DELETE" }, null),
+
     // ---- 班级交流（站点侧 SQLite，支持房间/班级隔离，跨班互通）----
     // room 约定：
     //   "techrep-global"      全校电教委员群
