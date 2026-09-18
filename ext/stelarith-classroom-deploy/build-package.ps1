@@ -38,7 +38,17 @@ param(
     # 刻意**不写进源码**：那是共享密钥，进版本库就失去意义（谁拿到包谁知道）。
     # 出包时用 -AgentSecret <值> 注入；不传则保持源码里的空值 ——
     # 代理会明确拒绝远程控制类指令（面板显示拒绝原因，不会静默失败）。
-    [string]$AgentSecret = ''
+    [string]$AgentSecret = '',
+    # 允许带入教室端包的插件白名单。默认**只有集控插件**。
+    #
+    # 这里曾经原样复制制作机上的全部插件目录，而制作机是开发机，装着壁纸
+    # 注入、AI 课堂、地震预警、动画等个人插件。后果（2026-09-18 首次实测暴露）：
+    #   1) AI 插件的密钥配置被安全规则排除，插件本体却还在 → 教室机启动即刷报错；
+    #   2) 注入器类插件在教室机环境会往 UI 线程抛异常，而宿主又不能开
+    #      AutoDisableCorruptPlugins（否则会连带禁用集控插件）
+    #      → 表现为「进程活着、主窗口不显示」。
+    # 教室端只需要集控插件。确实要带别的，用 -PluginAllowList 显式列出。
+    [string[]]$PluginAllowList = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -267,16 +277,41 @@ Get-ChildItem -LiteralPath $srcConfig -Recurse -File | ForEach-Object {
 Ok 'Config（已排除日志 / 备份 / 含密钥项）'
 foreach ($s in $cfgSkipped) { Warn ("排除：" + $s) }
 
-# 3.4 Plugins —— 全部插件，排除 .bak-* 与插件内的私密配置
+# 3.4 Plugins —— 只带白名单插件（默认仅集控插件），排除 .bak-* 与插件内的私密配置
 $srcPlugins = Join-Path $srcData 'Plugins'
 $dstPlugins = Join-Path $dstSeed 'Plugins'
+
+# 集控插件永远带上（没它这个包就没有意义），其余看白名单
+$allow = @($PluginAllowList | Where-Object { $_ }) + @('StelarithControlPlugin') | Select-Object -Unique
+
+$allPlugins = @(Get-ChildItem -LiteralPath $srcPlugins -Directory |
+    Where-Object { $_.Name -notmatch '^\.?bak' -and $_.Name -notmatch '\.bak-' })
+$keepPlugins = @($allPlugins | Where-Object { $allow -contains $_.Name })
+$skipPlugins = @($allPlugins | Where-Object { $allow -notcontains $_.Name })
+
 $plugN = 0
-Get-ChildItem -LiteralPath $srcPlugins -Directory | Where-Object { $_.Name -notmatch '^\.?bak' -and $_.Name -notmatch '\.bak-' } | ForEach-Object {
-    $r = & robocopy $_.FullName (Join-Path $dstPlugins $_.Name) /E /NFL /NDL /NJH /NJS /R:1 /W:1 /XF '*.log' /XD '.bak-*'
-    if ($LASTEXITCODE -ge 8) { throw ("复制插件失败：" + $_.Name) }
+foreach ($p in $keepPlugins) {
+    $r = & robocopy $p.FullName (Join-Path $dstPlugins $p.Name) /E /NFL /NDL /NJH /NJS /R:1 /W:1 /XF '*.log' /XD '.bak-*'
+    if ($LASTEXITCODE -ge 8) { throw ("复制插件失败：" + $p.Name) }
     $plugN = $plugN + 1
 }
-Ok ("插件 " + $plugN + " 个（已排除 .bak-* 与 *.log）")
+Ok ("插件 " + $plugN + " 个（白名单：" + ($keepPlugins.Name -join ', ') + "）")
+
+# 3.4b 清掉未入选插件的**配置目录** —— 插件本体不带了，配置留着是无源之水，
+#      且 PluginsIndex 里若仍登记，宿主启动时会去找一个不存在的插件目录。
+$seedCfgPlugins = Join-Path $dstSeed 'Config\Plugins'
+$cfgRemoved = 0
+if (Test-Path -LiteralPath $seedCfgPlugins) {
+    Get-ChildItem -LiteralPath $seedCfgPlugins -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $allow -notcontains $_.Name } | ForEach-Object {
+        [System.IO.Directory]::Delete($_.FullName, $true)
+        $cfgRemoved = $cfgRemoved + 1
+    }
+}
+if ($skipPlugins.Count -gt 0) {
+    Warn ("未入选插件 " + $skipPlugins.Count + " 个（教室端不需要）：" + ($skipPlugins.Name -join ', '))
+}
+if ($cfgRemoved -gt 0) { Ok ("已移除 " + $cfgRemoved + " 个未入选插件的配置目录") }
 
 # 3.5 插件同步配置 —— 用部署包配置预填（部署时脚本还会重写一次）
 $seedPluginDir = Join-Path $dstPlugins 'StelarithControlPlugin'
