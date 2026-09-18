@@ -106,6 +106,17 @@ export function createRhineEngine(options: EngineOptions): RhineEngine {
 	const scene = new THREE.Scene();
 	scene.background = null; // 透出页面底色，让莱茵令牌接管
 
+	// 极淡的线性雾：给档案墙一点纵深呼吸感（远端轻微退后、边缘淡出），
+	// 密度必须小到不糊住卡片文字 —— 只是「氛围」，不是遮挡。
+	// 范围锚在「卡片阵列所在距离」附近：最近列完全清晰，最远列只淡出一丝，
+	// 恰好把 3 列的纵深摆出来。密度极低时它也可以是页面底色的一张羽化网。
+	const fog = new THREE.Fog("#000000", 22, 70);
+	scene.fog = fog;
+	function setFogColor(dark: boolean) {
+		fog.color.set(dark ? "#0d1418" : "#e5e0da");
+	}
+	setFogColor(options.dark ?? false);
+
 	// 长焦：莱茵靠小 fov + 远距离压缩透视，让整面档案墙近乎正交。
 	// aspect 先给 1，applySize() 会立刻用容器真实尺寸覆盖。
 	const camera = new THREE.PerspectiveCamera(options.fov ?? 18, 1, 0.1, 800);
@@ -293,6 +304,7 @@ export function createRhineEngine(options: EngineOptions): RhineEngine {
 		renderOnce,
 		setDark(dark: boolean) {
 			setLightIntensity(dark);
+			setFogColor(dark);
 			// 深色下曝光压一点，避免提亮后的卡面泛白
 			renderer.toneMappingExposure = dark ? 0.98 : 1.05;
 		},

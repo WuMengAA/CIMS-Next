@@ -636,6 +636,15 @@
 			<div class="rhine-hud-center">
 				<span class="rhine-label">Section</span>
 				<div class="rhine-hud-title">{currentGroup?.label ?? "—"}</div>
+				<!-- 分组分页：ARCHIVE / SELECT 01 / 03，沿袭原版语感 -->
+				<div class="rhine-hud-select">
+					<span class="rhine-hud-select-head">ARCHIVE / SELECT</span>
+					<span class="rhine-hud-select-cur">
+						{String(unwrap(lane, groups.length) + 1).padStart(2, "0")}
+					</span>
+					<span class="rhine-hud-select-sep">/</span>
+					<span class="rhine-hud-select-total">{String(groups.length).padStart(2, "0")}</span>
+				</div>
 				<div class="rhine-hud-dots" aria-hidden="true">
 					{#each groups as g, gi (g.key)}
 						<span class="rhine-hud-dot" data-on={unwrap(lane, groups.length) === gi}></span>
@@ -691,6 +700,32 @@
 			<span>打开档案</span>
 			<kbd>Enter</kbd>
 		</button>
+
+		<!-- ── 档案墙 HUD：左下分页 + 右侧摘要抽屉（沿用原版语感，定制的键位提示）── -->
+		<div class="rhine-callout" aria-live="polite">
+			<div class="rhine-callout-head">
+				<span class="rhine-label rhine-label-sm">教程库 · 条目</span>
+				<span class="rhine-callout-no">FILE {String(currentDoc?.serial ?? 0).padStart(3, "0")}</span>
+			</div>
+			<div class="rhine-callout-title">{currentDoc?.title ?? "—"}</div>
+			{#if currentDoc?.excerpt}
+				<p class="rhine-callout-excerpt">{currentDoc.excerpt}</p>
+			{/if}
+			<div class="rhine-callout-meta">
+				<span class="rhine-callout-key">分组</span>
+				<span class="rhine-callout-val">{currentGroup?.label ?? "—"}</span>
+				<span class="rhine-callout-key">条目</span>
+				<span class="rhine-callout-val">
+					{row + 1} / {currentGroup?.docs.length ?? 0}
+				</span>
+				{#if currentDoc?.date}
+					<span class="rhine-callout-key">日期</span>
+					<span class="rhine-callout-val">{currentDoc.date}</span>
+				{/if}
+			</div>
+		</div>
+
+		<!-- 左下角：暂无独立分页器 —— 分组分页已并入顶部 Section 指示（rhine-hud-select） -->
 	</div>
 </div>
 
@@ -862,6 +897,104 @@
 		border: 1px solid currentColor;
 		padding: 0 3px;
 		opacity: 0.7;
+	}
+
+	/* ── 右侧摘要抽屉：当前档案的元数据，沿袭原版 archive-callout ── */
+	.rhine-callout {
+		position: absolute;
+		right: 14px;
+		top: 50%;
+		transform: translateY(-50%);
+		/* 纯展示层，不拦截点击 —— 下层的卡片照常可拾取 */
+		pointer-events: none;
+		width: clamp(220px, 24vw, 300px);
+		padding: 12px 14px;
+		border: 1px solid var(--rhine-line);
+		border-left: 2px solid var(--rhine-accent);
+		background: color-mix(in srgb, var(--rhine-paper) 82%, transparent);
+		backdrop-filter: blur(10px);
+		box-shadow: 0 8px 24px color-mix(in srgb, #000 12%, transparent);
+	}
+	.rhine-callout-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding-bottom: 6px;
+		border-bottom: 1px solid var(--rhine-line);
+		margin-bottom: 6px;
+	}
+	.rhine-callout-no {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		color: var(--rhine-accent);
+		white-space: nowrap;
+	}
+	.rhine-callout-title {
+		font-size: 14px;
+		font-weight: 600;
+		line-height: 1.35;
+		color: var(--rhine-ink);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.rhine-callout-excerpt {
+		margin-top: 4px;
+		font-size: 11px;
+		line-height: 1.5;
+		color: var(--rhine-muted);
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+	.rhine-callout-meta {
+		margin-top: 8px;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 8px;
+		font-size: 11px;
+	}
+	.rhine-callout-key {
+		color: var(--rhine-muted);
+		opacity: 0.85;
+	}
+	.rhine-callout-val {
+		color: var(--rhine-ink);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 9em;
+	}
+
+	/* ── 顶部 Section 下的分组分页：ARCHIVE / SELECT 01 / 总组数 ── */
+	.rhine-hud-select {
+		display: flex;
+		align-items: baseline;
+		gap: 4px;
+		font-family: var(--font-mono, ui-monospace, monospace);
+	}
+	.rhine-hud-select-head {
+		font-size: 9px;
+		letter-spacing: 0.14em;
+		color: var(--rhine-muted);
+		margin-right: 2px;
+	}
+	.rhine-hud-select-cur {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--rhine-accent);
+	}
+	.rhine-hud-select-sep {
+		color: var(--rhine-muted);
+		opacity: 0.7;
+	}
+	.rhine-hud-select-total {
+		font-size: 10px;
+		color: var(--rhine-muted);
 	}
 
 	.rhine-array-fallback {
