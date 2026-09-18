@@ -31,14 +31,21 @@
   const K_SITE = "cims_site_host";
   const K_NOVNC = "cims_novnc_url";
   const K_TASK_SECRET = "cims_task_secret";
+  const K_ACCOUNT = "cims_account_id";
 
   const state = {
     mgmtHost: localStorage.getItem(K_MGMT) || "",
     clientHost: localStorage.getItem(K_CLIENT) || "",
     extHost: localStorage.getItem(K_EXT) || "",
     token: localStorage.getItem(K_TOKEN) || "",
-    accountId: "",
+    // 必须持久化：刷新后若 accountId 归零，canUseBackend() 直接为 false，
+    // 整条真实数据链路会静默降级到演示分支 —— 表现为「真机列表里混进了假设备」。
+    accountId: localStorage.getItem(K_ACCOUNT) || "",
     classId: localStorage.getItem(K_CLASS) || "",
+    // 后端不可用标记（非演示模式下拿不到真实数据时置位，供 UI 显示红色横幅）。
+    // 与 demo 严格分开：demo 是「用户主动要假数据」，offline 是「拿不到真数据」。
+    offline: false,
+    lastError: "",
     demo: localStorage.getItem(K_DEMO) === "1",
     voicehubHost: localStorage.getItem(K_VHUB_HOST) || "",
     voicehubKey: localStorage.getItem(K_VHUB_KEY) || "",
@@ -60,10 +67,39 @@
   function setEmbedded(on) { state.embedded = !!on; }
   function setHost(v) { setMgmtHost(v); } // 兼容旧调用：host 视作 management 端口
   function setToken(v) { state.token = v || ""; localStorage.setItem(K_TOKEN, state.token); }
+  function setAccountId(v) { state.accountId = v || ""; localStorage.setItem(K_ACCOUNT, state.accountId); }
   function setClass(v) { state.classId = v || ""; localStorage.setItem(K_CLASS, state.classId); }
-  function setDemo(on) { state.demo = !!on; localStorage.setItem(K_DEMO, state.demo ? "1" : "0"); }
-  function clearAuth() { state.token = ""; state.accountId = ""; localStorage.removeItem(K_TOKEN); }
+  function setDemo(on) {
+    state.demo = !!on;
+    localStorage.setItem(K_DEMO, state.demo ? "1" : "0");
+    // 切回真实模式时清掉离线标记，否则横幅会赖着不走。
+    if (!state.demo) { state.offline = false; state.lastError = ""; }
+  }
+  function clearAuth() {
+    state.token = ""; state.accountId = "";
+    localStorage.removeItem(K_TOKEN); localStorage.removeItem(K_ACCOUNT);
+  }
   function acct() { return state.accountId; }
+
+  /**
+   * 是否「用户主动要演示数据」。
+   *
+   * 与 canUseBackend() 严格分开 —— 这两个概念被混用正是「假设备混进真机列表」的根因：
+   *   canUseBackend() = 现在能不能发真实请求（能力判断）
+   *   wantDemo()      = 用户有没有主动选择看演示数据（意愿判断）
+   * 后端不可用只说明「拿不到真数据」，绝不意味着「可以拿假数据顶上」。
+   * 在集控场景里，运维照着演示设备去下发指令 = 对着不存在的机器操作，
+   * 所以这里的原则是：**宁可显示「未连接后端」，也不静默造假**。
+   */
+  function wantDemo() { return state.demo === true; }
+
+  /** 标记后端不可用（非演示模式下）。UI 据此显示红色横幅。 */
+  function markOffline(msg) {
+    if (state.demo) return; // 演示模式下不存在"离线"这个概念
+    if (!state.offline) { state.offline = true; state.lastError = msg || ""; }
+    else if (msg && !state.lastError) state.lastError = msg;
+  }
+  function markOnline() { state.offline = false; state.lastError = ""; }
 
   // 是否具备「真实账户上下文」：非演示模式 + 配了 mgmt 后端 + 已选定账户。
   // 三者缺一，/account//... 就是畸形路径（后端 404、控制台持续刷错误）。
@@ -92,11 +128,30 @@
     } finally { clearTimeout(t); }
   }
 
-  // 走 management 端口；失败或有降级键时回落演示数据
+  // 走 management 端口。
+  //
+  // 降级规则（2026-09-19 重写，原实现有 fail-silent 缺陷）：
+  //   ① 用户**主动**开了演示模式 → 给演示数据（这是他要的，且 UI 有角标）。
+  //   ② 拿不到真实数据（没配后端 / 没账户 / 请求失败）→ 给**空**并置 offline 标记，
+  //      由 UI 显示红色横幅。**不再**静默回落到演示数据。
+  //
+  // 为什么不能有"请求失败就给演示数据"：后端挂掉时，面板会照样显示一屏设备，
+  // 运维对着这些**不存在的机器**下发指令、改课表、远程控制 —— 失败被伪装成成功。
+  // 集控面板的可信度全靠"看不见就是真没有"，这条一旦破，整个面板都不能信。
   async function cims(path, opts, demoKey) {
-    if (!canUseBackend()) return D[demoKey] ? D[demoKey]() : {};
-    try { return await reqTo(state.mgmtHost, path, opts); }
-    catch (e) { if (demoKey && D[demoKey]) return D[demoKey](); throw e; }
+    if (wantDemo()) return D[demoKey] ? D[demoKey]() : {};
+    if (!canUseBackend()) {
+      markOffline("未连接后端：缺少后端地址或账户归属，请重新登录");
+      return {};
+    }
+    try {
+      const r = await reqTo(state.mgmtHost, path, opts);
+      markOnline();
+      return r;
+    } catch (e) {
+      markOffline((e && e.message) ? e.message : String(e));
+      return {};
+    }
   }
 
   // 走 stelarith-website（同源或 siteHost）：协作/上报类数据落地网站，复用其反馈模型
@@ -193,7 +248,7 @@
     if (!accountId) {
       try {
         const list = await reqTo(state.mgmtHost, "/account/list");
-        if (Array.isArray(list) && list.length) accountId = list[0].id || list[0];
+        if (Array.isArray(list) && list.length) { accountId = list[0].id || list[0]; setAccountId(accountId); }
       } catch (_) {}
     }
     if (!accountId) return { demo: true };
@@ -647,7 +702,7 @@
   }
 
   const API = {
-    state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setClass, setDemo, clearAuth, acct,
+    state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setAccountId, setClass, setDemo, clearAuth, acct, canUseBackend, wantDemo, markOffline, markOnline,
     // 展示层辅助（面板渲染设备状态/模块开关直接用，避免在 app.js 里各写一套格式化）
     normModules, ago, MODULE_CATALOG,
     // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest / voicehubPush）。
@@ -747,16 +802,25 @@
     //   逐台串行请求在几十台设备的学校里还会打满超时。
     //   新接口一次拿全部，且 online 是真实心跳推导出来的。
     deviceStatus: async () => {
-      if (!canUseBackend()) return { fresh: 90, devices: D.devices().map(demoDevice) };
+      if (wantDemo()) return { fresh: 90, devices: D.devices().map(demoDevice) };
+      if (!canUseBackend()) {
+        // 宁可空列表 + 红色横幅，也不要把演示设备混进真机列表。
+        markOffline("未连接后端：缺少后端地址或账户归属");
+        return { fresh: 0, devices: [] };
+      }
       try {
         const r = await reqTo(state.mgmtHost, "/class/device-status");
         const list = Array.isArray(r && r.devices) ? r.devices : [];
+        markOnline();
         return {
           fresh: Number((r && r.fresh_seconds) || 90) || 90,
           devices: list.map(normDevice),
         };
-      } catch (_) {
-        return { fresh: 90, devices: D.devices().map(demoDevice), error: true };
+      } catch (e) {
+        // 原实现在这里回落演示设备（仅挂 error:true，UI 并不读它），
+        // 结果「后端挂了」和「一切正常」在界面上长得一样 —— 假设备混进真机列表。
+        markOffline((e && e.message) ? e.message : "设备状态请求失败");
+        return { fresh: 0, devices: [], error: true };
       }
     },
     /** 兼容旧调用方：只要设备数组。 */
@@ -771,7 +835,8 @@
      * 资源，与真实插件启停毫无关系，开关是假的）。
      */
     setModule: async (uid, module, enabled) => {
-      if (!canUseBackend()) return { status: "demo", message: "（演示）模块开关已记录" };
+      if (wantDemo()) return { status: "demo", message: "（演示）模块开关已记录" };
+      if (!canUseBackend()) return { status: "error", message: "未连接后端，模块开关未下发" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask("set_module", ts);
       const task = { action: "set_module", module, enabled: !!enabled, token, scope: "device", ts };
@@ -784,7 +849,8 @@
      * 同样的命令通道，载荷换成 {modules:{...}}；插件端 ApplyFromCommand 两种都吃。
      */
     setModules: async (uid, modules) => {
-      if (!canUseBackend()) return { status: "demo", message: "（演示）模块开关已记录" };
+      if (wantDemo()) return { status: "demo", message: "（演示）模块开关已记录" };
+      if (!canUseBackend()) return { status: "error", message: "未连接后端，模块开关未下发" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask("set_modules", ts);
       const task = { action: "set_module", modules, token, scope: "device", ts };
@@ -802,7 +868,8 @@
      *   set_active_class → 切班（复用 P 键 payload：group_id / group_name）
      */
     classislandAction: async (uid, action, payload) => {
-      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟执行 " + action };
+      if (wantDemo()) return { status: "demo", message: "（演示）已模拟执行 " + action };
+    if (!canUseBackend()) return { status: "error", message: "未连接后端，指令未执行" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask(action, ts);
       const task = Object.assign({ action, token, scope: "device", ts }, payload || {});
@@ -816,12 +883,16 @@
      * 它额外返回 `self_reported_class_id`，可与管理端指派值交叉校验。
      */
     deviceStatusOne: async (uid) => {
-      if (!canUseBackend()) return null;
+      if (wantDemo()) return demoDevice(D.devices().find((d) => d.id === uid) || D.devices()[0]);
+      if (!canUseBackend()) { markOffline("未连接后端：无设备状态"); return null; }
       try { return await cims(`/v1/client/${encodeURIComponent(uid)}/status`, {}, null); }
       catch (_) { return null; }
     },
     deviceAction: async (id, action) => {
-      if (!canUseBackend()) return { status: "success", message: "（演示）指令已模拟下发" };
+      if (wantDemo()) return { status: "demo", message: "（演示）指令已模拟下发" };
+    // 曾经这里无条件返回 status:"success" —— 后端不可达时运维也会看到「下发成功」。
+    // 指令类操作绝不能假成功：宁可明确报错，也不要让人以为设备收到了。
+    if (!canUseBackend()) return { status: "error", message: "未连接后端，指令未下发" };
       // ① CIMS 原生指令端点（HTTP→gRPC，由设备侧 CIMS 客户端执行）
       //    refresh 是面板「刷新」按钮的动作名，对应 CIMS 的 update-data（拉取最新资源）。
       const ep = { restart: "restart", refresh: "update-data", sync: "update-data", notify: "send-notification" }[action];
@@ -852,7 +923,8 @@
     // 并把 {ip,port,token} 回报到扩展网关 /vnc-session（见 ext/stelarith-ext-gateway）。面板用
     // deviceRemoteStatus(uid) 轮询该回执，拿到后内嵌 noVNC。
     deviceRemoteStart: async (uid, scope) => {
-      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟请求远程控制" };
+      if (wantDemo()) return { status: "demo", message: "（演示）已模拟请求远程控制" };
+    if (!canUseBackend()) return { status: "error", message: "未连接后端，未发起远程控制" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask("remote_control_start", ts);
       const task = { action: "remote_control_start", token, scope: scope || "class", ts };
@@ -860,7 +932,8 @@
       return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
     },
     deviceRemoteStop: async (uid, scope) => {
-      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟结束会话" };
+      if (wantDemo()) return { status: "demo", message: "（演示）已模拟结束会话" };
+    if (!canUseBackend()) return { status: "error", message: "未连接后端，未结束会话" };
       const ts = Math.floor(Date.now() / 1000);
       const token = await signTask("remote_control_stop", ts);
       const task = { action: "remote_control_stop", token, scope: scope || "class", ts };
@@ -900,12 +973,15 @@
       if (state.embedded || state.siteHost) {
         return ext("/notices", { method: "POST", body: JSON.stringify(body) }, "notices");
       }
-      // ② 纯演示：本地造一条
-      if (!canUseBackend()) {
+      // ② 纯演示：本地造一条（仅当用户**主动**开了演示模式）
+      if (wantDemo()) {
         const list = D.notices();
         list.unshift({ id: "n" + Date.now(), title, scope: body.scope, at: "刚刚" });
         return { status: "success", sent: 1 };
       }
+      // 后端不可用时不能假称已发送 —— 通知类操作一旦假成功，
+      // 运维会以为广播已经上过大屏。
+      if (!canUseBackend()) return { status: "error", message: "未连接后端，通知未下发" };
       // ③ 独立打开 + 直连 CIMS：退化为直接下发（无站点侧留痕，仅开发调试用）
       const uids = await reqTo(state.mgmtHost, `/account/${acct()}/client/list`);
       let sent = 0;
@@ -942,7 +1018,8 @@
     // 后端保证「一班一号」：已属别的班时返回 409（需 force 才转移），不静默抢占。
     // 未配后端（纯演示）时本地模拟，不报错。
     assignDevice: async (clientId, classId) => {
-      if (!canUseBackend()) return { status: "demo", message: "（演示）已模拟绑定到 " + classId };
+      if (wantDemo()) return { status: "demo", message: "（演示）已模拟绑定到 " + classId };
+    if (!canUseBackend()) return { status: "error", message: "未连接后端，未绑定班级" };
       return cims(
         `/class/device/assign?class_id=${encodeURIComponent(classId)}&client_id=${encodeURIComponent(clientId)}`,
         { method: "POST", body: "{}" },

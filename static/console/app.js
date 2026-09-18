@@ -16,6 +16,29 @@
     el.textContent = txt || (ok ? "已连接" : "未连接");
   }
 
+  /**
+   * 后端不可用横幅。
+   *
+   * 与顶栏 setConn 的「演示模式」指示灯是**两件事**，必须分开呈现：
+   *   - 演示模式：用户主动要假数据 → 顶栏显示「演示模式」，不弹横幅；
+   *   - offline  ：要真数据但拿不到 → 弹红色横幅，列表为空。
+   *
+   * 为什么值得单做一条横幅：曾经「拿不到真数据」会静默回落到演示数据，
+   * 界面上看不出任何异常 —— 后端挂了跟一切正常长得一模一样。
+   * 集控面板里这意味着运维会对着**不存在的设备**下发指令，
+   * 而失败还被伪装成成功。宁可空屏 + 明确告警，也不要可信的假象。
+   */
+  function refreshOfflineBanner() {
+    const el = $("#offline-banner");
+    const txt = $("#offline-banner-text");
+    if (!el) return;
+    if (API.state.demo) { el.classList.add("hidden"); return; } // 演示模式不是异常
+    if (!API.state.offline) { el.classList.add("hidden"); return; }
+    const why = API.state.lastError ? `（${API.state.lastError}）` : "";
+    if (txt) txt.textContent = `未连接后端${why} — 当前列表为空，不是真实设备，请勿据此操作`;
+    el.classList.remove("hidden");
+  }
+
   // ============ 权限（由网站后台经 iframe query 下发）============
   // 网站 /admin/console 按「两条轴」算好下发的权限位：
   //   - 设备轴 control/remote/manage（canDevice，与内容等级正交）；
@@ -1406,9 +1429,23 @@
     meta(`视图：${current} · ${API.state.demo ? "演示模式" : "后端模式"}`);
     // 内嵌态：总览渲染后，若账号尚未绑定班级则显示补充信息引导卡
     if (current === "dashboard") showDashboardOnboard();
+    // 每次渲染完都要重算：offline 是在拉取数据过程中才被置位的，
+    // 渲染前它还可能是 false（例如刚进来、还没发过请求）。
+    refreshOfflineBanner();
   }
 
   document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
+
+  // 离线横幅「重试」：先清标记再重渲染。若仍拿不到数据，请求过程中
+  // 会再次置位 offline，横幅会自动回来 —— 不会出现「点了重试却假装好了」。
+  const obRetry = $("#ob-retry");
+  if (obRetry) {
+    obRetry.addEventListener("click", () => {
+      API.markOnline();
+      toast("正在重新连接…");
+      go(current);
+    });
+  }
 
   // 联动优化：侧栏内方向键导航（ArrowUp/Down 在可见项间移动焦点，Enter/Space 由按钮原生触发）。
   // 让纯键盘用户也能在集控面板里顺畅切换视图，不依赖鼠标/触摸。

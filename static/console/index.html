@@ -28,6 +28,20 @@
 <!-- 窄屏抽屉遮罩：点空白处收起（宽屏不显示） -->
 <div id="nav-mask" class="nav-mask"></div>
 
+<!--
+  后端不可用横幅 —— 与「演示模式」是两个概念，必须分开显示：
+    演示模式 = 用户**主动**选择看假数据（顶栏显示「演示模式」）；
+    本横幅   = 想看真数据但拿不到（后端不可达 / 账户归属缺失）。
+  历史上这两件事被混为一谈：拿不到真数据时静默回落到演示数据，
+  于是「后端挂了」和「一切正常」在界面上长得一样，运维会对着
+  不存在的设备下发指令。现在拿不到就是空的，并且明确告警。
+-->
+<div id="offline-banner" class="offline-banner hidden" role="alert" aria-live="assertive">
+  <span class="ob-icon" aria-hidden="true">!</span>
+  <span class="ob-text" id="offline-banner-text">未连接后端</span>
+  <button id="ob-retry" class="ghost" type="button">重试</button>
+</div>
+
 <div id="body" data-page-node-id="g8B8DjvgiO3Hh5oURGsfCi">
   <nav id="sidebar" data-page-node-id="Lqj1qeWgMDM8yoAxs1IGl5">
     <button class="nav active" data-view="dashboard" data-page-node-id="Bt2ky5bVuYrv3yLBLcNOfF"><i data-page-node-id="FlU69HKU7dFlC46SaQpKvW"></i>总览</button>

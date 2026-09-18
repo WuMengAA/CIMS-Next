@@ -531,3 +531,26 @@ button, select, input, textarea { touch-action: manipulation; }
   .grid2 { grid-template-columns: 1fr; }
   .kv > div > .muted { flex-basis: 72px; }
 }
+
+/* ===== 后端不可用横幅 =====
+   与顶栏「演示模式」指示灯是两件事，视觉上必须能一眼区分：
+   演示模式 = 用户主动要看假数据（灰/中性）；本横幅 = 拿不到真数据（告警色）。
+   颜色全部走主题变量，不在亮/暗任一主题下写死。 */
+.offline-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  background: rgba(247, 93, 89, .12);
+  border-bottom: 1px solid rgba(247, 93, 89, .38);
+  color: var(--err);
+  font-size: 13px; line-height: 1.45;
+}
+.offline-banner.hidden { display: none; }
+.offline-banner .ob-icon {
+  flex: 0 0 auto;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--err); color: var(--bg, #fff);
+  font-weight: 700; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.offline-banner .ob-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+.offline-banner button { flex: 0 0 auto; font-size: 12px; padding: 3px 10px; }
