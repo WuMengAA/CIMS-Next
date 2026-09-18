@@ -154,33 +154,50 @@ public sealed class StelarithPanelService : IHostedService
 
     /// <summary>
     /// 同上，但把结果回灌给调用方（设置页用它把"弹了什么/为什么没弹"显示在页面上）。
-    /// 这是**网络调用**，调用方不应在 UI 线程直接调 —— 设置页的做法是直接调（端点失败会
-    /// 很快返回，且 Http 客户端有连接池复用），或包一层 Task.Run。
+    ///
+    /// ⚠️ **必须离开 UI 线程拉网络**：托盘菜单的 <c>Click</c> 与设置页按钮回调跑在
+    /// Avalonia **UI 线程**，而 <see cref="StelarithMessageFeed.Fetch"/> 是同步阻塞版
+    /// （内部 <c>GetAwaiter().GetResult()</c> 拉公网）。在 UI 线程直接调用会在
+    /// 公网慢/无响应时**把 UI 事件循环整个卡死** —— 表现为「界面加载不出来、
+    /// 托盘图标点不动、窗口无响应」（2026-09-18 现场实测）。这里一律经
+    /// <c>Task.Run</c> 放到线程池，网络期间 UI 线程保持可响应，结果再切回 UI 线程。
     /// </summary>
     public static void ShowLatestMessageForUi(Action<string>? feedback)
     {
         try
         {
             var opt = StelarithSyncOptions.Load();
-            var feed = StelarithMessageFeed.Fetch(opt, 5);
-            if (!feed.Ok || feed.Messages.Count == 0)
+            _ = Task.Run(() =>
             {
-                var msg = feed.Ok ? "暂无最近消息。" : $"拉取失败：{feed.Error}";
-                StelarithNotificationProvider.Current?.Push(StelarithBranding.SourceName, msg, 5);
-                feedback?.Invoke(msg);
-                return;
-            }
-            var latest = feed.Messages[0];
-            StelarithNotificationProvider.Current?.Push(
-                string.IsNullOrWhiteSpace(latest.Title) ? StelarithBranding.SourceName : latest.Title,
-                latest.Content,
-                8);
-            feedback?.Invoke($"已弹出最近一条：{latest.Content}");
-            Diag("ShowLatestMessage: 已弹出最近一条 " + latest.Content);
+                try
+                {
+                    var feed = StelarithMessageFeed.Fetch(opt, 5);
+                    if (!feed.Ok || feed.Messages.Count == 0)
+                    {
+                        var msg = feed.Ok ? "暂无最近消息。" : $"拉取失败：{feed.Error}";
+                        StelarithNotificationProvider.Current?.Push(StelarithBranding.SourceName, msg, 5);
+                        feedback?.Invoke(msg);
+                        Diag("ShowLatestMessage: " + msg);
+                        return;
+                    }
+                    var latest = feed.Messages[0];
+                    StelarithNotificationProvider.Current?.Push(
+                        string.IsNullOrWhiteSpace(latest.Title) ? StelarithBranding.SourceName : latest.Title,
+                        latest.Content,
+                        8);
+                    feedback?.Invoke($"已弹出最近一条：{latest.Content}");
+                    Diag("ShowLatestMessage: 已弹出最近一条 " + latest.Content);
+                }
+                catch (Exception ex)
+                {
+                    Diag("ShowLatestMessage exception: " + ex.Message);
+                    feedback?.Invoke("弹出失败：" + ex.Message);
+                }
+            });
         }
         catch (Exception ex)
         {
-            Diag("ShowLatestMessage exception: " + ex.Message);
+            Diag("ShowLatestMessage setup exception: " + ex.Message);
             feedback?.Invoke("弹出失败：" + ex.Message);
         }
     }
