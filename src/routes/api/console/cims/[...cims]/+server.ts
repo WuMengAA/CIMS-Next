@@ -26,6 +26,12 @@ const CREDS_READY = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD);
 // 它挂载在 prefix="/api" 且 TenantMiddleware 要求 Host 头为 <slug>.<BASE_DOMAIN>，否则 403。
 const CLIENT_URL = (env.CIMS_CLIENT_URL ?? "http://127.0.0.1:8096").replace(/\/$/, "");
 const BASE_DOMAIN = env.CIMS_BASE_DOMAIN ?? "localhost";
+// 集控面板**目标租户 slug**（客户端配置拉取用的 Host 头 <slug>.<BASE_DOMAIN>）。
+// 显式指定后，面板拉的课表/组件**恒属于该租户**，不再受 /account/list 的 `list[0]`
+// 顺序影响（那是登录用户有权限账户的无序列表，多租户时会让面板"串租户"——
+// 永远读第一个账户的资源，与当前设备/班级的真实归属无关）。
+// 留空则回退到旧行为（取 list[0].slug），以兼容单租户部署的既有配置。
+const TARGET_SLUG = (env.CONSOLE_TARGET_SLUG ?? "").trim().toLowerCase();
 // 允许的路径：账户/指令/资源（management）、登录、班级（设备归属与切班）、
 // 以及客户端配置拉取（含带 /api 前缀的写法）。
 const ALLOW = [
@@ -89,9 +95,12 @@ async function acquireToken(): Promise<string | null> {
 }
 
 // 缓存首个 CIMS 账户 slug（用于客户端应用 TenantMiddleware 的 Host 头 <slug>.<BASE_DOMAIN>）。
-// 本代理持有管理令牌，能读 /account/list；slug 仅用于拼 Host 头，不下发前端。
+// 首选显式配置的 CONSOLE_TARGET_SLUG（多租户下精确指定面板看哪个租户）；
+// 未配置时回退：本代理持有管理令牌，读 /account/list 取 list[0].slug 兼容单租户。
+// slug 仅用于拼 Host 头，不下发前端。
 let accountSlug: string | null = null;
 async function acquireSlug(token: string): Promise<string | null> {
+	if (TARGET_SLUG) return TARGET_SLUG;
 	if (accountSlug) return accountSlug;
 	try {
 		const r = await fetch(`${CIMS}/account/list`, {
