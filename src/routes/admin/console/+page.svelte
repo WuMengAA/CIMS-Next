@@ -46,42 +46,47 @@
 		});
 		mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
 
-		// 高度兜底（确定方案）：右侧 Sidebar.Content 是 flex-1 但实测会被内部塌缩内容拉低到
-		// 150px（iframe 默认高），absolute/flex 子元素都只能拿到 150 → 面板扁。而外层
-		// Sidebar.Inset 高度确定（=视口高，position:relative）。故直接把 .console-root 绝对
-		// 定位到 Inset，顶部让出后台顶栏，彻底绕过塌缩的 Content。Content 改 static 让 abs
-		// 越过它去找 Inset（否则 abs 会相对 Content 的 150 高）。ResizeObserver 跟随顶栏/
-		// 窗口变化重算 top。
+		// 高度撑满（确定方案）：position:fixed 框住「后台内容区」——左/右/上边界取内嵌
+		// sidebar-inset 的 sidebar-content 左缘与内嵌顶栏底边，宽/高用该 content 的宽与
+		// 视口高。完全不依赖会塌缩的 flex 内容链（#main-content 是普通 div，在 flex-col 的
+		// Inset 里不撑开，整条链被拉到 150px → 面板扁）；fixed 相对视口、测量值取确定宽度
+		// 与视口高，免疫塌缩。注意：左侧 CMS 侧栏是 [data-slot=sidebar] 外层 wrapper，其子
+		// 容器 position:fixed，wrapper 自身 getBoundingClientRect 不可靠（right 会取到视口
+		// 右缘），故改用内嵌 content 的 rect 拿 left/width。顶栏/侧栏可能延迟渲染或折叠，
+		// 挂载后多算几次兜底。
 		const root = document.querySelector(".console-root");
-		const content = root?.closest('[data-slot="sidebar-content"]') as HTMLElement | null;
-		const inset = document.querySelector('[data-slot="sidebar-inset"]') as HTMLElement | null;
-		if (content) content.style.position = "static";
+		const adminInset = root?.closest('[data-slot="sidebar-inset"]') as HTMLElement | null;
+		const content = adminInset?.querySelector('[data-slot="sidebar-content"]') as HTMLElement | null;
+		const header = adminInset?.querySelector('[data-slot="sidebar-header"]') as HTMLElement | null;
 		const apply = () => {
-			if (root && inset) {
-				const top = (inset.firstElementChild as HTMLElement | null)?.offsetHeight ?? 0;
-				const insetRect = inset.getBoundingClientRect();
-				// 内容区的左偏移 = 左侧 CMS 侧栏宽度（桌面 256；移动端侧栏是浮层，
-				// content 为 null → left 归 0，面板占满整宽）。用真实测量而非硬编码，
-				// 跟随侧栏折叠/响应式。
-				const left = content ? Math.max(0, content.getBoundingClientRect().left - insetRect.left) : 0;
-				root.style.position = "absolute";
-				root.style.top = top + "px";
-				root.style.left = left + "px";
-				root.style.right = "0";
-				root.style.bottom = "auto";
-				root.style.height = inset.clientHeight - top + "px";
-			}
+			if (!root) return;
+			const vh = window.innerHeight;
+			const cr = content?.getBoundingClientRect();
+			const hr = header?.getBoundingClientRect();
+			const top = hr ? hr.bottom : (cr ? cr.top : 0);
+			const left = cr ? cr.left : 0;
+			const width = cr ? cr.width : window.innerWidth;
+			root.style.position = "fixed";
+			root.style.top = top + "px";
+			root.style.left = left + "px";
+			root.style.width = width + "px";
+			root.style.height = vh - top + "px";
+			root.style.right = "auto";
+			root.style.bottom = "auto";
 		};
 		apply();
 		const ro = new ResizeObserver(apply);
-		if (inset) ro.observe(inset);
+		ro.observe(document.body);
 		window.addEventListener("resize", apply);
+		const t1 = setTimeout(apply, 60);
+		const t2 = setTimeout(apply, 250);
 
 		return () => {
 			mo.disconnect();
 			ro.disconnect();
 			window.removeEventListener("resize", apply);
-			if (content) content.style.position = "";
+			clearTimeout(t1);
+			clearTimeout(t2);
 		};
 	});
 
@@ -128,20 +133,18 @@
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
-<!-- 撑满后台内容区：实测右侧 Sidebar.Content(flex-1) 会被内部塌缩内容拉低到 150px
-     （iframe 默认高），absolute/flex 子元素都只能拿到 150 → 面板扁。而外层 Sidebar.Inset
-     高度确定（=视口高，position:relative）。故 .console-root 走 position:absolute，由
-     onMount 的 JS 直接相对 Inset 定位：top=后台顶栏高、left=左侧 CMS 侧栏宽（移动端侧栏
-     是浮层→归 0）、height=Inset 高-top。并临时把 Content 改 static，让 abs 越过它去找
-     Inset。ResizeObserver 跟随顶栏/窗口变化重算。这彻底绕开塌缩的 Content 高度链。面板
-     内部自带顶栏/侧栏/状态栏，全高铺开。 -->
+<!-- 撑满后台内容区：用 position:fixed 框住「后台内容区」（CMS 侧栏右缘→视口右缘、
+     后台顶栏底边→视口底），偏移用真实元素 getBoundingClientRect、宽高用
+     window.innerWidth/innerHeight（永远正确）。不依赖会塌缩的 flex 内容链
+     （#main-content 是普通 div，在 flex-col 的 Inset 里不撑开，整条链被拉到 150px → 面板扁）；
+     fixed 相对视口、测量值取确定高度的视口，免疫塌缩。面板内部自带顶栏/侧栏/状态栏，全高铺开。 -->
 <div class="console-root">
 	<iframe bind:this={frameEl} class="console-frame" src={frameSrc} title="星集控面板"></iframe>
 </div>
 
 <style>
 	.console-root {
-		position: absolute;
+		position: fixed;
 		inset: 0;
 		display: flex;
 		flex-direction: column;
