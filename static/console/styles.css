@@ -171,6 +171,14 @@ h1, h2, h3, h4, h5, .brand, .login-card h2, .card h3, .hero-title {
 }
 /* 内联 SVG 图标：固定 18px、不伸缩、继承文字色 → 亮/暗主题自动跟随 */
 .nav svg { flex: 0 0 auto; display: block; width: 18px; height: 18px; color: currentColor; }
+/* 文案容器：nowrap + 省略号。
+   160px 侧栏放进 18px 图标 + 10px 间距后，长文案（如「ClassIsland 专页」）
+   会换行把按钮撑成两行 → 这里改为不换行 + 尾部省略，保证单项恒定单行高；
+   完整文案挂在按钮 title 上，悬停可见。 */
+.nav-label {
+  min-width: 0; flex: 1 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .nav:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
 .nav.active {
   background: var(--primary); color: var(--primary-foreground);
