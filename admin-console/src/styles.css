@@ -12,8 +12,62 @@
    ============================================================================ */
 
 :root {
-  /* website design tokens（dark-only，与 layout.css 同源） */
+  /* 公共：字体与运动曲线（亮/暗通用） */
   --radius: 0.5rem;
+  --font-sans: "Inter Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-heading: "Lora Variable", "Tiempos Headline", Georgia, "Songti SC", serif;
+  --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);
+  --sheen: rgba(255, 255, 255, 0.55);
+  --shadow-card: rgba(0, 0, 0, 0.12);
+  --mask-bg: rgba(250, 249, 245, 0.97);
+
+  /* 亮色令牌（默认；与官网 layout.css :root 同源） */
+  --background: #faf9f5;
+  --foreground: #1b1b19;
+  --card: #ffffff;
+  --card-nested: #f4f3ee;
+  --card-foreground: #1b1b19;
+  --primary: #a8482b;
+  --primary-foreground: #ffffff;
+  --secondary: #eceae3;
+  --secondary-foreground: #1b1b19;
+  --muted: #f0eee8;
+  --muted-foreground: #63625a;
+  --accent: #f0eee8;
+  --accent-foreground: #1b1b19;
+  --destructive: #b3261e;
+  --success: #3f6212;
+  --warning: #7a4f00;
+  --border: oklch(0% 0 0 / 0.14);
+  --input: oklch(0% 0 0 / 0.10);
+  --ring: #a8482b;
+
+  --sidebar: #f2f1ec;
+  --sidebar-foreground: #1b1b19;
+  --sidebar-primary: #a8482b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e8e6df;
+  --sidebar-accent-foreground: #1b1b19;
+  --sidebar-border: oklch(0% 0 0 / 0.14);
+
+  /* 面板内部别名（亮色） */
+  --bg: #faf9f5;
+  --panel: #ffffff;
+  --panel2: #f4f3ee;
+  --line: oklch(0% 0 0 / 0.14);
+  --text: #1b1b19;
+  --mutedx: #63625a;
+  --dim: #75736b;
+  --accentx: #a8482b;
+  --ok: #3f6212;
+  --warn: #7a4f00;
+  --err: #b3261e;
+  --r: 0.5rem;
+}
+
+.dark {
+  /* 暗色令牌（覆盖；与官网 layout.css .dark 同源） */
   --background: #1b1b19;
   --foreground: #faf9f5;
   --card: oklch(28% 0.004 106.6);
@@ -42,7 +96,10 @@
   --sidebar-accent-foreground: #faf9f5;
   --sidebar-border: oklch(100% 0 0 / 0.24);
 
-  /* 面板内部别名（沿用原变量名，值取自 website token） */
+  --sheen: rgba(255, 255, 255, 0.35);
+  --shadow-card: rgba(0, 0, 0, 0.5);
+  --mask-bg: rgba(27, 27, 25, 0.97);
+
   --bg: #1b1b19;
   --panel: oklch(28% 0.004 106.6);
   --panel2: oklch(34% 0.004 106.6);
@@ -54,19 +111,12 @@
   --ok: #788c5d;
   --warn: #d8b25c;
   --err: #f75d59;
-  --r: 0.5rem;
-
-  /* 字体：正文走无衬线，标题走 Lora 衬线（与网站一致） */
-  --font-sans: "Inter Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-heading: "Lora Variable", "Tiempos Headline", Georgia, "Songti SC", serif;
-
-  /* 运动曲线（取 layout.css §全局分段加载动画） */
-  --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; color-scheme: dark; }
+html, body { height: 100%; }
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 13px/1.6 var(--font-sans);
@@ -182,7 +232,7 @@ button.danger:hover { background: rgba(247,93,89,.1); }
 .btn-shine::after {
   content: ""; position: absolute; top: 0; left: -80%;
   width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  background: linear-gradient(90deg, transparent, var(--sheen), transparent);
   transform: skewX(-20deg); transition: left .5s ease; pointer-events: none;
 }
 .btn-shine:hover::after { left: 130%; }
@@ -256,8 +306,20 @@ tbody tr:hover { background: var(--panel2); }
 .tag.warn { background: rgba(216,178,92,.15); color: var(--warn); border-color: rgba(216,178,92,.3); }
 .tag.err { background: rgba(247,93,89,.14); color: var(--err); border-color: rgba(247,93,89,.3); }
 
+/* 设备表分组表头：把同一班的机器在视觉上圈成一段，但不喧宾夺主 */
+tr.dev-group > td {
+  background: var(--panel2);
+  color: var(--mutedx);
+  font-size: 12px;
+  letter-spacing: .02em;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  border-top: 1px solid var(--line);
+}
+tr.dev-group > td b { color: var(--text); }
+
 .mask {
-  position: absolute; inset: 0; background: rgba(27,27,25,.97);
+  position: absolute; inset: 0; background: var(--mask-bg);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
 .mask.hidden { display: none; }
@@ -285,6 +347,17 @@ code { background: var(--panel2); border: 1px solid var(--line); border-radius: 
 button:disabled { opacity: .4; cursor: not-allowed; border-color: var(--line); }
 button:disabled:hover { border-color: var(--line); }
 .nav.hidden { display: none !important; }
+
+/* ===== 只读观看态的收敛 =====
+   当 PERM.readonly 时 <html> 带 readonly-mode：所有写操作入口即使在 DOM 里存在
+   （可能因 select/card 由 JS 渲染而漏挂 data-need），也在视觉上明确"不可用"。
+   这是纵深防御的最后一层 —— 服务端仍会拒绝，前端这里只是不让用户白点。 */
+.readonly-mode .nav[data-need]:not([data-need="issue"]) { display: none !important; }
+.readonly-mode #perm-chip.readonly {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+}
 button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--ring); outline-offset: 2px;
 }
@@ -413,7 +486,7 @@ button, select, input, textarea { touch-action: manipulation; }
 .li-dot.warn { background: var(--warn); }
 .li-dot.accent { background: var(--primary); }
 .li-dot.err { background: var(--err); }
-.li-dot.dim { background: #55534c; }
+.li-dot.dim { background: var(--dim); }
 .li-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 56vw; }
 .li-time { color: var(--dim); font-size: 11px; flex: 0 0 auto; }
 
@@ -433,3 +506,101 @@ button, select, input, textarea { touch-action: manipulation; }
   .hero-title { font-size: 16px; }
   .li-name { max-width: 46vw; }
 }
+
+/* ===== 课表竖向列表（2026-09-15） =====
+   从「周几 + 一排横向 input」改成「每天一块、节次自上而下竖排」：
+   竖排贴合课表本身的时间轴，一屏能完整读完一天；横向铺 12 节在窄屏必然溢出。
+   横向卡片网格用 auto-fill + minmax，宽屏并排多天、窄屏自动落单列。 */
+.sched-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(252px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+.sched-day {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel2);
+  min-width: 0;
+}
+.sched-day-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--line);
+}
+.sched-day-name { font-weight: 600; font-size: 13px; }
+.sched-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sched-row { display: flex; align-items: center; gap: 8px; }
+.sched-idx {
+  width: 22px; flex: 0 0 auto; text-align: right;
+  font-family: ui-monospace, monospace; font-size: 11px;
+  color: var(--dim, var(--muted-foreground));
+}
+.sched-subject { flex: 1; min-width: 0; }
+.sched-del {
+  flex: 0 0 auto; padding: 2px 8px; opacity: .45; line-height: 1.2;
+}
+.sched-del:hover { opacity: 1; color: var(--err); }
+
+/* 目标班级多选区（通知页）：窄屏允许换行 */
+.nt-cls-wrap { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+
+@media (max-width: 560px) {
+  .sched-grid { grid-template-columns: 1fr; }
+}
+
+/* ===== 校园点歌内嵌（2026-09-15） =====
+   点歌站以 iframe 内嵌，不给 top-navigation / popups 权限：
+   只能在框内活动，跳不出集控面板、也关不掉自己。 */
+.vh-frame-wrap {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel2);
+}
+.vh-frame { display: block; width: 100%; height: 560px; border: 0; background: #fff; }
+@media (max-width: 720px) { .vh-frame { height: 440px; } }
+
+/* ===== ClassIsland 专页 / 权限与分级页（2026-09-15） =====
+   两页都大量用「标签 + 值」的成对信息，故抽一对通用容器：
+     .grid2  两列自适应（窄屏塌成一列）
+     .kv     竖排的键值列表（左侧标签固定宽，右侧值可换行）
+   刻意不复用表格：这些是"属性"不是"记录"，用表格会把长文本挤成
+   一条窄柱，反而更难读。 */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.kv { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.kv > div { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.kv > div > .muted { flex: 0 0 88px; font-size: 12px; }
+.kv > div > b { font-weight: 500; min-width: 0; word-break: break-word; }
+.row.wrap { flex-wrap: wrap; }
+
+@media (max-width: 760px) {
+  .grid2 { grid-template-columns: 1fr; }
+  .kv > div > .muted { flex-basis: 72px; }
+}
+
+/* ===== 后端不可用横幅 =====
+   与顶栏「演示模式」指示灯是两件事，视觉上必须能一眼区分：
+   演示模式 = 用户主动要看假数据（灰/中性）；本横幅 = 拿不到真数据（告警色）。
+   颜色全部走主题变量，不在亮/暗任一主题下写死。 */
+.offline-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  background: rgba(247, 93, 89, .12);
+  border-bottom: 1px solid rgba(247, 93, 89, .38);
+  color: var(--err);
+  font-size: 13px; line-height: 1.45;
+}
+.offline-banner.hidden { display: none; }
+.offline-banner .ob-icon {
+  flex: 0 0 auto;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--err); color: var(--bg, #fff);
+  font-weight: 700; font-size: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.offline-banner .ob-text { flex: 1 1 auto; min-width: 0; word-break: break-word; }
+.offline-banner button { flex: 0 0 auto; font-size: 12px; padding: 3px 10px; }

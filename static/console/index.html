@@ -1,6 +1,18 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-page-node-id="tYTjcBAywP5ih1oOcSWYi2">
 <head data-page-node-id="qMu7HXEUMTxnhV2NwSfV5a">
+<script>
+  /* 主题预置：在 CSS 应用前给 <html> 加/去 dark，避免亮暗切换闪烁。
+     优先级：URL ?theme=dark|light > localStorage > 系统偏好。embed 时宿主总带 ?theme。 */
+  (function () {
+    try {
+      var p = new URLSearchParams(location.search);
+      var t = p.get("theme");
+      if (!t) t = localStorage.getItem("console-theme") || (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.classList.toggle("dark", t === "dark");
+    } catch (e) {}
+  })();
+</script>
 <meta charset="UTF-8" data-page-node-id="C03ET8W5T1XuUB5nonv8yr" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="ERvyaE0LZ6liexGzk2feMH" />
 <title>星集控 · 电教委员面板</title>
@@ -13,7 +25,7 @@
        并且**必须重启 StelarithServer**（adapter-node 的 sirv 会缓存文件 size，
        文件被替换后仍按旧长度发送，表现为 HTML/JS 被拦腰截断、面板只剩线框）。
 -->
-<link rel="stylesheet" href="styles.css?v=20260919d" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
+<link rel="stylesheet" href="styles.css?v=20260919e" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
 </head>
 <body data-page-node-id="poMxhzuD8ICT6zZOOZDeGB">
 
@@ -99,7 +111,7 @@
   </div>
 </div>
 
-<script src="api.js?v=20260919d"></script>
-<script src="app.js?v=20260919d"></script>
+<script src="api.js?v=20260919e"></script>
+<script src="app.js?v=20260919e"></script>
 </body>
 </html>

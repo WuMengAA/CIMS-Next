@@ -82,12 +82,15 @@
 	// 还多出一列「点了就被 hooks 弹回」的导航。
 	const isLogin = $derived(currentPath.startsWith("/admin/login"));
 
-	// 集控面板也不要后台外壳：它是全屏内嵌的 iframe 应用，自身带一套完整的左侧导航
-	// （总览/课表/设备/通知…）。若套在后台侧栏里，会出现两类问题：
-	//  ① 桌面端后台侧栏（fixed，z-10）与面板 iframe 抢地盘，窄屏/缩放下偶发侧栏盖住面板；
-	//  ② 手机端后台侧栏是浮层抽屉，被面板全屏盖住后既看不见也点不开，等于「没有小侧边栏」。
-	// 故把集控面板当成「沉浸式全屏接管」——跳过后台侧栏+顶栏，面板自己的汉堡抽屉作为导航。
+	// 仅用于控制内容区 padding：集控面板自身带完整顶栏/侧栏/状态栏，应贴边铺满，
+	// 不留内容区内边距；其它后台页保留 p-4 md:p-6。不用于渲染跳转判断。
 	const isConsole = $derived(currentPath.startsWith("/admin/console"));
+
+	// 集控面板现在**走后台外壳**（不再是全屏接管）：用户选择把它做成后台的一个页面，
+	// 与站点 CMS 导航共享后台侧栏 + 顶栏 + 账号体系。面板自身仍带一套完整的设备级
+	// 左侧导航（总览/课表/设备…），与 CMS 导航是两个维度，双重侧栏是预期而非 bug。
+	// 移动端两块侧栏各自是浮层抽屉：后台的 Sidebar.Trigger 在顶栏、面板内的 #btn-nav
+	// 在面板顶栏，互不遮挡、都可达。
 
 	async function logout() {
 		await fetch("/api/auth", {
@@ -108,7 +111,7 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-{#if isLogin || isConsole}
+{#if isLogin}
 	{@render children()}
 {:else}
 <!--
@@ -200,7 +203,7 @@
 			</div>
 		</div>
 	</Sidebar.Header>
-	<Sidebar.Content class="p-4 md:p-6">
+	<Sidebar.Content class="relative p-4 md:p-6">
 		{#key currentPath}
 			<div in:pageIn style="view-transition-name: admin-content">
 				{@render children()}

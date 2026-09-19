@@ -1,10 +1,31 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-page-node-id="tYTjcBAywP5ih1oOcSWYi2">
 <head data-page-node-id="qMu7HXEUMTxnhV2NwSfV5a">
+<script>
+  /* 主题预置：在 CSS 应用前给 <html> 加/去 dark，避免亮暗切换闪烁。
+     优先级：URL ?theme=dark|light > localStorage > 系统偏好。embed 时宿主总带 ?theme。 */
+  (function () {
+    try {
+      var p = new URLSearchParams(location.search);
+      var t = p.get("theme");
+      if (!t) t = localStorage.getItem("console-theme") || (window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+      document.documentElement.classList.toggle("dark", t === "dark");
+    } catch (e) {}
+  })();
+</script>
 <meta charset="UTF-8" data-page-node-id="C03ET8W5T1XuUB5nonv8yr" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="ERvyaE0LZ6liexGzk2feMH" />
 <title>星集控 · 电教委员面板</title>
-<link rel="stylesheet" href="styles.css" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
+<!--
+  资源引用必须带 ?v=<版本>。原因（2026-09-19 线上事故）：
+    1) Cloudflare 对本域的 .js/.css 走默认边缘缓存（Cache-Control: max-age=14400），
+       不带查询串的 URL 会被缓存 4 小时 —— 改了代码、重启了服务，用户端却仍是旧版；
+       实测带任意查询串的请求为 cf-cache-status: MISS（每次都回源），故 query 是可靠的破缓存手段。
+    2) 改动本目录下任何 console 资源后，必须同步递增下面的 v 值，
+       并且**必须重启 StelarithServer**（adapter-node 的 sirv 会缓存文件 size，
+       文件被替换后仍按旧长度发送，表现为 HTML/JS 被拦腰截断、面板只剩线框）。
+-->
+<link rel="stylesheet" href="styles.css?v=20260919e" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
 </head>
 <body data-page-node-id="poMxhzuD8ICT6zZOOZDeGB">
 
@@ -28,6 +49,20 @@
 <!-- 窄屏抽屉遮罩：点空白处收起（宽屏不显示） -->
 <div id="nav-mask" class="nav-mask"></div>
 
+<!--
+  后端不可用横幅 —— 与「演示模式」是两个概念，必须分开显示：
+    演示模式 = 用户**主动**选择看假数据（顶栏显示「演示模式」）；
+    本横幅   = 想看真数据但拿不到（后端不可达 / 账户归属缺失）。
+  历史上这两件事被混为一谈：拿不到真数据时静默回落到演示数据，
+  于是「后端挂了」和「一切正常」在界面上长得一样，运维会对着
+  不存在的设备下发指令。现在拿不到就是空的，并且明确告警。
+-->
+<div id="offline-banner" class="offline-banner hidden" role="alert" aria-live="assertive">
+  <span class="ob-icon" aria-hidden="true">!</span>
+  <span class="ob-text" id="offline-banner-text">未连接后端</span>
+  <button id="ob-retry" class="ghost" type="button">重试</button>
+</div>
+
 <div id="body" data-page-node-id="g8B8DjvgiO3Hh5oURGsfCi">
   <nav id="sidebar" data-page-node-id="Lqj1qeWgMDM8yoAxs1IGl5">
     <button class="nav active" data-view="dashboard" data-page-node-id="Bt2ky5bVuYrv3yLBLcNOfF"><i data-page-node-id="FlU69HKU7dFlC46SaQpKvW"></i>总览</button>
@@ -35,13 +70,21 @@
     <button class="nav" data-view="config" data-need="control" data-page-node-id="2lCqa0R71FCMWDtHHjGRkJ"><i data-page-node-id="LA3CjV957XYldSaI6dT0Fe"></i>配置下发</button>
     <button class="nav" data-view="plugins" data-need="manage" data-page-node-id="mDpnZuML9Gi3aXFdDB1Tg7"><i data-page-node-id="GHD0yfFaBrYlZcNWCjC86S"></i>插件</button>
     <button class="nav" data-view="devices" data-need="control" data-page-node-id="YSFURThKJPl3BJAj2fEhnh"><i data-page-node-id="5sBymMT0B0Amzbq9gEBvFx"></i>设备控制</button>
+    <button class="nav" data-view="classisland" data-need="control" data-page-node-id="Ci1sland001ProvAvail00"><i data-page-node-id="Ci1sland002ProvAvail00"></i>ClassIsland 专页</button>
     <button class="nav" data-view="remote" data-need="remote" data-page-node-id="kR3mZxQvLp9Wc2bN7uT8Ya"><i data-page-node-id="pQ1wE7rYt5Uu0oI3sD6hG"></i>远程控制</button>
+    <button class="nav" data-view="media" data-need="remote" data-page-node-id="MediaCamView0001List0"><i data-page-node-id="MediaCamView0002List0"></i>摄像头 / 录像</button>
     <button class="nav" data-view="voicehub" data-page-node-id="vH7mZxQvLp9Wc2bN7uT8Yb"><i data-page-node-id="vQ1wE7rYt5Uu0oI3sD6hH"></i>校园点歌</button>
     <button class="nav" data-view="notify" data-need="control" data-page-node-id="AH6XER2oUxHUNeaQHT9CYc"><i data-page-node-id="VNoLDzl83wri0xqW2fs1h5"></i>通知广播</button>
+    <button class="nav" data-view="scheduled" data-need="control" data-page-node-id="ScHedBr0ad20260918P2"><i data-page-node-id="ScHedBr0ad002P2ve"></i>定时广播</button>
     <button class="nav" data-view="chat" data-page-node-id="1YVmOzyGasKV5vm0C2EfyC"><i data-page-node-id="F38FWZGg4VjAq38MXpOIlM"></i>班级交流</button>
     <button class="nav" data-view="report" data-need="issue" data-page-node-id="c6sMhPauVHq9vq92OX6BqV"><i data-page-node-id="4iMbeeRrtGPHe24b0OCqQW"></i>故障上报</button>
     <button class="nav" data-view="bug" data-need="issue" data-page-node-id="djfGM3VSX5EBcfBpz8bUdo"><i data-page-node-id="WTig2ZtrEMou1Cz12Fsm5F"></i>提交 Bug</button>
     <button class="nav" data-view="audit" data-page-node-id="M4bpUwnOxVYMCVhL97dZZz"><i data-page-node-id="MpKjBrCMMZz4Q9ShIgUbp4"></i>操作日志</button>
+    <button class="nav" data-view="roles" data-page-node-id="Ro1esMatrix0001Roles00"><i data-page-node-id="Ro1esMatrix0002Roles00"></i>权限与分级</button>
+    <!-- 自检：任何有设备控制权的人都能跑（排查"没反应"是日常动作） -->
+    <button class="nav" data-view="test" data-need="control" data-page-node-id="DiagTestView0001Probe0"><i data-page-node-id="DiagTestView0002Probe0"></i>自检 / 测试</button>
+    <!-- 开发者选项：能发任意原始请求、改全局媒体策略 → 收到设备管理档 -->
+    <button class="nav" data-view="dev" data-need="manage" data-page-node-id="DiagDevView00001Raw00"><i data-page-node-id="DiagDevView00002Raw00"></i>开发者选项</button>
   </nav>
   <main id="main" data-page-node-id="mBqTPeYtepQISwQuehKxOJ"><div id="view" data-page-node-id="hCMKXe4bC8pQgS8xwDGbKq"></div></main>
 </div>
@@ -68,7 +111,7 @@
   </div>
 </div>
 
-<script src="api.js"></script>
-<script src="app.js"></script>
+<script src="api.js?v=20260919e"></script>
+<script src="app.js?v=20260919e"></script>
 </body>
 </html>
