@@ -137,6 +137,13 @@
 				scene = new ArchiveScene(hostEl);
 				scene.setReduced(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true);
 				scene.setTheme(mode.current === "dark", true);
+				(globalThis as any).__rhineScene = scene; // 调试钩子
+				(globalThis as any).__rhineCam = () => ({
+					pos: scene.camera.position.toArray(),
+					aim: scene.cameraAim?.toArray() ?? null,
+					fov: scene.camera.fov,
+					dist: scene.camera.position.distanceTo(scene.cameraAim ?? scene.camera.position),
+				});
 
 				// 档案选择（含方向键导航后的 onSelect 回调整合）
 				scene.onSelect = (i: number) => {

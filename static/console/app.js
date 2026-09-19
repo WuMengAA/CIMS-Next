@@ -98,6 +98,12 @@
     classisland: "control",
     // 权限与分级页是纯读信息，不需要设备权限 —— 任何能进面板的人
     // 都该看得到"自己到底能做什么"，否则权限不透明会变成猜谜。
+    // 自检页同理：它只是"把每段各探一次"，本身不改任何东西。
+    test: "control",
+    // 开发者选项能发任意原始请求（含写操作）、能改全局媒体策略 → 收到设备管理档。
+    dev: "manage",
+    // 摄像头/录像：隐私相关动作，按设备轴 remote 档门控（能远程看画面才谈得上抓拍）。
+    media: "remote",
   };
 
   function renderPermChip() {
@@ -529,8 +535,12 @@
       </div>
       <div id="vncbox" class="card hidden"><h3>VNC 会话 · <span id="vnc-name"></span></h3>
         <p class="muted" id="vnc-note"></p>
+        <div id="vnc-diag" class="hidden" style="margin:8px 0 4px"></div>
         <iframe id="vnc-frame" title="远程屏幕" style="width:100%;height:340px;border:0;background:#000"></iframe>
-        <div class="row"><button data-act="remote-stop" data-need="remote">结束会话</button></div>
+        <div class="row">
+          <button data-act="remote-stop" data-need="remote">结束会话</button>
+          <button data-act="remote-wait" data-need="remote" id="vnc-retry" class="hidden">重试等待</button>
+        </div>
       </div>`;
   };
 
@@ -864,6 +874,9 @@
         <div class="row">
           <input id="nt-title" placeholder="通知标题" style="flex:1"/>
           <select id="nt-scope" title="广播范围（受账号权限限制）">${scopeOpts}</select>
+          <input id="nt-duration" type="number" min="0" max="3600" step="1" placeholder="时长(秒)"
+                 title="教室大屏显示时长（秒）。留空 = 按正文字数自适应（3~20s）"
+                 style="width:96px"/>
           <button class="primary" data-act="send-notice" data-need="control">发布</button>
         </div>
         <textarea id="nt-content" placeholder="通知正文（可空）" style="min-height:64px"></textarea>
@@ -1278,7 +1291,419 @@
       </tbody></table></div>`;
   };
 
-  views.settings = async () => `
+  // ============ 六段链路 · 分段探针（开发者选项 / 测试页共用）============
+  //
+  // 面板上「某个功能不工作」时，六段链路（面板 → 站点代理 → CIMS → 命令队列 → 插件 →
+  // 教室端）断在哪一段，**界面上长得一模一样** —— 都是"没反应"。逐段各发一个最小只读
+  // 请求，把每段自己的结论、状态码与耗时摊开，断点才能一眼现形。
+  //
+  // 约定：未配置的段落记「跳过」（ok:null），**不是失败**。缺配置与链路故障是两回事，
+  // 混在一起会让排查的人跑去修一段根本没配的东西。
+  async function probeChain(uid) {
+    const S = API.state || {};
+    const siteHost = S.siteHost || (typeof location !== "undefined" ? location.origin : "");
+    const brief = (s) => {
+      const t = String(s == null ? "" : s).replace(/\s+/g, " ").trim();
+      return t.length > 150 ? t.slice(0, 150) + "…" : t;
+    };
+    const out = [];
+    const add = (label, r, hint, okOverride) => {
+      const ok = okOverride === undefined ? !!(r && r.ok) : okOverride;
+      let detail;
+      if (!r) detail = "未执行";
+      else if (r.networkError) detail = "网络层失败：" + brief(r.body);
+      else detail = "HTTP " + r.status + (r.body ? " · " + brief(r.body) : "");
+      out.push({ label, ok, ms: (r && r.ms) || 0, detail, hint: ok ? "" : (hint || "") });
+    };
+    const skip = (label, why) => out.push({ label, ok: null, ms: 0, detail: why, hint: "" });
+
+    // ① 站点后端（协作/配置网关）
+    if (!siteHost) skip("① 站点后端（协作网关）", "未配置站点地址（独立打开面板需在「设置」填写）");
+    else {
+      const r = await API.rawRequest(siteHost, "GET", "/api/console/ext/summary");
+      // 401 = 站点活着、只是会话过期 —— 链路本身是通的，不能报成「断了」。
+      const expired = r && r.status === 401;
+      add("① 站点后端（协作网关）", r,
+        "确认 StelarithServer 在跑，且面板经 /admin/console 同源打开", expired ? true : undefined);
+      if (expired) out[out.length - 1].detail += "（会话过期：需重新登录，链路本身正常）";
+    }
+
+    // ② 站点 → CIMS 客户端代理（服务端用 node:http 覆写租户 Host）
+    if (!siteHost) skip("② 站点 → CIMS 代理", "无站点地址");
+    else {
+      const r = await API.rawRequest(siteHost, "GET", "/api/console/cims/class/device-status");
+      add("② 站点 → CIMS 代理（租户 Host）", r,
+        "403 = 租户没识别出来：核对网站 .env 的 CIMS_BASE_DOMAIN / CONSOLE_TARGET_SLUG；500 = CIMS 后端已死");
+    }
+
+    // ③ CIMS management 直连
+    if (!S.mgmtHost) skip("③ CIMS management 直连", "未配置 management 地址");
+    else {
+      const r = await API.rawRequest(S.mgmtHost, "GET", "/class/device-status");
+      add("③ CIMS management 直连", r, "确认 CIMS 后端在跑（8097）；401 = 令牌过期需重新登录");
+    }
+
+    // ④ 命令通道健康度。
+    // ⚠️ 只能用**只读**的 /command/stats：`/command/queued` 是「取走」语义（读一次就把命令
+    //    标记为 delivered，等客户端 ack）。拿它当探针会把真实命令吃掉——教室里那条广播
+    //    从此再也不会播，而且两边都不报错。这正是本页存在的意义：诊断本身不能改变状态。
+    if (!uid) skip("④ 命令通道（队列健康度）", "未指定设备（本项需一台设备 uid）");
+    else if (!siteHost) skip("④ 命令通道（队列健康度）", "无站点地址");
+    else {
+      const r = await API.rawRequest(
+        siteHost, "GET", `/api/console/cims/v1/client/${encodeURIComponent(uid)}/command/stats`
+      );
+      let okOverride;
+      if (r && r.ok) {
+        try {
+          const j = JSON.parse(r.body);
+          const pending = Number(j.pending || 0);
+          const delivered = Number(j.delivered || 0);
+          const failed = Number(j.failed || 0);
+          // 持久 pending = 设备根本没在轮询；delivered 不 done = 取走了但执行后没 ack。
+          okOverride = pending === 0 && failed === 0;
+          r.body =
+            `待取 ${pending} · 已取未确认 ${delivered} · 失败 ${failed} · 累计 ${j.total || 0}` +
+            (pending > 0 ? "（设备未轮询：插件没跑 / 设备离线）" : "") +
+            (delivered > 0 && pending === 0 ? "（有命令取走未确认：执行报错或 ack 链路断）" : "") +
+            (j.oldest_pending_at ? ` · 最老待取 ${String(j.oldest_pending_at).slice(0, 19)}` : "");
+        } catch (_) { /* 非 JSON：保留原文 */ }
+      }
+      add("④ 命令通道（队列健康度）", r,
+        "404 = 后端版本过旧（缺 /command/stats 只读接口）→ 需重启 CIMS 后端", okOverride);
+    }
+
+    // ⑤ 扩展网关 · VNC 会话回执通道
+    if (!siteHost) skip("⑤ 扩展网关（VNC 回执）", "无站点地址");
+    else {
+      const p = "/api/console/ext/vnc-session" + (uid ? "?uid=" + encodeURIComponent(uid) : "");
+      const r = await API.rawRequest(siteHost, "GET", p);
+      // 200 + {session:null} = 通道在、暂无会话，属正常，不是故障。
+      add("⑤ 扩展网关（VNC 回执通道）", r, "确认站点在跑；404 = 站点版本过旧（缺该路径）");
+    }
+
+    // ⑥ 校园点歌站（可选）
+    if (!S.voicehubHost) skip("⑥ 校园点歌站（可选）", "未配置点歌站地址");
+    else {
+      const r = await API.rawRequest(S.voicehubHost, "GET", "/api/open/songs?limit=1&played=false");
+      // 未带 x-api-key 时 401/403 只说明「站活着但没带 key」→ 通道可达。
+      const reachable = r && (r.ok || r.status === 401 || r.status === 403);
+      add("⑥ 校园点歌站（可选）", r, "确认点歌站地址与 x-api-key（见「设置」）", reachable ? true : undefined);
+    }
+    return out;
+  }
+
+  /** 把探针结果渲染成一行行标记（✓ 通 / ✗ 不通 / • 跳过）。 */
+  function renderProbeRows(items) {
+    return items
+      .map((it) => {
+        const mark = it.ok === null ? "•" : it.ok ? "✓" : "✗";
+        const cls = it.ok === null ? "muted" : it.ok ? "ok" : "warn";
+        return `<div class="row" style="gap:8px;align-items:flex-start;margin:4px 0">
+          <span class="tag ${cls}" style="min-width:22px;text-align:center">${mark}</span>
+          <span style="flex:1;font-size:13px">
+            <b>${esc(it.label)}</b>
+            <span class="muted"> · ${it.ms ? it.ms + "ms" : "—"}</span><br/>
+            <span class="muted" style="font-size:12px">${esc(it.detail)}</span>
+            ${it.hint ? `<br/><span class="warn" style="font-size:12px">→ ${esc(it.hint)}</span>` : ""}
+          </span>
+        </div>`;
+      })
+      .join("");
+  }
+
+  /** 功能级自检：在分段探针之上，补「拿到数据后是否合理」的判断。 */
+  async function runSelfTest(uid) {
+    const items = [];
+    const chain = await probeChain(uid);
+    for (const c of chain) items.push(c);
+
+    // 权限下发（内嵌态才有服务端快照）
+    if (!PERM.embedded) {
+      items.push({ label: "权限下发", ok: null, ms: 0, detail: "独立打开面板（非内嵌），无服务端权限快照", hint: "" });
+    } else {
+      items.push({
+        label: "权限下发", ok: true, ms: 0,
+        detail: `角色 ${PERM.roleLabel || PERM.role || "—"}${PERM.levelLabel ? " · " + PERM.levelLabel : ""}` +
+          ` · 设备档 ${[PERM.control && "控制", PERM.remote && "远程", PERM.manage && "管理"].filter(Boolean).join("/") || "仅查看"}`,
+        hint: "",
+      });
+    }
+
+    // 设备清单与心跳
+    try {
+      const st = await API.deviceStatus();
+      const ds = (st && st.devices) || [];
+      const on = ds.filter((d) => d.online).length;
+      items.push({
+        label: "设备清单与心跳", ok: ds.length > 0, ms: 0,
+        detail: ds.length ? `${ds.length} 台，在线 ${on} 台` : "0 台（CIMS 侧未注册设备 / 未绑班 / 心跳未上报）",
+        hint: ds.length ? "" : "在 CIMS 建档设备并绑定班级；确认教室端插件心跳在跑",
+      });
+      if (uid) {
+        const d = ds.find((x) => x.id === uid);
+        items.push({
+          label: "目标设备在线", ok: !!(d && d.online), ms: 0,
+          detail: d ? `${d.last || "无心跳"} · ${d.online ? "在线" : "离线"}` : "该设备不在本账户列表",
+          hint: !d ? "确认 uid 拼写与所属账户" : "离线设备收不到指令（命令会留在队列里）",
+        });
+      }
+    } catch (e) {
+      items.push({ label: "设备清单与心跳", ok: false, ms: 0, detail: String((e && e.message) || e), hint: "见 ①③ 段探测结论" });
+    }
+
+    // 审计链
+    try {
+      const v = await API.auditVerify();
+      items.push({
+        label: "审计链完整性", ok: !!(v && v.ok), ms: 0,
+        detail: !v ? "无返回"
+          : v.ok ? `链完整（校验 ${v.checked} 行${v.legacyRows ? `，跳过 ${v.legacyRows} 条无哈希旧记录` : ""}，档位 ${v.mode}）`
+          : `第一处断裂：第 ${v.firstBadId} 行 —— ${v.problem || "未知"}`,
+        hint: v && !v.ok ? "历史裁剪属正常；若从未裁剪却断链，需查库是否被人改过" : "",
+      });
+    } catch (e) {
+      items.push({ label: "审计链完整性", ok: null, ms: 0, detail: "站点未提供该项：" + ((e && e.message) || e), hint: "" });
+    }
+    return items;
+  }
+
+  // ============ 远程控制 / 媒体通道配置（服务端持久化）============
+  //
+  // 为什么这些开关必须存在服务端：它们**决定教室端行为**（走 P2P 还是经服务器转发、
+  // 压缩到什么码率、录像留几天）。localStorage 是「每台电脑各存一份」—— 运维在 A 机
+  // 改完，B 机登录面板看到的还是旧策略，两边下发不一致，出问题只能靠猜。
+  //
+  // 关于「尽量 P2P」：摄像头画面 / 录像回看是**高带宽**负载。若全部经服务器中转，
+  // 几间教室同时被观看就能把服务器上行打满。P2P（WebRTC）让画面在设备之间直连，
+  // 服务器只承担信令；直连打不通时再用 ICE 里的 TURN 兜底转发 —— 这是 media_mode
+  // 默认取 p2p 的原因。
+  const MEDIA_DEFAULTS = {
+    media_mode: "p2p",
+    media_codec: "h264",
+    media_scale: 1280,
+    media_max_bitrate_kbps: 2000,
+    media_snapshot_interval: 60,
+    media_retention_days: 7,
+    media_ice_servers: "",
+    vnc_wait_seconds: 30,
+    vnc_require_token: true,
+    dev_verbose: false,
+    dev_request_timeout_ms: 8000,
+  };
+  /** 取配置项：服务端没有/为空时回退到默认值（保证表单永远有可编辑的初值）。 */
+  const pick = (cfg, k) => {
+    const v = cfg ? cfg[k] : undefined;
+    return v === undefined || v === null || v === "" ? MEDIA_DEFAULTS[k] : v;
+  };
+
+  function mediaConfigCard(cfg) {
+    const sel = (v) => (pick(cfg, "media_mode") === v ? "selected" : "");
+    return `
+    <div class="card"><h3>远程控制（VNC）</h3>
+      <div class="row"><span class="muted" style="width:120px">noVNC 页面</span>
+        <input id="st-novnc" value="${esc(API.state.noVncUrl)}" style="width:340px" placeholder="https://noc.example.edu/novnc/vnc.html"/></div>
+      <div class="row"><span class="muted" style="width:120px">等待回执(秒)</span>
+        <input id="st-vncwait" type="number" min="5" max="180" value="${esc(pick(cfg, "vnc_wait_seconds"))}" style="width:100px"/>
+        <label class="row"><input type="checkbox" id="st-vnctoken" ${pick(cfg, "vnc_require_token") ? "checked" : ""}/> 要求会话级令牌</label>
+      </div>
+      <p class="muted">「远程控制」经 CIMS 通知 → 设备本地代理<b>按需启动 VNC</b> → 面板内嵌 noVNC。地址由部署方提供（需可达设备的 websockify，令牌鉴权）。<b>前置条件：代理必须跑在「用户登录后的交互式会话」里</b> —— 以系统服务方式跑在会话 0（无桌面）时，VNC 起来了也看不到画面。</p>
+    </div>
+
+    <div class="card"><h3>摄像头 / 录像通道</h3>
+      <div class="row"><span class="muted" style="width:120px">传输模式</span>
+        <select id="st-mediamode">
+          <option value="p2p" ${sel("p2p")}>P2P 直连（推荐：高带宽在设备之间走，不过服务器）</option>
+          <option value="relay" ${sel("relay")}>经服务器转发（P2P 打不通时的兜底）</option>
+          <option value="off" ${sel("off")}>关闭（不使用摄像头 / 录像）</option>
+        </select></div>
+      <div class="row"><span class="muted" style="width:120px">ICE 服务器</span>
+        <input id="st-mediaice" value="${esc(pick(cfg, "media_ice_servers"))}" style="width:340px" placeholder="stun:stun.example.edu:3478,turn:turn.example.edu:3478"/></div>
+      <div class="row">
+        <span class="muted" style="width:120px">编码 / 最长边</span>
+        <select id="st-mediacodec" style="width:120px">
+          <option value="h264" ${pick(cfg, "media_codec") === "h264" ? "selected" : ""}>H.264</option>
+          <option value="vp8" ${pick(cfg, "media_codec") === "vp8" ? "selected" : ""}>VP8</option>
+          <option value="av1" ${pick(cfg, "media_codec") === "av1" ? "selected" : ""}>AV1（更省带宽，更吃算力）</option>
+        </select>
+        <input id="st-mediascale" type="number" min="320" max="3840" step="160" value="${esc(pick(cfg, "media_scale"))}" style="width:100px"/>
+        <span class="muted">px</span>
+      </div>
+      <div class="row">
+        <span class="muted" style="width:120px">码率上限</span>
+        <input id="st-mediabitrate" type="number" min="200" max="20000" step="100" value="${esc(pick(cfg, "media_max_bitrate_kbps"))}" style="width:110px"/>
+        <span class="muted">kbps · 抓拍间隔</span>
+        <input id="st-mediasnap" type="number" min="5" max="3600" step="5" value="${esc(pick(cfg, "media_snapshot_interval"))}" style="width:100px"/>
+        <span class="muted">秒 · 录像保留</span>
+        <input id="st-mediaret" type="number" min="0" max="365" value="${esc(pick(cfg, "media_retention_days"))}" style="width:80px"/>
+        <span class="muted">天</span>
+      </div>
+      <p class="muted">画面与录像属高带宽负载：默认 <b>P2P 直连</b>（WebRTC），服务器只做信令；直连不通时按 ICE 里的 TURN 兜底转发。压缩参数是「看得清」与「占带宽」的取舍 —— 720p@2Mbps 足够看清教室纪律，再高对判读没有帮助。录像保留 <b>0 = 不落盘</b>。</p>
+    </div>
+
+    <div class="card"><h3>开发者开关</h3>
+      <div class="row"><span class="muted" style="width:120px">详细日志</span>
+        <label class="row"><input type="checkbox" id="st-devverbose" ${pick(cfg, "dev_verbose") ? "checked" : ""}/> 面板打印每段链路耗时</label>
+        <span class="muted" style="width:80px;text-align:right">请求超时</span>
+        <input id="st-devtimeout" type="number" min="2000" max="60000" step="1000" value="${esc(pick(cfg, "dev_request_timeout_ms"))}" style="width:100px"/>
+        <span class="muted">ms</span>
+      </div>
+    </div>
+    <div class="card"><div class="row">
+      <button class="primary" data-act="save-media" data-need="manage">保存控制 / 媒体配置</button>
+      <span class="muted">保存到服务端，全校生效（需设备管理权限）。</span>
+    </div></div>`;
+  }
+
+  // ============ 开发者选项 ============
+  //
+  // 这一页存在的理由：面板上「某个功能不工作」时，断在哪一段界面上看不出来。这里给三件工具：
+  //   ① 链路探针：逐段各自给结论（把「没反应」拆成「断在第 N 段」）；
+  //   ② 原始请求控制台：任意 host/方法/路径/请求体，**原样**显示状态码与响应体
+  //      （用来回答"是 404 还是 403，还是 200 里包着 error"——被吞掉的错误最难查）；
+  //   ③ 诊断导出：把状态/权限/探测结果打包成 JSON，便于贴给开发。
+  views.dev = async () => {
+    const S = API.state || {};
+    const hosts = [
+      ["同源站点", S.siteHost || (typeof location !== "undefined" ? location.origin : "")],
+      ["management", S.mgmtHost || ""],
+      ["client(8096)", S.clientHost || ""],
+      ["ext 网关", S.extHost || ""],
+      ["voicehub", S.voicehubHost || ""],
+    ].filter(([, v]) => v);
+    return `
+    <div class="card"><h3>链路探针（六段分段自检）</h3>
+      <p class="muted">对每一段各发一个最小只读请求，逐段报结论与耗时。面板上「没反应」的功能，
+      断点在这里现形：<b>✓ 通 / ✗ 不通 / • 跳过（未配置，不等于故障）</b>。</p>
+      <div class="row">
+        <span class="muted" style="width:88px">目标设备</span>
+        <input id="dev-uid" placeholder="设备 uid（第 ④⑤ 段需要，可留空）" style="width:280px"/>
+        <button class="primary" data-act="dev-probe">开始探测</button>
+      </div>
+      <div id="dev-probe-out" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card"><h3>原始请求控制台</h3>
+      <p class="muted">任意 host / 方法 / 路径 / 请求体，<b>原样</b>显示状态码、耗时与响应体。
+      用来回答「到底是 404、还是 403，还是 200 里包着 error」—— 被上层吞掉的错误响应是最难查的一类问题。</p>
+      <div class="row">
+        <span class="muted" style="width:88px">目标</span>
+        <select id="dev-host" style="width:260px">
+          ${hosts.map(([n, v]) => `<option value="${esc(v)}">${esc(n)} · ${esc(v)}</option>`).join("")}
+        </select>
+        <select id="dev-method" style="width:100px">
+          <option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option>
+        </select>
+      </div>
+      <div class="row"><input id="dev-path" value="/class/device-status" style="width:100%" placeholder="/class/device-status"/></div>
+      <textarea id="dev-body" placeholder='请求体（JSON；GET 时忽略）&#10;{"MessageContent":"测试"}' style="min-height:56px"></textarea>
+      <div class="row"><button class="primary" data-act="dev-send">发送</button>
+        <span class="muted">自动带当前登录令牌（Authorization: Bearer）。</span></div>
+      <pre id="dev-send-out" class="muted" style="white-space:pre-wrap;word-break:break-all;max-height:300px;overflow:auto;font-size:12px"></pre>
+    </div>
+
+    <div class="card"><h3>诊断导出</h3>
+      <p class="muted">把面板状态、权限、各段探测结果打包成一段 JSON，便于贴给开发排查。<b>不含令牌明文</b>。</p>
+      <div class="row">
+        <button data-act="dev-export">生成诊断包</button>
+        <button data-act="dev-copy">复制</button>
+        <span id="dev-export-note" class="muted"></span>
+      </div>
+      <textarea id="dev-export" class="muted" style="min-height:120px;font-size:12px" readonly placeholder="点「生成诊断包」"></textarea>
+    </div>`;
+  };
+
+  // ============ 测试页 ============
+  //
+  // 与「开发者选项」的分工：那页给**原始工具**（任意请求、任意路径），本页给**结论** ——
+  // 一键把该跑的都跑一遍，每项 ✓/✗/• 带耗时，失败直接给出「改哪里」。
+  // 定位：每次改动 / 部署后点一下，30 秒内知道有没有打坏东西。
+  views.test = async () => `
+    <div class="card"><h3>自检（一键）</h3>
+      <p class="muted">覆盖：六段链路（站点网关 / CIMS 代理 / management / 命令通道 / 扩展网关 / 点歌站）
+      → 权限下发 → 设备心跳 → 审计链。每项给结论与耗时；✗ 项直接给出「改哪里」。</p>
+      <div class="row">
+        <span class="muted" style="width:88px">目标设备</span>
+        <input id="test-uid" placeholder="设备 uid（可留空，跳过与设备相关的项）" style="width:280px"/>
+        <button class="primary" data-act="test-run">运行自检</button>
+        <span id="test-summary" class="muted"></span>
+      </div>
+      <div id="test-out" style="margin-top:8px"></div>
+    </div>`;
+
+  // ============ 摄像头 / 媒体库（抓拍 · 录像 · 调取）============
+  //
+  // 这个视图要回答的不是"按钮点了有没有反应"，而是「产物在哪、能不能取回」。
+  // 教室端把图片/视频存在**本机**（C:/ProgramData/Stelarith/media），面板取回只有两条路：
+  //   · 直连（默认）：向教室机的媒体服务直接拉，不经服务器 —— 这正是"高带宽操作走 P2P"的落点；
+  //   · 服务器中转：**未实现**（站点无法反连教室机的 127.0.0.1，而且大文件穿站点会打死上行）。
+  // 因此取不回时**必须给出可照做的原因**，而不是一句"失败" ——
+  // "连不上"这三个字在校内网/公网/混合内容三种场景下的处置完全不同。
+  const mediaKindOf = () => {
+    const el = document.querySelector('input[name="md-kind"]:checked');
+    return (el && el.value) || "snapshots";
+  };
+  const numOf = (sel) => {
+    const el = $(sel);
+    const v = Number(el && el.value);
+    return Number.isFinite(v) && v > 0 ? v : undefined;
+  };
+  const mdUid = () => {
+    const el = $("#md-uid");
+    return el && el.value ? el.value.trim() : "";
+  };
+  const fmtBytes = (n) => {
+    const b = Number(n) || 0;
+    if (b < 1024) return b + " B";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+    if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + " MB";
+    return (b / 1024 / 1024 / 1024).toFixed(2) + " GB";
+  };
+  const sessionHint = (session) => (session
+    ? '<div class="muted" style="font-size:12px;margin-top:4px">直连会话：' + esc(session.ip + ":" + session.port)
+      + (session.at ? "（登记于 " + new Date(session.at).toLocaleTimeString() + "）" : "") + "</div>"
+    : '<div class="muted" style="font-size:12px;margin-top:4px">未登记的直连会话：先执行一次「抓拍」或「开始录像」，'
+      + "教室端代理会在启动媒体服务后回报地址；若一直为空，检查代理环境变量 STELARITH_EXT_URL / STELARITH_EXT_SECRET。</div>");
+
+  views.media = async () => `
+    <div class="card"><h3>抓拍与录像（教室端执行）</h3>
+      <p class="muted">抓拍/录像由教室端的本地代理执行（只有设备侧有摄像头访问权），产物存在教室机本地。
+      面板通过**局域网直连**取回，不经服务器中转 —— 录像这种大字节数据走中转会把站点上行打死。</p>
+      <div class="row">
+        <span class="muted" style="width:88px">目标设备</span>
+        <input id="md-uid" placeholder="设备 uid（必填）" style="width:240px"/>
+        <button class="primary" data-act="md-snap" data-need="remote">抓拍一张</button>
+        <button data-act="md-rec-start" data-need="remote">开始录像</button>
+        <button data-act="md-rec-stop" data-need="remote">停止录像</button>
+        <button data-act="md-cams" data-need="remote">列出摄像头</button>
+      </div>
+      <div class="row">
+        <span class="muted" style="width:88px">压缩参数</span>
+        <input id="md-bitrate" type="number" min="200" max="20000" value="1500" style="width:96px" title="录像码率"/>
+        <input id="md-scale" type="number" min="160" max="3840" value="1280" style="width:96px" title="画面最长边"/>
+        <input id="md-seg" type="number" min="15" max="3600" value="300" style="width:96px" title="分段长度（秒）"/>
+        <span class="muted">码率 kbps · 最长边 px · 分段秒。录像**必须分段**：单文件长写一断电就整段作废。</span>
+      </div>
+      <div id="md-msg" class="muted" style="margin-top:6px"></div>
+      <p class="muted" style="font-size:12px">说明：抓拍/录像指令**没有同步返回值** —— 下发成功只代表指令进了队列，
+      产物要靠下面的「媒体库」去取。这不是缺陷，是链路形态（面板 → CIMS 队列 → 插件门控 → 本机代理）。</p>
+    </div>
+    <div class="card"><h3>媒体库（直连教室机取回）</h3>
+      <div class="row">
+        <button data-act="md-refresh">刷新列表</button>
+        <button data-act="md-session">检查直连会话</button>
+        <label class="row" style="gap:4px"><input type="radio" name="md-kind" value="snapshots" checked/> 快照</label>
+        <label class="row" style="gap:4px"><input type="radio" name="md-kind" value="recordings"/> 录像</label>
+        <span id="md-count" class="muted"></span>
+      </div>
+      <div id="md-list" style="margin-top:8px"><p class="muted">点「刷新列表」从教室机取回清单。</p></div>
+    </div>`;
+
+  views.settings = async () => {
+    // 控制/媒体/实验特性这些配置存在**服务端**（console_meta KV），不落 localStorage：
+    // 它们决定教室端行为，必须全校一致（见 mediaConfigCard 注释）。
+    const cfg = await API.getSettings();
+    return `
     <div class="card"><h3>连接设置</h3>
       <div class="row"><span class="muted" style="width:80px">后端地址</span>
         <input id="st-host" value="${esc(API.state.mgmtHost)}" style="width:340px"/></div>
@@ -1294,18 +1719,15 @@
       </div>
       <p class="muted">API 契约见 API.md：直接对接 CIMS 原生 management/client 端口；协作/上报类走可选扩展网关（extHost）或同源网站。</p>
     </div>
-    <div class="card"><h3>远程控制（noVNC）</h3>
-      <div class="row"><span class="muted" style="width:80px">noVNC 地址</span>
-        <input id="st-novnc" value="${esc(API.state.noVncUrl)}" style="width:340px" placeholder="https://noc.example.edu/novnc/vnc.html"/></div>
-      <p class="muted">「远程控制」经 CIMS 通知→设备本地代理按需启 VNC 后，面板在此 noVNC 地址内嵌观看/操作。地址由部署方提供（需可达设备 websockify，令牌鉴权）。</p>
-    </div>
     <div class="card"><h3>校园点歌联动（voicehub）</h3>
       <div class="row"><span class="muted" style="width:80px">点歌站地址</span>
         <input id="st-vhost" value="${esc(API.state.voicehubHost)}" style="width:340px" placeholder="https://voicehub.example.edu"/></div>
       <div class="row"><span class="muted" style="width:80px">API Key</span>
         <input id="st-vkey" value="${esc(API.state.voicehubKey)}" style="width:340px" placeholder="vhub_..."/></div>
       <p class="muted">用于「校园点歌」视图拉取队列 / 点歌。需在 voicehub 后台生成具备 songs:read 与 songs:request 权限的 API Key。</p>
-    </div>`;
+    </div>
+    ${mediaConfigCard(cfg)}`;
+  };
 
   // ============ 定时广播（P2）============
   let schedEditId = null;
@@ -1746,6 +2168,9 @@
       else if (act === "send-notice") {
         const t = $("#nt-title").value.trim(); if (!t) return toast("请输入标题");
         const c = $("#nt-content") ? $("#nt-content").value.trim() : "";
+        // 显示时长（秒）：留空 = 不指定（教室端按字数自适应）。显式给 0 也等于不指定。
+        const durEl = $("#nt-duration");
+        const dur = durEl && durEl.value.trim() !== "" ? Number(durEl.value) : undefined;
         // 勾选的班级 = 定向推送目标（多选）。为空则交给「范围」决定。
         const cls = Array.from(view.querySelectorAll("input.nt-cls:checked")).map((x) => x.value);
         try {
@@ -1755,16 +2180,19 @@
           //     且该处注释明确写着「broadcast 内部已记，避免审计双份」。
           // 前端再记一次，会让每次广播在操作日志里出现三条记录，
           // 真正的失败原因反而被淹掉（2026-09-17 实测真实数据确认）。
-          const r = await API.sendNotice(t, $("#nt-scope").value, cls, c);
+          const r = await API.sendNotice(t, $("#nt-scope").value, cls, c, dur);
           const b = r && r.broadcast;
+          // 时长回显：让「设了 30 秒」和「忘了设」在结果通知里一眼可分。
+          const durNote =
+            Number.isFinite(dur) && dur > 0 ? `（大屏显示 ${dur} 秒）` : "（时长自适应）";
           if (b && b.deduped) {
             toast("内容与 30 秒内的上一条完全相同，已自动去重（未重复推送）");
           } else if (b && b.ok === false) {
             toast("未送达：" + (b.error || "未知原因"));
           } else if (b) {
-            toast(`通知已发布，送达 ${b.delivered}/${b.total} 台设备`);
+            toast(`通知已发布${durNote}，送达 ${b.delivered}/${b.total} 台设备`);
           } else {
-            toast("通知已发布");
+            toast("通知已发布" + durNote);
           }
         } catch (e) {
           toast("发布失败：" + (e && e.message ? e.message : e));
@@ -1878,35 +2306,286 @@
         setConn(!API.state.demo && !!API.state.host, API.state.demo ? "演示模式" : "");
         toast("设置已保存"); go("dashboard");
       }
+      else if (act === "save-media") {
+        // 媒体/远程配置写**服务端**（全校一致）；noVNC 地址同时写本地 —— 面板自己要
+        // 用它拼 iframe URL，两边必须一致，否则会出现"服务端配了、面板却用旧值"。
+        const num = (id, dflt) => {
+          const v = Number(($(id) || {}).value);
+          return Number.isFinite(v) ? v : dflt;
+        };
+        const patch = {
+          media_mode: $("#st-mediamode").value,
+          media_codec: $("#st-mediacodec").value,
+          media_scale: num("#st-mediascale", MEDIA_DEFAULTS.media_scale),
+          media_max_bitrate_kbps: num("#st-mediabitrate", MEDIA_DEFAULTS.media_max_bitrate_kbps),
+          media_snapshot_interval: num("#st-mediasnap", MEDIA_DEFAULTS.media_snapshot_interval),
+          media_retention_days: num("#st-mediaret", MEDIA_DEFAULTS.media_retention_days),
+          media_ice_servers: $("#st-mediaice").value.trim(),
+          vnc_wait_seconds: num("#st-vncwait", MEDIA_DEFAULTS.vnc_wait_seconds),
+          vnc_require_token: $("#st-vnctoken").checked,
+          dev_verbose: $("#st-devverbose").checked,
+          dev_request_timeout_ms: num("#st-devtimeout", MEDIA_DEFAULTS.dev_request_timeout_ms),
+          novnc_url: $("#st-novnc").value.trim(),
+        };
+        API.setNoVncUrl(patch.novnc_url);
+        try {
+          const saved = await API.saveSettings(patch);
+          // 写失败必须显式报错：配置没落库而界面显示"已保存"是最坏的一种假成功。
+          toast(`控制/媒体配置已保存（传输模式 ${saved.media_mode || patch.media_mode} · ${patch.media_codec} ≤${patch.media_max_bitrate_kbps}kbps）`);
+          API.audit("settings.media", "console",
+            `传输模式 ${patch.media_mode} / ${patch.media_codec} / ≤${patch.media_max_bitrate_kbps}kbps / 录像保留 ${patch.media_retention_days} 天`);
+        } catch (e) {
+          return toast("保存失败（未生效）：" + ((e && e.message) || e));
+        }
+        go("settings");
+      }
+      else if (act === "dev-probe") {
+        const box = $("#dev-probe-out");
+        const uidEl = $("#dev-uid");
+        const uid = uidEl && uidEl.value ? uidEl.value.trim() : "";
+        if (box) box.innerHTML = `<p class="muted">探测中…（逐段发最小请求）</p>`;
+        const items = await probeChain(uid);
+        if (box) box.innerHTML = renderProbeRows(items);
+      }
+      else if (act === "dev-send") {
+        const host = $("#dev-host").value;
+        const method = $("#dev-method").value;
+        const path = $("#dev-path").value.trim();
+        const out = $("#dev-send-out");
+        if (!path) return toast("请输入路径");
+        if (out) out.textContent = "请求中…";
+        const r = await API.rawRequest(host, method, path, $("#dev-body").value);
+        if (out) {
+          let pretty = r.body;
+          try { pretty = JSON.stringify(JSON.parse(r.body), null, 2); } catch (_) { /* 非 JSON 原样显示 */ }
+          out.textContent =
+            `${method} ${host}${path}\n` +
+            `HTTP ${r.status}${r.networkError ? "（网络层失败）" : ""} · ${r.ms}ms · ${r.ctype || "无 content-type"}\n` +
+            "──────\n" + pretty;
+        }
+      }
+      else if (act === "dev-export" || act === "dev-copy") {
+        const ta = $("#dev-export");
+        const note = $("#dev-export-note");
+        // 复制但还没生成 → 先生成再复制（少一次点击）。
+        if (act === "dev-export" || !ta || !ta.value) {
+          const uidEl = $("#dev-uid");
+          const uid = uidEl && uidEl.value ? uidEl.value.trim() : "";
+          const items = await probeChain(uid);
+          const S = API.state || {};
+          const pack = {
+            at: new Date().toISOString(),
+            url: typeof location !== "undefined" ? location.href : "",
+            ua: typeof navigator !== "undefined" ? navigator.userAgent : "",
+            // 刻意不导出令牌明文：只报「有没有配」，避免诊断包本身变成凭据泄露渠道。
+            conn: {
+              siteHost: S.siteHost || "", mgmtHost: S.mgmtHost || "", clientHost: S.clientHost || "",
+              extHost: S.extHost || "", voicehubHost: S.voicehubHost || "",
+              demo: !!S.demo, hasToken: !!S.token, hasTaskSecret: !!S.taskSecret, noVncUrl: S.noVncUrl || "",
+            },
+            perm: {
+              role: PERM.role, roleLabel: PERM.roleLabel, levelLabel: PERM.levelLabel,
+              embedded: !!PERM.embedded, control: !!PERM.control, remote: !!PERM.remote,
+              manage: !!PERM.manage, issue: !!PERM.issue, readonly: !!PERM.readonly,
+              bscopes: PERM.bscopes || [],
+            },
+            probe: items,
+          };
+          if (ta) ta.value = JSON.stringify(pack, null, 2);
+          if (note) note.textContent = `已生成（${items.length} 项探测）`;
+          if (act === "dev-export") return;
+        }
+        const txt = ta ? ta.value : "";
+        if (!txt) return toast("请先生成诊断包");
+        try {
+          await navigator.clipboard.writeText(txt);
+          if (note) note.textContent = "已复制到剪贴板";
+          toast("诊断包已复制");
+        } catch (_) {
+          ta.select();
+          toast("复制失败，已全选，请手动 Ctrl+C");
+        }
+      }
+      else if (act === "test-run") {
+        const box = $("#test-out"), sum = $("#test-summary");
+        if (box) box.innerHTML = `<p class="muted">自检中…（逐段探测 + 数据合理性，约需数秒）</p>`;
+        const uidEl = $("#test-uid");
+        const uid = uidEl && uidEl.value ? uidEl.value.trim() : "";
+        const items = await runSelfTest(uid);
+        const pass = items.filter((i) => i.ok === true).length;
+        const fail = items.filter((i) => i.ok === false).length;
+        const skipN = items.filter((i) => i.ok === null).length;
+        if (box) box.innerHTML = renderProbeRows(items);
+        if (sum) sum.textContent = `通过 ${pass} · 失败 ${fail} · 跳过 ${skipN}`;
+        toast(fail ? `自检完成：${fail} 项失败` : "自检完成：无失败项");
+      }
+      else if (act === "md-snap" || act === "md-rec-start" || act === "md-rec-stop") {
+        const uid = mdUid();
+        if (!uid) return toast("请先填设备 uid");
+        const msg = $("#md-msg");
+        const label = { "md-snap": "抓拍", "md-rec-start": "开始录像", "md-rec-stop": "停止录像" }[act];
+        const extra = {
+          bitrate_kbps: numOf("#md-bitrate"),
+          scale: numOf("#md-scale"),
+          segment_seconds: numOf("#md-seg"),
+        };
+        if (msg) msg.textContent = "正在下发「" + label + "」…";
+        let r;
+        if (act === "md-snap") r = await API.cameraSnapshot(uid, "class", extra);
+        else if (act === "md-rec-start") r = await API.recordStart(uid, "class", extra);
+        else r = await API.recordStop(uid, "class");
+        if (r && r.ok === false) {
+          // 远端可能用 HTTP 200 + {status:error} 表达失败 → 必须读回执体，别假装已下发。
+          if (msg) msg.textContent = "指令未被受理：" + (r.reason || "未知原因");
+          return toast("指令未下发");
+        }
+        API.audit(
+          "media." + act.slice(3), uid,
+          label + "（码率 " + (extra.bitrate_kbps || "默认") + "k / 最长边 " + (extra.scale || "默认") + "px）"
+        );
+        if (msg) msg.textContent = "已下发「" + label + "」。教室端执行需数秒，产物请用下方「媒体库 → 刷新列表」取回。";
+        toast("已下发：" + label);
+      }
+      else if (act === "md-cams") {
+        const uid = mdUid();
+        if (!uid) return toast("请先填设备 uid");
+        const msg = $("#md-msg");
+        if (msg) msg.textContent = "正在下发「列出摄像头」…";
+        const r = await API.cameraList(uid, "class");
+        if (r && r.ok === false) {
+          if (msg) msg.textContent = "指令未被受理：" + (r.reason || "未知原因");
+          return toast("指令未下发");
+        }
+        if (msg) {
+          msg.textContent = "已下发。设备侧枚举结果会落到教室端代理日志（agent.status.log）与通知；"
+            + "若设备侧一直枚举为空，多半是代理跑在会话 0（SYSTEM 服务）看不到摄像头。";
+        }
+        toast("已下发：列出摄像头");
+      }
+      else if (act === "md-refresh" || act === "md-session") {
+        const uid = mdUid();
+        const listEl = $("#md-list");
+        const cnt = $("#md-count");
+        if (!uid) {
+          if (listEl) listEl.innerHTML = '<p class="warn">请先填设备 uid。</p>';
+          return toast("请先填设备 uid");
+        }
+        if (listEl) listEl.innerHTML = '<p class="muted">正在取直连会话并向教室机拉清单…</p>';
+        const session = await API.deviceMediaSession(uid);
+        if (act === "md-session") {
+          // 只查会话：这一条就能判定"网关这一环通不通"，不必连带拉清单。
+          listEl.innerHTML = '<p class="muted">直连会话检查：</p>' + sessionHint(session)
+            + (session ? '<p class="muted" style="font-size:12px">会话有效 = 教室端代理已成功上报，网关这一段是通的。</p>' : "");
+          return;
+        }
+        const r = await API.mediaLibrary(session);
+        if (!r.ok) {
+          if (cnt) cnt.textContent = "";
+          listEl.innerHTML = '<p class="warn">' + esc(r.message) + "</p>" + sessionHint(session)
+            + '<p class="muted" style="font-size:12px">排障顺序：① 先点「检查直连会话」看有没有地址；'
+            + "② 有地址但连不上 → 用与教室机同网段的终端、或用 http 打开面板（HTTPS 页面不能直连 HTTP 教室机）；"
+            + "③ 都不行 → 到该教室机上直接看媒体目录里有没有文件。</p>";
+          return;
+        }
+        const kind = mediaKindOf();
+        const items = (r.items || []).filter((it) => it.kind === kind);
+        if (cnt) cnt.textContent = "共 " + items.length + " 个" + (kind === "recordings" ? "录像片段" : "快照");
+        if (!items.length) {
+          listEl.innerHTML = '<p class="muted">该类别下暂无文件。若刚下发过抓拍/录像，等几秒再刷新。</p>' + sessionHint(session);
+          return;
+        }
+        const rows = items
+          .slice()
+          .reverse()
+          .map((it) => {
+            const url = API.mediaUrl(r.base, r.token, it.kind, it.name);
+            const thumb = kind === "snapshots"
+              ? '<img src="' + url + '" loading="lazy" style="max-width:120px;max-height:68px;border-radius:4px;border:1px solid var(--line)"/>'
+              : '<span class="muted" style="font-size:12px">录像片段</span>';
+            return "<tr><td>" + thumb + '</td><td style="font-size:12px">' + esc(it.name) + "</td>"
+              + '<td class="muted" style="font-size:12px">' + fmtBytes(it.bytes) + "</td>"
+              + '<td class="muted" style="font-size:12px">' + (it.mtime ? new Date(it.mtime * 1000).toLocaleString() : "—") + "</td>"
+              + '<td><a href="' + url + '" target="_blank" rel="noopener" class="tag">打开</a> '
+              + '<button class="danger" data-act="md-del" data-kind="' + esc(it.kind) + '" data-name="' + esc(it.name) + '" data-need="remote">删除</button></td></tr>';
+          })
+          .join("");
+        listEl.innerHTML = '<table class="tbl"><thead><tr><th>预览</th><th>文件</th><th>大小</th><th>生成时间</th><th>操作</th></tr></thead>'
+          + "<tbody>" + rows + "</tbody></table>" + sessionHint(session);
+      }
+      else if (act === "md-del") {
+        const uid = mdUid();
+        const kind = el.dataset.kind || mediaKindOf();
+        const name = el.dataset.name || "";
+        if (!uid || !name) return toast("缺少设备或文件名");
+        if (!confirm("确认删除 " + kind + "/" + name + "？")) return;
+        const r = await API.mediaDelete(uid, kind, name, "class");
+        if (r && r.ok === false) return toast("删除指令未下发：" + (r.reason || ""));
+        API.audit("media.delete", uid, kind + "/" + name);
+        toast("已下发删除：" + name + "（教室端执行后刷新可见）");
+      }
       else if (act === "logout") {
         API.clearAuth(); $("#login-mask").classList.remove("hidden"); toast("已退出");
       }
-      else if (act === "remote-start") {
-        const uid = el.dataset.id;
-        try {
-          await API.deviceRemoteStart(uid, "class");
-          API.audit("remote.start", uid, "请求远程控制会话");
+      else if (act === "remote-start" || act === "remote-wait") {
+        // remote-wait = 不重发指令，只重新等待 30 秒（设备可能刚上线；重发会再写一条队列）。
+        const isRetry = act === "remote-wait";
+        const uid = el.dataset.id || (isRetry ? $("#vnc-name").textContent : "");
+        if (!uid) return toast("未知设备");
+        const note = $("#vnc-note"), diag = $("#vnc-diag"), retry = $("#vnc-retry");
+        if (retry) retry.classList.add("hidden");
+
+        if (!isRetry) {
+          try {
+            const r = await API.deviceRemoteStart(uid, "class");
+            API.audit("remote.start", uid, "请求远程控制会话");
+            // 远端可能用 200 + {status:"error"} 表达失败 → 回执体说明原因，别假装已下发。
+            toast(r && r.ok === false
+              ? "远程控制未受理：" + (r.reason || "未知原因")
+              : "已请求远程控制会话：" + uid);
+          } catch (e) { return toast("远程控制失败：" + ((e && e.message) || e)); }
           $("#vnc-name").textContent = uid;
           $("#vncbox").classList.remove("hidden");
           $("#vnc-frame").src = "about:blank";
-          $("#vnc-note").textContent = "已下发远程控制指令（CIMS 通知 → ClassIsland 插件 → 本地代理按需启动 VNC）。正在等待设备回报会话地址…";
-          toast("已请求远程控制会话：" + uid);
+          if (diag) { diag.classList.add("hidden"); diag.innerHTML = ""; }
+        }
 
-          // 轮询扩展网关的 VNC 会话回执（设备代理启动 VNC 后回报 ip/port/token）
-          const novnc = API.state.noVncUrl;
-          let session = null;
-          for (let i = 0; i < 20; i++) {
-            await new Promise((r) => setTimeout(r, 1500));
-            session = await API.deviceRemoteStatus(uid);
-            if (session && session.ip && session.port) break;
-          }
-          if (!session || !session.ip) {
-            $("#vnc-note").textContent = "指令已下发，但未收到设备会话回执。"
-              + (novnc ? " 可改用固定 noVNC 地址手动连接。" : " 请在「设置」配置 noVNC 地址，并确保扩展网关可达。")
-              + " 会话级令牌，结束即关，每次控制写审计。";
-          } else if (!novnc) {
-            $("#vnc-note").textContent = "已拿到设备会话（" + session.ip + ":" + session.port + "），但未配置 noVNC 地址。请在「设置」填写 noVNC 页面。";
-          } else {
+        // 轮询扩展网关的 VNC 会话回执（设备代理启动 VNC 后回报 ip/port/token）。
+        // 30 秒等待期**必须有进度**，否则界面看起来像卡死（本页最常见的抱怨）。
+        const novnc = API.state.noVncUrl;
+        const TOTAL = 20, STEP = 1500, SECS = (TOTAL * STEP) / 1000;
+        let session = null;
+        for (let i = 0; i < TOTAL; i++) {
+          if (note) note.textContent = `已下发远程控制指令（CIMS → 插件 → 本地代理按需启 VNC）。等待设备回报会话地址…（${Math.round(((i + 1) * STEP) / 1000)}/${SECS} 秒）`;
+          await new Promise((r) => setTimeout(r, STEP));
+          session = await API.deviceRemoteStatus(uid);
+          if (session && session.ip && session.port) break;
+        }
+
+        if (!session || !session.ip) {
+          // 超时不是「一句未收到回执」就完事 —— 逐环自查，让「断在哪」可见。
+          if (note) note.textContent = `指令已下发，但 ${SECS} 秒内未收到设备会话回执。下面逐条自查哪一环没通（可直接在本页重试等待，无需重发指令）：`;
+          if (retry) retry.classList.remove("hidden");
+          try {
+            const items = await API.vncDiagnose(uid);
+            if (diag) {
+              diag.classList.remove("hidden");
+              diag.innerHTML =
+                `<div class="muted" style="font-size:12px;margin-bottom:4px">VNC 链路自查（✓ 通 / ✗ 不通 / • 需人工确认）</div>` +
+                items
+                  .map((it) => {
+                    const mark = it.ok === null ? "•" : it.ok ? "✓" : "✗";
+                    const cls = it.ok === null ? "muted" : it.ok ? "ok" : "warn";
+                    return `<div class="row" style="gap:6px;align-items:flex-start;margin:3px 0">
+                      <span class="tag ${cls}" style="min-width:22px;text-align:center">${mark}</span>
+                      <span style="font-size:12px"><b>${esc(it.label)}</b>：<span class="muted">${esc(it.detail)}</span></span>
+                    </div>`;
+                  })
+                  .join("");
+            }
+          } catch (_) { /* 自查失败不覆盖主提示 */ }
+        } else if (!novnc) {
+          if (note) note.textContent = "已拿到设备会话（" + session.ip + ":" + session.port + "），但未配置 noVNC 地址。请在「设置」填写 noVNC 页面。";
+        } else {
           try {
             const u = new URL(novnc);
             u.searchParams.set("autoconnect", "true");
@@ -1915,13 +2594,16 @@
             if (session.token) u.searchParams.set("password", session.token);
             u.searchParams.set("path", "websockify");
             $("#vnc-frame").src = u.toString();
-            $("#vnc-note").textContent = "已连接设备 " + session.ip + ":" + session.port + "（令牌鉴权，结束即关，写审计）。";
+            if (note) note.textContent = "已连接设备 " + session.ip + ":" + session.port + "（令牌鉴权，结束即关，写审计）。";
+            if (diag) { diag.classList.add("hidden"); diag.innerHTML = ""; }
+            if (retry) retry.classList.add("hidden");
           } catch { $("#vnc-frame").src = novnc; }
-          }
-        } catch (e) { toast("远程控制失败：" + e.message); }
+        }
       }
       else if (act === "remote-stop") {
         try { await API.deviceRemoteStop($("#vnc-name").textContent); } catch (_) {}
+        const diag = $("#vnc-diag"); if (diag) { diag.classList.add("hidden"); diag.innerHTML = ""; }
+        const retry = $("#vnc-retry"); if (retry) retry.classList.add("hidden");
         $("#vncbox").classList.add("hidden");
         toast("会话已结束");
       }

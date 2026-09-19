@@ -1462,8 +1462,12 @@ export class ArchiveScene {
     const responsiveOpening = Boolean(cinematic) && this.container.closest<HTMLElement>("[data-layout]")?.dataset.layout === "opening";
     const openingAspect = responsiveOpening ? this.container.clientWidth / this.container.clientHeight / (16 / 9) : 1;
     const openingSpan = (value: number) => value / Math.min(1, openingAspect);
+    // 归档浏览取景：原版收敛到极远长焦（140 / fov≈3°），那是为 40 份高密
+    // 档案墙调优的。我们教程文档少、墙稀疏，3° 长焦下卡片只剩一两个角落、
+    // 大片空地面（用户反馈「卡片全跑下面去了」）。把浏览态距离收到更近的 72
+    // （引擎 detail 取景的参考距离），fov 相应变宽、卡片落入画面且可读。
     const distance = THREE.MathUtils.lerp(
-      THREE.MathUtils.lerp(28 + 7 * orbit, 140, settle),
+      THREE.MathUtils.lerp(28 + 7 * orbit, 72, settle),
       72,
       detail,
     );

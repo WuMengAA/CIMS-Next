@@ -151,6 +151,8 @@ export function resolveClassTargets(
  * @param opts.source  来源通道标签（"announcement" / "chat" / "notice" / "manual"）
  * @param opts.author  发起人显示名（留痕用）
  * @param opts.force   跳过去重窗口，强制重新下发
+ * @param opts.seconds 教室大屏显示时长（秒）。未传 = 不指定该字段，由 CIMS 默认值与
+ *                     教室端插件「按正文字数自适应」决定。显式 >0 时严格照用。
  */
 export async function broadcastToClassrooms(
 	title: string,
@@ -162,6 +164,7 @@ export async function broadcastToClassrooms(
 		source?: string;
 		author?: string;
 		force?: boolean;
+		seconds?: number;
 	} = {}
 ): Promise<BroadcastResult> {
 	const cleanTitle = (title || "").trim();
@@ -254,7 +257,14 @@ export async function broadcastToClassrooms(
 						"content-type": "application/json",
 						Authorization: `Bearer ${auth.token}`
 					},
-					body: JSON.stringify({ MessageContent: content ? `${cleanTitle}\n${content}` : cleanTitle }),
+					body: JSON.stringify({
+						MessageContent: content ? `${cleanTitle}\n${content}` : cleanTitle,
+						// 显示时长：只在显式指定时下发（0~3600，与 CIMS NotificationPayload 约束一致）。
+						// 不发该字段 = CIMS 取默认值 → 教室端插件按正文字数自适应（3~20s）。
+						...(typeof opts.seconds === "number" && opts.seconds > 0
+							? { DurationSeconds: Math.min(Math.max(opts.seconds, 0), 3600) }
+							: {})
+					}),
 					signal: AbortSignal.timeout(5000)
 				}
 			);
