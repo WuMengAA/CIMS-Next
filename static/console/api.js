@@ -141,7 +141,14 @@
   async function cims(path, opts, demoKey) {
     if (wantDemo()) return D[demoKey] ? D[demoKey]() : {};
     if (!canUseBackend()) {
-      markOffline("未连接后端：缺少后端地址或账户归属，请重新登录");
+      // 区分「没配地址」（真配置问题）与「地址在但账户归属空」——后者几乎总是
+      // CIMS 此刻不可达导致 accountId 没解析出来（getCimsAccount 返回 null），
+      // 提示"请重新登录"会误导用户去折腾账号，实际是 CIMS 服务暂时连不上。
+      markOffline(
+        state.mgmtHost
+          ? "后端地址已配置但账户归属为空 —— CIMS 服务此刻可能不可达，请稍后刷新重试"
+          : "未连接后端：缺少后端地址，请检查配置"
+      );
       return {};
     }
     try {
@@ -847,7 +854,11 @@
       if (wantDemo()) return { fresh: 90, devices: D.devices().map(demoDevice) };
       if (!canUseBackend()) {
         // 宁可空列表 + 红色横幅，也不要把演示设备混进真机列表。
-        markOffline("未连接后端：缺少后端地址或账户归属");
+        markOffline(
+          state.mgmtHost
+            ? "后端地址已配置但账户归属为空 —— CIMS 服务此刻可能不可达，请稍后刷新重试"
+            : "未连接后端：缺少后端地址，请检查配置"
+        );
         return { fresh: 0, devices: [] };
       }
       try {
