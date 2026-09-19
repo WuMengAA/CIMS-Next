@@ -29,16 +29,31 @@ public class StelarithCommandHost : BackgroundService
 {
     private static ILogger? _staticLogger;
     private static IManagementService? _staticManagement;
+    private static IServiceProvider? _staticServices;
     private static readonly object SubLock = new();
 
     /// <summary>命令通道是否已订阅成功（幂等标记）。</summary>
     private static bool _subscribed;
 
-    public StelarithCommandHost(ILogger<StelarithCommandHost> logger, IManagementService management)
+    /// <summary>
+    /// ⚠️ 构造函数**不得**直接注入 <c>IManagementService</c>。
+    ///
+    /// 为什么：ClassIsland 在启动期会解析并构造所有插件的 IHostedService。
+    /// 本机集控**未启用**（Management/Settings.json 的 IsManagementEnabled=false）时，
+    /// <c>IManagementService</c> 可能无法解析 —— 构造函数抛异常会让宿主的
+    /// <c>Host.StartAsync</c> 整个中断，表现为「进程在跑、AppStarted 永不触发、主界面不创建」。
+    /// （实测：把本插件移出后可正常启动；装回即卡住。）
+    ///
+    /// 因此这里只注入**总是可解析**的 <c>IServiceProvider</c>，把 IManagementService
+    /// 推迟到守护线程里用 GetService 惰性拿取，拿不到就静默重试，绝不阻断宿主启动。
+    /// </summary>
+    public StelarithCommandHost(ILogger<StelarithCommandHost> logger, IServiceProvider services)
     {
         _staticLogger = logger;
-        _staticManagement = management;
-        CmdHostDiag("ctor: 已注入 IManagementService");
+        _staticServices = services;
+        _staticManagement = services.GetService(typeof(IManagementService)) as IManagementService;
+        CmdHostDiag("ctor: 已注入 IServiceProvider（IManagementService 惰性解析，解析结果="
+                    + (_staticManagement is null ? "null（集控可能未启用）" : "OK") + "）");
     }
 
     static StelarithCommandHost()
@@ -72,17 +87,30 @@ public class StelarithCommandHost : BackgroundService
         t.Start();
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // 先让出控制权：TrySubscribe() 内含同步解析/订阅，绝不能在宿主 StartAsync 的同步段里跑。
+        await Task.Yield();
+
         // 宿主若能正常启动本服务，则立即尝试一次（与守护线程互斥，重复订阅由 _subscribed 挡掉）
         TrySubscribe();
-        return Task.CompletedTask;
     }
 
     /// <summary>订阅集控命令通道（幂等）。连接尚未建立时静默返回，由守护线程稍后重试。</summary>
     private static void TrySubscribe()
     {
         if (_subscribed) return;
+
+        // 惰性解析：集控可能在插件构造之后才启用/建立连接，故每轮重试时再解析一次。
+        // 解析不到就静默返回，由守护线程稍后重试 —— 绝不抛异常（异常会中断宿主启动）。
+        try
+        {
+            _staticManagement ??= _staticServices?.GetService(typeof(IManagementService)) as IManagementService;
+        }
+        catch (Exception ex)
+        {
+            CmdHostDiag("解析 IManagementService 失败（忽略）: " + ex.Message);
+        }
 
         var conn = _staticManagement?.Connection;
         if (conn is null)

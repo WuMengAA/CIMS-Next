@@ -3,6 +3,6 @@
 > Please verify the MD5 before downloading.
 
 | File | MD5 |
-| --- | --- || StelarithControlPlugin.cipx | `3014C4F6883494B0FC6895A5BD6EF129`
+| --- | --- || StelarithControlPlugin.cipx | `AA90732E6250F48D10C1A1F4C0DE2F2D`
 
-<!-- CLASSISLAND_PKG_MD5 {"StelarithControlPlugin.cipx":"3014C4F6883494B0FC6895A5BD6EF129"} -->
+<!-- CLASSISLAND_PKG_MD5 {"StelarithControlPlugin.cipx":"AA90732E6250F48D10C1A1F4C0DE2F2D"} -->

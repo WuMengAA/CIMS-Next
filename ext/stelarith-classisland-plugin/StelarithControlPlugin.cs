@@ -50,16 +50,13 @@ public class StelarithControlPlugin : PluginBase
     /// </summary>
     static StelarithControlPlugin()
     {
-        try
-        {
-            DiagBridge("static ctor: 插件类型已触达，开始施加防关闭守卫");
-            StelarithHostGuard.Apply();
-            DiagBridge("static ctor: 守卫结果 -> " + StelarithHostGuard.LastResult);
-        }
-        catch (Exception ex)
-        {
-            DiagBridge("static ctor 异常（已忽略）：" + ex.Message);
-        }
+        // 只记一条「插件确实被加载」的证据（用于区分「没加载」与「加载了没干活」）。
+        // ⚠️ 已移除原「防关闭守卫」（HostGuard）：它在插件类型被触达的最早时刻同步改写
+        //    宿主 Settings.json，与 ClassIsland 自身读写设置文件抢文件/写坏，
+        //    是「ClassIsland 后台运行、前台界面打不开」的高度嫌疑点。
+        //    该项防护改由桌面客户端在启动 ClassIsland **之前**处理。
+        try { DiagBridge("static ctor: 插件类型已触达"); }
+        catch { /* 静态构造函数绝不抛异常 */ }
     }
 
     /// <summary>
@@ -68,11 +65,18 @@ public class StelarithControlPlugin : PluginBase
     /// </summary>
     public override void Initialize(HostBuilderContext context, IServiceCollection services)
     {
-        // 再守一次：静态构造函数在某些加载路径下可能早于数据目录可解析，
-        // 此时 Apply() 会因找不到 Settings.json 而跳过，这里补一次。
-        // 幂等且只在取值不同时写盘，重复调用无副作用。
-        try { StelarithHostGuard.Apply(); }
-        catch (Exception ex) { DiagBridge("Initialize 守卫异常（已忽略）：" + ex.Message); }
+        // 按 ClassIsland 官方规范，把本插件设置放在宿主提供的 PluginConfigFolder 下
+        // （官方 PluginBase 文档：「插件的各项设置应当存放在此目录中」）。
+        // 放插件安装目录的坏处：插件升级/重装会覆盖安装目录 → 设置丢失。
+        try
+        {
+            StelarithSyncOptions.ConfigDir = PluginConfigFolder;
+            DiagBridge("Initialize: 插件设置目录 -> " + PluginConfigFolder);
+        }
+        catch (Exception ex)
+        {
+            DiagBridge("Initialize: 解析 PluginConfigFolder 失败（回落程序集目录）：" + ex.Message);
+        }
 
         // 把宿主的 IServiceProvider 登记给反射定位器：档案服务（ClassIsland.Services.ProfileService）
         // 只挂在宿主容器上，插件若不去容器里取，就永远拿不到 Profile 对象（写回只能降级）。
@@ -117,16 +121,11 @@ public class StelarithControlPlugin : PluginBase
         // NotificationProviderRegistryService，否则 NotificationProviderBase 的构造函数会抛异常。
         services.AddNotificationProvider<StelarithNotificationProvider>();
 
-        // ---- 上岛组件（ClassIsland 主界面小组件）----
-        // 组件设置走单例注入：宿主在构造 ComponentBase<T> 时从容器取 T，
-        // 与官方 VoiceHubComponent 的 `services.AddSingleton<VoiceHubSettings>()` 同形态。
-        services.AddSingleton<StelarithIslandSettings>();
-        // 组件本身必须带 [ComponentInfo]，否则 AddComponent 的注册会拿不到元数据。
-        // 用单参重载：本插件不提供「组件独立设置视图」，配置统一在插件设置页/JSON，
-        // 对教室场景更省事（减少学生误触的入口）。
-        services.AddComponent<StelarithNowPlayingComponent>();   // 本班正在播放的点歌
-        services.AddComponent<StelarithSongQueueComponent>();    // 上下滚动点歌名单
-        services.AddComponent<StelarithStatusComponent>();       // 集控在线状态一行条
+        // ---- 上岛组件已移除 ----
+        // 原注册 StelarithNowPlayingComponent / StelarithSongQueueComponent /
+        // StelarithStatusComponent 三个 ClassIsland 主界面小组件（含 StelarithIslandSettings）。
+        // 移除原因：组件直接挂在宿主主界面上，属于「极端侵入」且与集控核心职责无关；
+        // 相关展示改由桌面客户端承担，插件只保留「收指令 + 报状态」的最小职责。
     }
 
     /// <summary>
@@ -331,14 +330,15 @@ public static class StelarithDispatch
         if (task is null) return;
         switch (task.Action)
         {
+            // 锁屏 / 截屏：本机 OS 级动作，**改由桌面客户端（本地代理）执行**。
+            // 插件不再内联调用 OS API —— 减少插件面、避免在宿主进程里做高危动作。
             case "lock":
                 if (!RequireModule(StelarithModules.OsActions, "锁屏")) break;
-                OSActions.LockWorkStation();
+                await ForwardToAgentAsync(task, "锁屏");
                 break;
             case "screenshot":
                 if (!RequireModule(StelarithModules.OsActions, "截屏")) break;
-                OSActions.CaptureScreen(Environment.GetFolderPath(
-                    Environment.SpecialFolder.MyPictures) + "\\stelarith_shot.png");
+                await ForwardToAgentAsync(task, "截屏");
                 break;
             // 切班：把本机档案的「当前激活课表群」切到指定班级（集控通道下发不了
             // SelectedClassPlanGroupId，只能由本地插件改档案）。见 StelarithProfileWriter。

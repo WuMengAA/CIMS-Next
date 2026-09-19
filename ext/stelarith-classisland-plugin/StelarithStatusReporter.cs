@@ -96,6 +96,7 @@ public sealed class StelarithStatusReporter : BackgroundService
     static StelarithStatusReporter()
     {
         ReportDiag("static ctor: 拉起守护上报线程");
+        try { _staticOpt ??= StelarithSyncOptions.Load(); } catch { }
 
         // 模块开关一变就让面板立刻看到新状态（不用等下一个 20 秒周期）
         try
@@ -158,25 +159,12 @@ public sealed class StelarithStatusReporter : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        ReportDiag($"ExecuteAsync entered. slug={_opt.Slug} uid={_opt.ClientUid}");
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            TimeSpan delay;
-            try
-            {
-                lock (ReportLock)
-                {
-                    delay = _staticOpt is null ? NormalInterval : ReportOnce(_staticOpt, _staticLogger);
-                }
-            }
-            catch (OperationCanceledException) { break; }
-            catch (Exception ex)
-            {
-                ReportDiag("ExecuteAsync loop exception: " + ex.Message);
-                delay = NormalInterval;
-            }
-            await Task.Delay(delay, stoppingToken);
-        }
+        // ⚠️ 本方法只是占位：真正的同步/轮询/上报考由**专用守护线程**执行（见静态构造函数）。
+        // 为什么不能在这里做：BackgroundService.ExecuteAsync 跑在**线程池线程**上，
+        // 而本项目的 HTTP 调用是同步阻塞（.GetAwaiter().GetResult()）→ 会持续占用线程池线程
+        // → **线程池饥饿** → 宿主 Host.StartAsync 的异步续体排不上队 → AppStarted 永不触发
+        // → ClassIsland 主界面不创建。实测：把工作挪出 ExecuteAsync 后主界面立刻恢复。
+        await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
     }
 
     /// <summary>执行一次上报，返回下次应等待的时长（成功=常规间隔，失败=指数退避）。</summary>

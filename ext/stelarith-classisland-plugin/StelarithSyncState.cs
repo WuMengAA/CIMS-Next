@@ -9,14 +9,15 @@ namespace StelarithControlPlugin;
 
 /// <summary>
 /// 星璃·集控「主动同步」（cshua）配置。可通过插件目录下的 stelarith-sync.json 覆盖默认值。
-/// 默认值对齐本机 e2e 评估环境（账户 slug=e2e-school，客户端 uid=lab-pc-001）。
 ///
-/// 部署时按真实环境改 stelarith-sync.json 即可，无需重新编译：
+/// ⚠️ **不再内置评估环境的写死值**（原默认 slug=e2e-school / uid=lab-pc-001 会导致：
+/// 租户 Host 识别失败 → 403 → CCProtect 自封 IP → 429 → 拉不到课表 → 主界面空白）。
+/// 部署时**必须**按真实环境提供 stelarith-sync.json：
 /// {
 ///   "ClientAppBase": "http://127.0.0.1:8096",
 ///   "BaseDomain": "localhost",
-///   "Slug": "e2e-school",
-///   "ClientUid": "lab-pc-001",
+///   "Slug": "<真实租户 slug，如 demo-class>",
+///   "ClientUid": "<本机 uid，留空则用机器名>",
 ///   "ClassPlanName": "default_classplan",
 ///   "ComponentsName": "default_components",
 ///   "RefreshIntervalSeconds": 30
@@ -30,11 +31,16 @@ public sealed class StelarithSyncOptions
     /// <summary>租户基域（TenantMiddleware 按 Host: &lt;slug&gt;.&lt;BaseDomain&gt; 识别租户）。</summary>
     public string BaseDomain { get; set; } = "localhost";
 
-    /// <summary>租户 slug（来自 CIMS /account/list 首个账户；e2e 环境为 e2e-school）。</summary>
-    public string Slug { get; set; } = "e2e-school";
+    /// <summary>
+    /// 租户 slug（TenantMiddleware 按 Host: &lt;slug&gt;.&lt;BaseDomain&gt; 识别租户）。
+    /// **不再写死评估环境值**：必须由部署方经 stelarith-sync.json 配置。
+    /// 教训：写死一个错误 slug（如 e2e-school）会让所有请求 403 → 触发 CCProtect 自封 IP（429）
+    /// → 插件永远拉不到课表 → 主界面绑定 null → 前台空白。
+    /// </summary>
+    public string Slug { get; set; } = "";
 
-    /// <summary>本机在 CIMS 注册的客户端 uid（教室一体机标识）。</summary>
-    public string ClientUid { get; set; } = "lab-pc-001";
+    /// <summary>本机在 CIMS 注册的客户端 uid（教室一体机标识）。留空则回落到机器名。</summary>
+    public string ClientUid { get; set; } = "";
 
     /// <summary>课表资源名（ClassPlan）。</summary>
     public string ClassPlanName { get; set; } = "default_classplan";
@@ -130,11 +136,34 @@ public sealed class StelarithSyncOptions
         return null;
     }
 
+    /// <summary>
+    /// 官方插件设置目录（= ClassIsland <c>PluginBase.PluginConfigFolder</c>）。
+    /// 由插件入口在 <c>Initialize</c> 中注入。
+    ///
+    /// 为什么要有这个：ClassIsland 官方规范明确「插件的各项设置应当存放在此目录中」
+    /// （见 PluginBase.PluginConfigFolder 文档），而不是插件安装目录 ——
+    /// 安装目录在插件升级/重装时会被覆盖，设置会丢。
+    /// 未注入时（静态守护线程可能早于 Initialize 运行）回落到程序集目录，保持兼容。
+    /// </summary>
+    public static string? ConfigDir { get; set; }
+
+    /// <summary>解析设置文件所在目录：优先官方配置目录，其次程序集目录（兜底）。</summary>
+    private static string ResolveConfigDir()
+    {
+        var d = ConfigDir;
+        if (!string.IsNullOrWhiteSpace(d))
+        {
+            try { Directory.CreateDirectory(d); return d!; }
+            catch { /* 配置目录不可写则回落 */ }
+        }
+        return Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location)
+               ?? AppContext.BaseDirectory;
+    }
+
     /// <summary>写回插件目录下的 stelarith-sync.json（保留未在本类声明的字段）。</summary>
     public void Save()
     {
-        var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location);
-        var path = Path.Combine(dir ?? AppContext.BaseDirectory, "stelarith-sync.json");
+        var path = Path.Combine(ResolveConfigDir(), "stelarith-sync.json");
         var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(path, json);
         SyncOptionsDiag($"saved mode={NetworkMode} base={ClientAppBase} domain={BaseDomain}");
@@ -144,22 +173,20 @@ public sealed class StelarithSyncOptions
     {
         try
         {
-            var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location);
             File.AppendAllText(
-                Path.Combine(dir ?? AppContext.BaseDirectory, "stelarith-sync-diag.log"),
+                Path.Combine(ResolveConfigDir(), "stelarith-sync-diag.log"),
                 $"{DateTime.Now:HH:mm:ss} {msg}{Environment.NewLine}");
         }
         catch { /* 忽略 */ }
     }
 
-    /// <summary>从插件目录下的 stelarith-sync.json 读取覆盖；文件不存在则用默认值。</summary>
+    /// <summary>从 stelarith-sync.json 读取覆盖；文件不存在则用默认值。</summary>
     public static StelarithSyncOptions Load()
     {
         var opt = new StelarithSyncOptions();
         try
         {
-            var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location);
-            var path = Path.Combine(dir ?? AppContext.BaseDirectory, "stelarith-sync.json");
+            var path = Path.Combine(ResolveConfigDir(), "stelarith-sync.json");
             if (File.Exists(path))
             {
                 var json = File.ReadAllText(path);
@@ -173,6 +200,12 @@ public sealed class StelarithSyncOptions
         }
         // 空串视为「配置了但没填」，回落到默认，避免 UI 上出现空白来源名
         if (string.IsNullOrWhiteSpace(opt.NotificationSourceName)) opt.NotificationSourceName = "集控广播";
+        // 客户端 uid 留空 → 用机器名（每台教室机天然唯一），不再写死 lab-pc-001
+        if (string.IsNullOrWhiteSpace(opt.ClientUid)) opt.ClientUid = Environment.MachineName;
+        // slug 留空 → 明确告警。不静默用一个错误默认值去请求：那会 403 → 被 CCProtect 自封 IP → 429，
+        // 表现为「插件拉不到课表、主界面空白」，且现象与原因完全不相关，极难排查。
+        if (string.IsNullOrWhiteSpace(opt.Slug))
+            SyncOptionsDiag("警告：租户 slug 未配置（stelarith-sync.json 的 Slug）—— 所有 CIMS 请求会 403。");
         return opt;
     }
 }

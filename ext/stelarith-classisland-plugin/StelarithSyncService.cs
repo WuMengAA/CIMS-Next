@@ -23,7 +23,15 @@ public sealed class StelarithSyncService : BackgroundService
 {
     private readonly ILogger<StelarithSyncService> _logger;
     private readonly StelarithSyncOptions _opt;
-    private static readonly HttpClient Http = new();
+    // ⚠️ 必须显式设超时：HttpClient 默认要等 100s 才失败。
+    // CIMS/网络不可达时，100s 的阻塞会让同步线程长时间挂住，表现为「离线时插件像死了」。
+    // 对齐星集控铁律：所有对外 HttpClient 一律收紧到 5s。
+    private static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        ConnectTimeout = TimeSpan.FromSeconds(3),
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(1),
+    })
+    { Timeout = TimeSpan.FromSeconds(5) };
     // 静态服务定位器，供静态守护线程取配置（与 PanelService/Poller 一致的兜底模式）
     private static StelarithSyncOptions? _staticOpt;
     private static ILogger<StelarithSyncService>? _staticLogger;
@@ -56,6 +64,9 @@ public sealed class StelarithSyncService : BackgroundService
     {
         // 兜底守护：宿主因其它插件启动异常可能不调 StartAsync，故用后台线程保证同步仍执行
         SyncDiag("static ctor: 拉起守护同步线程");
+        // ⚠️ 这里必须自行加载配置：本服务不再注册为 IHostedService（注册会阻塞宿主启动），
+        // 因此**实例构造函数不会被执行**，_staticOpt 只能在这里兜底赋值，否则守护线程空转。
+        try { _staticOpt ??= StelarithSyncOptions.Load(); } catch { }
         var t = new Thread(() =>
         {
             try
@@ -105,43 +116,12 @@ public sealed class StelarithSyncService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // 启动即打印同步目标（诊断用途：确认 sync 是否以正确租户启动）
-        SyncDiag($"ExecuteAsync entered. opt: slug={_opt.Slug} uid={_opt.ClientUid}");
-        _logger.LogInformation(
-            "Stelarith sync: 启动，同步目标 ClientAppBase={base} Host={host}",
-            _opt.ClientAppBase, $"{_opt.Slug}.{_opt.BaseDomain}");
-        // 进后台立即首拉一次，之后按间隔轮询；同时响应 StelarithSyncState.RequestRefresh
-        // 的即时刷新信号（轮询服务收到 DataUpdated 时触发），避免干等下个周期。
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(5, _opt.RefreshIntervalSeconds)));
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            var wake = await Task.WhenAny(
-                timer.WaitForNextTickAsync(stoppingToken).AsTask(),
-                // 收到即时刷新信号则立即执行一次（取消/信号冲突时容忍异常）
-                StelarithSyncState.WaitForRefreshAsync(stoppingToken).ContinueWith(_ => true, TaskContinuationOptions.OnlyOnRanToCompletion));
-            try
-            {
-                lock (SyncLock)
-                {
-                    if (_staticOpt is not null) RefreshSync(_staticOpt, _staticLogger).GetAwaiter().GetResult();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Stelarith sync: 定时刷新失败，下个周期重试");
-                StelarithSyncState.Update(new StelarithSyncSnapshot
-                {
-                    At = DateTimeOffset.UtcNow,
-                    Ok = false,
-                    Error = ex.Message,
-                });
-            }
-            // 若因即时刷新信号醒来，本次已执行；下次仍按原 schedule。(wake 仅用于等待语义，成功即继续)
-        }
+        // ⚠️ 本方法只是占位：真正的同步/轮询/上报考由**专用守护线程**执行（见静态构造函数）。
+        // 为什么不能在这里做：BackgroundService.ExecuteAsync 跑在**线程池线程**上，
+        // 而本项目的 HTTP 调用是同步阻塞（.GetAwaiter().GetResult()）→ 会持续占用线程池线程
+        // → **线程池饥饿** → 宿主 Host.StartAsync 的异步续体排不上队 → AppStarted 永不触发
+        // → ClassIsland 主界面不创建。实测：把工作挪出 ExecuteAsync 后主界面立刻恢复。
+        await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
     }
 
     /// <summary>
