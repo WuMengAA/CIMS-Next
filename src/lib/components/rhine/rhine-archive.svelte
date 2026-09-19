@@ -219,8 +219,14 @@
 			</span>
 		</div>
 
-		<!-- 中间操作提示 -->
+		<!-- 操作提示 -->
 		<div class="rhine-hud-hint">← → 切换列 · ↑ ↓ 换档案 · Enter 读取</div>
+
+		<!-- 全屏模式的返回入口（无侧边栏，需手动提供出口） -->
+		<a class="rhine-exit" href="/docs" onclick={(e) => { if (onOpen) { e.preventDefault(); onOpen("/docs"); } }}>
+			<span>退出档案库</span>
+			<CornerDownLeft size={13} />
+		</a>
 
 		<!-- 右侧档案抽屉（原版 inspection 简化） -->
 		{#if selectedRecord}
@@ -250,10 +256,10 @@
 	.rhine-hall {
 		position: relative;
 		width: 100%;
-		height: clamp(480px, 72vh, 800px);
+		/* 全屏：铺满可视区，去掉盒框与高度钳制，做成原版沉浸式档案库 */
+		height: 100dvh;
 		overflow: hidden;
 		background: var(--rhine-paper, #eae5e1);
-		border: 1px solid var(--rhine-line, #aaa59a);
 	}
 	.rhine-canvas-host {
 		position: absolute;
@@ -306,6 +312,29 @@
 		color: var(--rhine-label, #6d6a60);
 		opacity: 0.85;
 		letter-spacing: 0.04em;
+	}
+	.rhine-exit {
+		position: absolute;
+		top: 14px;
+		right: 14px;
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--rhine-ink, #080a08);
+		border: 1px solid var(--rhine-line, #aaa59a);
+		background: color-mix(in srgb, var(--rhine-paper, #f2efe9) 70%, transparent);
+		backdrop-filter: blur(8px);
+		text-decoration: none;
+		pointer-events: auto;
+		transition: all 0.2s ease;
+	}
+	.rhine-exit:hover {
+		border-color: var(--rhine-accent, #9b7247);
+		color: var(--rhine-accent, #9b7247);
 	}
 
 	.rhine-callout {
