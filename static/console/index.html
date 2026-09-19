@@ -25,7 +25,7 @@
        并且**必须重启 StelarithServer**（adapter-node 的 sirv 会缓存文件 size，
        文件被替换后仍按旧长度发送，表现为 HTML/JS 被拦腰截断、面板只剩线框）。
 -->
-<link rel="stylesheet" href="styles.css?v=20260919i" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
+<link rel="stylesheet" href="styles.css?v=20260919j" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
 </head>
 <body data-page-node-id="poMxhzuD8ICT6zZOOZDeGB">
 
@@ -67,10 +67,13 @@
   <nav id="sidebar" data-page-node-id="Lqj1qeWgMDM8yoAxs1IGl5">
     <!-- 移动端抽屉身份条：窄屏侧栏变成浮层后，与外层 CMS 抽屉极易混淆，
          故在抽屉顶部加「星集控」品牌头，一眼区分这是集控面板抽屉而非站点导航。
-         宽屏侧栏常驻、顶栏已含品牌，故不显示，避免 160px 内拥挤。 -->
+         宽屏侧栏常驻、顶栏已含品牌，故不显示，避免 168px 内拥挤。 -->
     <div class="sidebar-head" data-page-node-id="SbHd0001BrandHd000">
-      <span class="sh-mark">星</span>
-      <span class="sh-text">星集控 · 电教委员面板</span>
+      <span class="sh-mark" aria-hidden="true">星</span>
+      <span class="sh-text">
+        <b class="sh-title">星集控</b>
+        <i class="sh-sub">电教委员面板</i>
+      </span>
     </div>
     <button class="nav active" data-view="dashboard" data-page-node-id="Bt2ky5bVuYrv3yLBLcNOfF" title="总览"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg><span class="nav-label">总览</span></button>
     <button class="nav" data-view="schedule" data-need="control" data-page-node-id="AHPw4Aejc27gKVk2YsEqx7" title="课表"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v3"/><path d="M21 7.338V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h2.338"/><path d="M3 9h5.859"/><path d="M8 2v3"/><circle cx="16" cy="16" r="6"/></svg><span class="nav-label">课表</span></button>
@@ -118,7 +121,7 @@
   </div>
 </div>
 
-<script src="api.js?v=20260919i"></script>
-<script src="app.js?v=20260919i"></script>
+<script src="api.js?v=20260919j"></script>
+<script src="app.js?v=20260919j"></script>
 </body>
 </html>
