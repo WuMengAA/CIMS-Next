@@ -2,12 +2,17 @@
 //
 // ── 两条互相独立的权限轴 ────────────────────────────────────────────────────
 //
-//  1) 纵向「等级轴」LEVEL —— 内容与平台治理能力，五等，从低到高：
-//       L1 访客/只读  viewer    只读浏览公开内容；**一律禁止进入集控面板与后台**
-//       L2 注册用户    user      参与：评论、发帖、反馈、申请、纠错；集控的最低门槛
-//       L3 审核员      moderator 在 L2 之上审核 UGC
-//       L4 编辑        editor    在 L3 之上管理内容/页面/媒体，可进后台
-//       L5 站长        admin    在 L4 之上管理用户、权限、站点设置
+//  1) 纵向「等级轴」LEVEL —— 内容与平台治理能力，**六等**，从低到高：
+//       L1 游客        viewer    只读浏览公开内容；**一律禁止进入集控面板与后台**
+//       L2 学生        user      参与：评论、发帖、反馈、申请、纠错
+//       L3 电教委员    techrep   在 L2 之上进入集控（本班设备运维主力）
+//       L4 老师        teacher   在 L3 之上发本年级广播、带班管理
+//       L5 审核 / 编辑 moderator / editor   在 L4 之上审核 UGC 与内容/页面/媒体管理，可进后台
+//       L6 管理 / 站长 admin / owner        在 L5 之上管理用户、权限、站点设置
+//
+//      ⚠️ 等级轴是**累积偏序**：高等级自动具备低等级的全部能力（can 用 level >= need）。
+//      所以往矩阵里插新等级时，必须复核「原有角色等级平移后是否被动获得新能力」——
+//      本轮 L2→L3→L6 平移即触发了三处必须同步收紧/上移的动作（见 LEVEL_OF_ACTION 注释）。
 //
 //  2) 横向「设备轴」DEVICE —— 集控设备操作敏感度，与等级正交：
 //       watch  观看  看状态/画面（只读）
@@ -23,18 +28,26 @@
 // roleDeviceTiers() 映射到新模型，故既有调用点无需改动。旧矩阵里
 // editor 的 controlDevice 等档位也原样保留在设备轴默认档中。
 
-/** 五级纵向等级。数值越大权限越高。 */
-export type Level = 1 | 2 | 3 | 4 | 5;
+/** 六级纵向等级。数值越大权限越高。 */
+export type Level = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** 角色标识（数据库存的仍是这些值，保持向后兼容）。 */
-export type Role = "owner" | "admin" | "editor" | "moderator" | "user" | "techrep" | "viewer";
+export type Role =
+	| "owner"
+	| "admin"
+	| "editor"
+	| "moderator"
+	| "teacher"
+	| "user"
+	| "techrep"
+	| "viewer";
 
 /** 设备操作敏感度轴（横向，独立于等级）。 */
 export type DeviceTier = "watch" | "control" | "remote" | "manage";
 
 /** 内容 / 平台动作（纵向能力清单）。 */
 export type Action =
-	// ---- L1：只读 ----
+	// ---- L3 起：集控（可进面板）----
 	| "viewConsole" // 进入集控面板（只读观看）
 	// ---- L2 起：参与 ----
 	| "comment" // 发表评论
@@ -48,12 +61,12 @@ export type Action =
 	| "chatClass" // 在本班频道发言（电教委员日常对接）
 	| "chatGrade" // 在本年级频道发言（年级电教委员群）
 	| "readBroadcast" // 读取广播/公告（含设备端消息中心）
-	// ---- L3 起：审核 ----
+	// ---- L4 起：广播 ----
+	| "sendBroadcast" // 发布校/年级广播（含推送到教室大屏）
+	// ---- L5 起：审核 / 内容与后台 ----
 	| "createChannel" // 建立论坛频道
 	| "moderate" // 审核 UGC（评论/反馈/论坛/申请）
-	// ---- L3 起：广播 ----
-	| "sendBroadcast" // 发布校/年级广播（含推送到教室大屏）
-	// ---- L4 起：内容与后台 ----
+	| "reviewPermission" // 审核他人的权限晋升申请（逐级晋升的批准权）
 	| "manageContent" // 管理博客/项目/文档（CRUD）
 	| "managePages" // 页面编辑与美术设计（独立编辑器）
 	| "manageFiles" // 文件/媒体管理
@@ -67,13 +80,12 @@ export type Action =
 
 /** 一个动作所需的最低等级。can(role, action) 即「角色等级 ≥ 此值」。 */
 const LEVEL_OF_ACTION: Record<Action, Level> = {
-	// ⚠️ 集控面板门槛已从 L1 提到 L2（2026-09-16）：
-	// viewAdmin（后台入口）是 L4，而集控走 viewConsole —— 原先定 L1 等于给
-	// L1 只读/访客账号开了一条「绕过后台门槛直入集控」的低位通道，
-	// 集控是可锁屏/重启/远控教室设备的管理面，不该对访客开放。
-	// 定 L2 的理由：既禁掉访客（L1），又保留电教委员（techrep/L2）——
-	// 他是设备操作主力（持 remote 档），若提到 L4 会连带废掉整个集控设计。
-	viewConsole: 2,
+	// ⚠️ 集控门槛 2026-09-20 从 L2 提到 **L3**：
+	// 等级谱系本轮由五等扩到六等（原「L2 注册用户」拆成 L2 学生 / L3 电教委员），
+	// 沿用 L2 就等于让**学生**直入集控 —— 集控是可锁屏/重启/远控教室设备的管理面，
+	// 不该对学生开放。定 L3 后电教委员仍是设备操作主力（持 remote 档），设计意图不变，
+	// 只是把「普通注册用户」挡在门外。
+	viewConsole: 3,
 	comment: 2,
 	postForum: 2,
 	submitFeedback: 2,
@@ -81,37 +93,50 @@ const LEVEL_OF_ACTION: Record<Action, Level> = {
 	submitLink: 2,
 	suggestDoc: 2,
 	submitIssue: 2,
-	// 沟通：注册即可读，发本班言是 L2；跨年级群发言收紧到 L2（同班/同年级由业务层再校验）
+	// 沟通：注册即可读；发本班/年级言由业务层再按班级归属校验
 	readBroadcast: 2,
 	chatClass: 2,
 	chatGrade: 2,
-	createChannel: 3,
-	moderate: 3,
-	// 广播：发布是治理动作，收紧到 L3（审核员起），避免任意注册用户向全校大屏推送
-	sendBroadcast: 3,
-	manageContent: 4,
-	managePages: 4,
-	manageFiles: 4,
-	manageFeeds: 4,
-	viewAdmin: 4,
-	manageUsers: 5,
-	manageSettings: 5,
-	managePermissions: 5,
-	manageDevices: 5
+	// ⚠️ 广播 2026-09-20 从 L3 提到 **L4**：techrep 本轮由 L2 升到 L3，
+	// 若广播仍留在 L3，电教委员会**被动获得**向全校大屏推送的能力
+	// （等级轴是累积偏序：高等级自动具备低等级全部能力）。
+	// 提到 L4 后只有老师及以上可发；实际能发多远另由 broadcastScope 收敛。
+	sendBroadcast: 4,
+	// ⚠️ 审核 2026-09-20 从 L3 提到 **L5**：同上，techrep 升到 L3 会连带拿到 UGC 审核权。
+	// 与 reviewPermission 同档，保证「审核」职能集中在 L5 一处。
+	moderate: 5,
+	createChannel: 5,
+	// #181 逐级晋升：批准他人的权限晋升申请。与 UGC 审核同档（L5），
+	// 避免 L3/L4 自行放权。
+	reviewPermission: 5,
+	manageContent: 5,
+	managePages: 5,
+	manageFiles: 5,
+	manageFeeds: 5,
+	viewAdmin: 5,
+	manageUsers: 6,
+	manageSettings: 6,
+	managePermissions: 6,
+	manageDevices: 6
 };
 
 /**
- * 各角色对应的等级。
- * owner 为本轮新增的「站长」规范名；admin 与之同等级（历史数据存的是 admin）。
- * techrep（电教委员）内容等级为 L2 —— 其特殊性在设备轴体现。
+ * 各角色对应的等级（六级谱系：游客 / 学生 / 电教委员 / 老师 / 审核·编辑 / 管理·站长）。
+ *
+ * ⚠️ 2026-09-20 由五等扩到六等时，techrep 2→3、moderator 3→5、admin/owner 5→6。
+ * 等级轴是**累积偏序**，数值平移会让角色被动获得新能力，本文件已在
+ * LEVEL_OF_ACTION 里同步把 viewConsole→3、sendBroadcast→4、moderate/createChannel→5
+ * 上移，确保 techrep(3) 不会连带拿到审核与全校广播。改动此表时务必复核同一件事。
  */
 const ROLE_LEVEL: Record<Role, Level> = {
-	owner: 5,
-	admin: 5,
-	editor: 4,
-	moderator: 3,
+	owner: 6,
+	admin: 6,
+	// 审核与编辑同为 L5：都是「平台职能岗」，高于老师（教学岗）
+	editor: 5,
+	moderator: 5,
+	teacher: 4,
+	techrep: 3,
 	user: 2,
-	techrep: 2,
 	viewer: 1
 };
 
@@ -124,6 +149,8 @@ const ROLE_DEVICE: Record<Role, DeviceTier[]> = {
 	admin: ["watch", "control", "remote", "manage"],
 	editor: ["watch", "control"],
 	moderator: ["watch"],
+	// 老师：带班管理，看+控制本班/本年级设备；远控仍留在电教委员与校级手上
+	teacher: ["watch", "control"],
 	user: ["watch"],
 	// 电教委员：设备能力强于其内容等级 —— 两条轴正交的意义所在
 	techrep: ["watch", "control", "remote"],
@@ -134,19 +161,21 @@ const ROLE_DEVICE: Record<Role, DeviceTier[]> = {
 const DEVICE_RANK: Record<DeviceTier, number> = { watch: 0, control: 1, remote: 2, manage: 3 };
 
 export const LEVEL_LABELS: Record<Level, string> = {
-	1: "L1 访客",
-	2: "L2 用户",
-	3: "L3 审核员",
-	4: "L4 编辑",
-	5: "L5 站长"
+	1: "L1 游客",
+	2: "L2 学生",
+	3: "L3 电教委员",
+	4: "L4 老师",
+	5: "L5 审核·编辑",
+	6: "L6 管理·站长"
 };
 
 export const LEVEL_DESCRIPTIONS: Record<Level, string> = {
-	1: "只读：浏览公开内容（访客一律禁止进入集控面板与后台）",
-	2: "参与：评论、发帖、反馈、申请友链与专页、文档纠错；含集控面板最低准入",
-	3: "审核：在 L2 之上审核评论/论坛/申请，创建论坛频道",
-	4: "编辑：在 L3 之上管理内容、页面与媒体，可进入后台",
-	5: "站长：在 L4 之上管理用户、权限与站点设置，含全量设备"
+	1: "只读：浏览公开内容（游客一律禁止进入集控面板与后台）",
+	2: "参与：评论、发帖、反馈、申请友链与专页、文档纠错",
+	3: "电教委员：在 L2 之上进入集控面板，运维本班设备（锁屏/截图/远控本班）",
+	4: "老师：在 L3 之上带班管理、发本年级广播",
+	5: "审核·编辑：在 L4 之上审核 UGC 与权限申请，管理内容/页面/媒体，可进入后台",
+	6: "管理·站长：在 L5 之上管理用户、权限与站点设置，含全量设备"
 };
 
 export const DEVICE_LABELS: Record<DeviceTier, string> = {
@@ -209,9 +238,14 @@ export function isConsoleReadOnly(role: Role | null | undefined): boolean {
 // 于是一个班的电教委员喊一句话，全校所有教室的屏幕同时弹出来。
 // 这里把范围拆成独立档位，按内容等级收敛：
 //
-//   L2 电教委员/注册用户 → class  仅本班
-//   L3 审核员            → grade  本年级
-//   L4 编辑 / L5 站长     → school 全校
+//   L2 学生 / L3 电教委员  → class  仅本班
+//   L4 老师 / L5 审核员    → grade  本年级
+//   L5 编辑 / L6 管理·站长 → school 全校
+//
+// ⚠️ 本档位**按角色显式指定**（ROLE_SCOPE），不按等级阈值推导：等级扩到六等后
+// 「编辑」与「审核」同在 L5 但能发范围不同（编辑=全校、审核=本年级），阈值推导
+// 表达不了这种差异；而扩级时的数值平移会静默改变每个人的广播范围。
+// 角色表驱动 → 扩级零副作用。
 //
 // 与设备轴的关系：设备轴 control 决定「能不能下发」，本档位决定「能下发给谁」。
 // 两者都要过（见 /api/console/ext 的 notices 分支）。
@@ -227,14 +261,22 @@ export const BROADCAST_SCOPE_LABELS: Record<BroadcastScope, string> = {
 	school: "全校"
 };
 
-/** 角色能广播的最大范围；返回 null 表示完全不能广播（L1 只读）。 */
+/** 角色 → 广播可达范围（null = 完全不能广播）。 */
+const ROLE_SCOPE: Record<Role, BroadcastScope | null> = {
+	owner: "school",
+	admin: "school",
+	editor: "school",
+	moderator: "grade",
+	teacher: "grade",
+	techrep: "class",
+	user: "class",
+	viewer: null
+};
+
+/** 角色能广播的最大范围；返回 null 表示完全不能广播（L1 游客）。 */
 export function broadcastScope(role: Role | null | undefined): BroadcastScope | null {
-	const lv = roleToLevel(role);
-	if (lv === null) return null;
-	if (lv >= 4) return "school";
-	if (lv === 3) return "grade";
-	if (lv === 2) return "class";
-	return null;
+	if (!role) return null;
+	return ROLE_SCOPE[role] ?? null;
 }
 
 /** 该角色能否广播到指定范围（范围档位不超过其上限）。 */
@@ -288,9 +330,10 @@ export const ROLE_LABELS: Record<Role, string> = {
 	admin: "站长",
 	editor: "编辑",
 	moderator: "审核员",
-	user: "注册用户",
+	teacher: "老师",
+	user: "学生",
 	techrep: "电教委员",
-	viewer: "只读"
+	viewer: "游客"
 };
 
 /** 角色的等级标签（UI 上「L4 编辑」这类展示）。 */
@@ -343,6 +386,8 @@ const ROLE_TIER: Record<Role, ManagementTier> = {
 	admin: "school",
 	editor: "school",
 	moderator: "grade",
+	// 老师管本年级（带班、审本年级内容、发本年级广播）
+	teacher: "grade",
 	techrep: "class",
 	user: "class",
 	viewer: "class"
@@ -499,7 +544,16 @@ export function permissionMatrix(role: Role | null | undefined) {
 
 
 /** 可分配角色清单，按等级从高到低（用户管理下拉复用）。 */
-export const ASSIGNABLE_ROLES: Role[] = ["admin", "owner", "editor", "moderator", "techrep", "user", "viewer"];
+export const ASSIGNABLE_ROLES: Role[] = [
+	"admin",
+	"owner",
+	"editor",
+	"moderator",
+	"teacher",
+	"techrep",
+	"user",
+	"viewer"
+];
 
 /** 动作的中文说明（权限矩阵表头用）。 */
 export const ACTION_LABELS: Record<Action, string> = {
@@ -515,6 +569,7 @@ export const ACTION_LABELS: Record<Action, string> = {
 	readBroadcast: "读取广播",
 	createChannel: "创建频道",
 	moderate: "审核 UGC",
+	reviewPermission: "审核权限申请",
 	sendBroadcast: "发布广播",
 	manageContent: "管理内容",
 	managePages: "页面/美术编辑",
@@ -546,9 +601,10 @@ export function hasAction(role: Role, action: Action): boolean {
 export const LEVEL_SAMPLE_ROLE: Record<Level, Role> = {
 	1: "viewer",
 	2: "user",
-	3: "moderator",
-	4: "editor",
-	5: "admin"
+	3: "techrep",
+	4: "teacher",
+	5: "moderator",
+	6: "admin"
 };
 
 /**
@@ -556,7 +612,7 @@ export const LEVEL_SAMPLE_ROLE: Record<Level, Role> = {
  *
  * 设计原则：**权限是一个个叠加上去的**——高等级自动继承低等级的全部能力，
  * 设备轴（横向）再叠加在内容等级（纵向）之上。例：电教委员（techrep）本质就是
- * 「注册用户(L2) 的全部能力 + 设备操作权限」，并非一个与用户并列的独立类别；
+ * 「学生(L2) 的全部能力 + 设备操作权限」，并非一个与学生并列的独立类别；
  * 因此它能评论、发帖、申请，只是额外持 remote 设备档位。
  */
 export function roleCapabilitiesSummary(role: Role | null | undefined): {
