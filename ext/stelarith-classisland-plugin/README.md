@@ -118,7 +118,7 @@ CIMS 经集控服务器下发客户端命令，由 **`IManagementServerConnectio
 - **租户识别**：客户端应用 `TenantMiddleware` 按 `Host: <Slug>.<BaseDomain>` 识别租户，故每跳都显式带 `Host` 头；资源接口会 302 到 `/get?token=...`，同步服务**手动跟随重定向并逐跳保持 Host**（HttpClient 自动重定向会改回 `Host: 127.0.0.1:8096`，`curl -L` 同样会丢 Host，导致假 404）；
 - **容错**：`resources refreshed X/Y ok` 诊断行会写明本轮成功项数；单项失败不影响其余项，下个周期重试；
 - **结果**：最新快照存于线程安全的 `StelarithSyncState.Current`（含 `ManifestJson` / `ClassPlanJson` / `ComponentsJson` / `At` / `Ok`），供通知提供方或后续 UI 读取展示；
-- **配置**：参数经插件目录下的 `stelarith-sync.json` 覆盖（不存在则用默认值）。本机实测部署为 `Slug=demo-class`、`ClientUid=lab-pc-001`、`BaseDomain=localhost`。
+- **配置**：参数经插件目录 / `PluginConfigFolder` 下的 `stelarith-sync.json` 覆盖（不存在则用默认值）。**默认即公网**（`NetworkMode=wan`、`BaseDomain=245959623.xyz`、`Slug=demo-class`、`ClientAppBase=https://demo-class.245959623.xyz`）；`ClientUid` 留空则用机器名。内网直连作为备用保留（`LanClientAppBase` / `LanBaseDomain`），需要时经面板「一键切换」写回。
 
 > 部署时务必把真实环境的 `Slug`、`ClientUid` 写入 `stelarith-sync.json`（与 DLL 同目录），否则拉取会因租户/设备不匹配而失败（日志可见 warning）。
 

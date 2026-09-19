@@ -19,7 +19,7 @@ namespace StelarithControlPlugin;
 ///  2) 右键状态栏（托盘）图标菜单：追加「星璃·集控面板」菜单项。
 ///
 /// 面板地址可配置：优先读插件目录下 stelarith-panel.json 的 panelUrl；
-/// 缺省回落到 8090 内网 web 面板地址。
+/// 缺省回落到**公网** web 面板地址（https://www.245959623.xyz/admin/console）。
 ///
 /// 健壮性说明：宿主把各插件的 IHostedService 集中在同一个 Host 统一启动，
 /// 若其它插件的宿主服务在启动期抛异常（例如 AIIsland 的考试通知过滤服务经实测会在
@@ -201,8 +201,8 @@ public sealed class StelarithPanelService : IHostedService
         }
     }
 
-    /// <summary>当前生效的集控面板 Web 地址（可配置）。</summary>
-    public static string CurrentPanelUrl { get; private set; } = "http://localhost:8090/admin/console";
+    /// <summary>当前生效的集控面板 Web 地址（可配置；默认走公网站点）。</summary>
+    public static string CurrentPanelUrl { get; private set; } = "https://www.245959623.xyz/admin/console";
 
     static StelarithPanelService()
     {

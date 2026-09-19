@@ -10,34 +10,43 @@ namespace StelarithControlPlugin;
 /// <summary>
 /// 星璃·集控「主动同步」（cshua）配置。可通过插件目录下的 stelarith-sync.json 覆盖默认值。
 ///
-/// ⚠️ **不再内置评估环境的写死值**（原默认 slug=e2e-school / uid=lab-pc-001 会导致：
-/// 租户 Host 识别失败 → 403 → CCProtect 自封 IP → 429 → 拉不到课表 → 主界面空白）。
-/// 部署时**必须**按真实环境提供 stelarith-sync.json：
+/// **默认即公网**（2026-09-20 起）：默认 NetworkMode=wan，直接走公网入口
+/// `https://demo-class.245959623.xyz`（BaseDomain=245959623.xyz），
+/// 不再默认内网 127.0.0.1:8096 —— 教室机无论在校园网还是外网都能直接连通，
+/// 装机后无需先切模式。内网直连作为备用保留（LanClientAppBase / LanBaseDomain）。
+///
+/// 覆盖示例（stelarith-sync.json，位于 PluginConfigFolder 或 DLL 同目录）：
 /// {
-///   "ClientAppBase": "http://127.0.0.1:8096",
-///   "BaseDomain": "localhost",
-///   "Slug": "<真实租户 slug，如 demo-class>",
+///   "NetworkMode": "wan",
+///   "ClientAppBase": "https://demo-class.245959623.xyz",
+///   "BaseDomain": "245959623.xyz",
+///   "Slug": "demo-class",
 ///   "ClientUid": "<本机 uid，留空则用机器名>",
 ///   "ClassPlanName": "default_classplan",
 ///   "ComponentsName": "default_components",
 ///   "RefreshIntervalSeconds": 30
 /// }
+///
+/// ⚠️ 多租户部署**必须**同时改 `Slug` 与 `ClientAppBase` 的子域（二者同源）。
+/// 只改其一的症状是「第一批请求就 403」——租户识别靠 Host 头，现象与原因毫无相似性。
+/// （教训：曾写死评估环境 slug=e2e-school → 403 → CCProtect 自封 IP → 429 → 主界面空白。）
 /// </summary>
 public sealed class StelarithSyncOptions
 {
-    /// <summary>CIMS 客户端应用基址（教室端拉取配置的真实读取点）。</summary>
-    public string ClientAppBase { get; set; } = "http://127.0.0.1:8096";
+    /// <summary>CIMS 客户端应用基址（教室端拉取配置的真实读取点）。默认 = 公网入口。</summary>
+    public string ClientAppBase { get; set; } = "https://demo-class.245959623.xyz";
 
-    /// <summary>租户基域（TenantMiddleware 按 Host: &lt;slug&gt;.&lt;BaseDomain&gt; 识别租户）。</summary>
-    public string BaseDomain { get; set; } = "localhost";
+    /// <summary>租户基域（TenantMiddleware 按 Host: &lt;slug&gt;.&lt;BaseDomain&gt; 识别租户）。默认 = 公网基域。</summary>
+    public string BaseDomain { get; set; } = "245959623.xyz";
 
     /// <summary>
     /// 租户 slug（TenantMiddleware 按 Host: &lt;slug&gt;.&lt;BaseDomain&gt; 识别租户）。
-    /// **不再写死评估环境值**：必须由部署方经 stelarith-sync.json 配置。
-    /// 教训：写死一个错误 slug（如 e2e-school）会让所有请求 403 → 触发 CCProtect 自封 IP（429）
-    /// → 插件永远拉不到课表 → 主界面绑定 null → 前台空白。
+    /// 默认 `demo-class`，与默认公网入口 `https://demo-class.245959623.xyz` 的子域一致。
+    /// **多租户部署必须覆盖**：改这里的同时也要改 ClientAppBase 的子域（二者同源，只改其一必 403）。
+    /// 教训：写死一个**错误** slug 会让所有请求 403 → 触发 CCProtect 自封 IP（429）
+    /// → 插件永远拉不到课表 → 主界面绑定 null → 前台空白（现象与原因毫无相似性）。
     /// </summary>
-    public string Slug { get; set; } = "";
+    public string Slug { get; set; } = "demo-class";
 
     /// <summary>本机在 CIMS 注册的客户端 uid（教室一体机标识）。留空则回落到机器名。</summary>
     public string ClientUid { get; set; } = "";
@@ -93,8 +102,8 @@ public sealed class StelarithSyncOptions
     // 而 403 的原因（租户识别靠 Host 头）从现象上完全看不出来。
     // 因此这里把两套值都存下来，切换时一起写，杜绝半改。
 
-    /// <summary>当前网络模式：`lan`（内网直连）| `wan`（公网域名）。</summary>
-    public string NetworkMode { get; set; } = "lan";
+    /// <summary>当前网络模式：`wan`（公网域名，默认）| `lan`（内网直连，备用）。</summary>
+    public string NetworkMode { get; set; } = "wan";
 
     /// <summary>内网模式的服务基址（默认直连本机 CIMS）。</summary>
     public string LanClientAppBase { get; set; } = "http://127.0.0.1:8096";
@@ -103,14 +112,13 @@ public sealed class StelarithSyncOptions
     public string LanBaseDomain { get; set; } = "localhost";
 
     /// <summary>
-    /// 公网模式的服务基址，如 `https://demo-class.example.edu`。
-    /// 留空 = 本机尚未配置公网入口，切换会被拒绝并提示（而不是写进一个空 URL
-    /// 让整套同步静默失败）。
+    /// 公网模式的服务基址，默认 `https://demo-class.245959623.xyz`。
+    /// 留空会被 ApplyNetworkMode 拒绝切换并提示（而不是写进一个空 URL 让整套同步静默失败）。
     /// </summary>
-    public string WanClientAppBase { get; set; } = "";
+    public string WanClientAppBase { get; set; } = "https://demo-class.245959623.xyz";
 
-    /// <summary>公网模式的租户基域，如 `example.edu`（与服务端 CIMS_BASE_DOMAIN 一致）。</summary>
-    public string WanBaseDomain { get; set; } = "";
+    /// <summary>公网模式的租户基域，默认 `245959623.xyz`（与服务端 CIMS_BASE_DOMAIN 一致）。</summary>
+    public string WanBaseDomain { get; set; } = "245959623.xyz";
 
     /// <summary>
     /// 按模式把 `ClientAppBase` / `BaseDomain` 一起刷成该模式对应的值。
