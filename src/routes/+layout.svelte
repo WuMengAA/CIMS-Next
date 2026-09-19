@@ -47,6 +47,10 @@
 	// 否则 /admin 会同时渲染前台侧栏与后台侧栏，两列导航并列。
 	const isAdmin = $derived(page.url.pathname.startsWith("/admin"));
 
+	// 沉浸式全屏区：档案库引擎要在无任何站点外壳（无侧边栏/顶栏/盒框）下
+	// 铺满整个视口，像原版 RhineLabUI 那样全屏沉浸。此路由脱离 Sidebar 外壳直接渲染。
+	const isImmersive = $derived(page.url.pathname === "/docs/archives");
+
 	// 路由切换：仅重放内容区 reveal 分段动画。
 	// 必须在 afterNavigate（新页面 DOM 挂载完成后）重放，而非 onNavigate——
 	// onNavigate 在换页前执行，querySelector 命中的是即将销毁的旧页面节点，
@@ -168,54 +172,63 @@
 <!-- 客户端导航后播报新页面标题（仅读屏可闻） -->
 <div class="sr-only" role="status" aria-live="polite">{announced}</div>
 
-<Sidebar.Provider style="--sidebar-width: {getSidebarWidthPx()}px">
-	<!-- 移动端抽屉：导航后自动收起（必须在 Provider 内才能拿到 sidebar context） -->
-	<SidebarAutoClose />
+{#if isImmersive}
+	<!-- 沉浸式全屏：档案库等脱离站点外壳，children 裸渲染占满视口 -->
+	{#key page.url.pathname}
+		<div id="main-content" tabindex="-1" style="view-transition-name: none">
+			{@render children()}
+		</div>
+	{/key}
+{:else}
+	<Sidebar.Provider style="--sidebar-width: {getSidebarWidthPx()}px">
+		<!-- 移动端抽屉：导航后自动收起（必须在 Provider 内才能拿到 sidebar context） -->
+		<SidebarAutoClose />
 
-	<!-- 侧栏滚动位置记忆：前台/后台共用同一份键，切换过去不会"重置" -->
-	<SidebarMemory />
+		<!-- 侧栏滚动位置记忆：前台/后台共用同一份键，切换过去不会"重置" -->
+		<SidebarMemory />
 
-	<!-- 后台自带一套侧边栏与顶栏；此处不能再叠加前台外壳，
-	     否则 /admin 会出现「站点侧栏 + 后台侧栏」两列导航（实测 data-slot="sidebar" 出现两次），
-	     既挤压内容区也让导航语义混乱。 -->
-	{#if !isAdmin}
-		<AppSidebar data={data} />
-	{/if}
-	<Sidebar.Inset>
+		<!-- 后台自带一套侧边栏与顶栏；此处不能再叠加前台外壳，
+		     否则 /admin 会出现「站点侧栏 + 后台侧栏」两列导航（实测 data-slot="sidebar" 出现两次），
+		     既挤压内容区也让导航语义混乱。 -->
 		{#if !isAdmin}
-			<header
-				class="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-3 md:px-4"
-			>
-				<Sidebar.Trigger class="size-11 md:size-9">
-					<PanelLeft class="size-4" />
-					<span class="sr-only">Toggle Sidebar</span>
-				</Sidebar.Trigger>
-				<Separator orientation="vertical" class="h-4" />
-				<span class="min-w-0 truncate text-sm text-muted-foreground">{data.settings.title}</span>
-				<div class="ml-auto flex shrink-0 items-center gap-2 pl-2">
-					<!-- 右上角搜索：点开即搜，不离开当前页 -->
-					<SearchButton bind:open={searchOpen} />
-					<ThemeToggle />
-				</div>
-			</header>
-			<AnnouncementBanner />
+			<AppSidebar data={data} />
 		{/if}
-		{#if showSkeleton}
-			<Container><ContentSkeleton /></Container>
-		{:else}
-			<!-- 页面过渡：{#key} 让不支持的浏览器也能重放入场淡入；
-			     支持 View Transitions 时 pageIn 返回空配置，避免与原生过渡叠加。
-			     后台路由把命名权让给 admin 布局（name: none），防止两层同时动画。 -->
-			{#key page.url.pathname}
-				<div
-					id="main-content"
-					tabindex="-1"
-					in:pageIn
-					style="view-transition-name: {page.url.pathname.startsWith('/admin') ? 'none' : 'page-content'}"
+		<Sidebar.Inset>
+			{#if !isAdmin}
+				<header
+					class="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-3 md:px-4"
 				>
-					{@render children()}
-				</div>
-			{/key}
-		{/if}
-	</Sidebar.Inset>
-</Sidebar.Provider>
+					<Sidebar.Trigger class="size-11 md:size-9">
+						<PanelLeft class="size-4" />
+						<span class="sr-only">Toggle Sidebar</span>
+					</Sidebar.Trigger>
+					<Separator orientation="vertical" class="h-4" />
+					<span class="min-w-0 truncate text-sm text-muted-foreground">{data.settings.title}</span>
+					<div class="ml-auto flex shrink-0 items-center gap-2 pl-2">
+						<!-- 右上角搜索：点开即搜，不离开当前页 -->
+						<SearchButton bind:open={searchOpen} />
+						<ThemeToggle />
+					</div>
+				</header>
+				<AnnouncementBanner />
+			{/if}
+			{#if showSkeleton}
+				<Container><ContentSkeleton /></Container>
+			{:else}
+				<!-- 页面过渡：{#key} 让不支持的浏览器也能重放入场淡入；
+				     支持 View Transitions 时 pageIn 返回空配置，避免与原生过渡叠加。
+				     后台路由把命名权让给 admin 布局（name: none），防止两层同时动画。 -->
+				{#key page.url.pathname}
+					<div
+						id="main-content"
+						tabindex="-1"
+						in:pageIn
+						style="view-transition-name: {page.url.pathname.startsWith('/admin') ? 'none' : 'page-content'}"
+					>
+						{@render children()}
+					</div>
+				{/key}
+			{/if}
+		</Sidebar.Inset>
+	</Sidebar.Provider>
+{/if}
