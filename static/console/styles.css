@@ -12,8 +12,62 @@
    ============================================================================ */
 
 :root {
-  /* website design tokens（dark-only，与 layout.css 同源） */
+  /* 公共：字体与运动曲线（亮/暗通用） */
   --radius: 0.5rem;
+  --font-sans: "Inter Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-heading: "Lora Variable", "Tiempos Headline", Georgia, "Songti SC", serif;
+  --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);
+  --sheen: rgba(255, 255, 255, 0.55);
+  --shadow-card: rgba(0, 0, 0, 0.12);
+  --mask-bg: rgba(250, 249, 245, 0.97);
+
+  /* 亮色令牌（默认；与官网 layout.css :root 同源） */
+  --background: #faf9f5;
+  --foreground: #1b1b19;
+  --card: #ffffff;
+  --card-nested: #f4f3ee;
+  --card-foreground: #1b1b19;
+  --primary: #a8482b;
+  --primary-foreground: #ffffff;
+  --secondary: #eceae3;
+  --secondary-foreground: #1b1b19;
+  --muted: #f0eee8;
+  --muted-foreground: #63625a;
+  --accent: #f0eee8;
+  --accent-foreground: #1b1b19;
+  --destructive: #b3261e;
+  --success: #3f6212;
+  --warning: #7a4f00;
+  --border: oklch(0% 0 0 / 0.14);
+  --input: oklch(0% 0 0 / 0.10);
+  --ring: #a8482b;
+
+  --sidebar: #f2f1ec;
+  --sidebar-foreground: #1b1b19;
+  --sidebar-primary: #a8482b;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e8e6df;
+  --sidebar-accent-foreground: #1b1b19;
+  --sidebar-border: oklch(0% 0 0 / 0.14);
+
+  /* 面板内部别名（亮色） */
+  --bg: #faf9f5;
+  --panel: #ffffff;
+  --panel2: #f4f3ee;
+  --line: oklch(0% 0 0 / 0.14);
+  --text: #1b1b19;
+  --mutedx: #63625a;
+  --dim: #75736b;
+  --accentx: #a8482b;
+  --ok: #3f6212;
+  --warn: #7a4f00;
+  --err: #b3261e;
+  --r: 0.5rem;
+}
+
+.dark {
+  /* 暗色令牌（覆盖；与官网 layout.css .dark 同源） */
   --background: #1b1b19;
   --foreground: #faf9f5;
   --card: oklch(28% 0.004 106.6);
@@ -42,7 +96,10 @@
   --sidebar-accent-foreground: #faf9f5;
   --sidebar-border: oklch(100% 0 0 / 0.24);
 
-  /* 面板内部别名（沿用原变量名，值取自 website token） */
+  --sheen: rgba(255, 255, 255, 0.35);
+  --shadow-card: rgba(0, 0, 0, 0.5);
+  --mask-bg: rgba(27, 27, 25, 0.97);
+
   --bg: #1b1b19;
   --panel: oklch(28% 0.004 106.6);
   --panel2: oklch(34% 0.004 106.6);
@@ -54,19 +111,12 @@
   --ok: #788c5d;
   --warn: #d8b25c;
   --err: #f75d59;
-  --r: 0.5rem;
-
-  /* 字体：正文走无衬线，标题走 Lora 衬线（与网站一致） */
-  --font-sans: "Inter Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-heading: "Lora Variable", "Tiempos Headline", Georgia, "Songti SC", serif;
-
-  /* 运动曲线（取 layout.css §全局分段加载动画） */
-  --spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; color-scheme: dark; }
+html, body { height: 100%; }
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 13px/1.6 var(--font-sans);
@@ -182,7 +232,7 @@ button.danger:hover { background: rgba(247,93,89,.1); }
 .btn-shine::after {
   content: ""; position: absolute; top: 0; left: -80%;
   width: 50%; height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+  background: linear-gradient(90deg, transparent, var(--sheen), transparent);
   transform: skewX(-20deg); transition: left .5s ease; pointer-events: none;
 }
 .btn-shine:hover::after { left: 130%; }
@@ -269,7 +319,7 @@ tr.dev-group > td {
 tr.dev-group > td b { color: var(--text); }
 
 .mask {
-  position: absolute; inset: 0; background: rgba(27,27,25,.97);
+  position: absolute; inset: 0; background: var(--mask-bg);
   display: flex; align-items: center; justify-content: center; z-index: 50;
 }
 .mask.hidden { display: none; }
@@ -436,7 +486,7 @@ button, select, input, textarea { touch-action: manipulation; }
 .li-dot.warn { background: var(--warn); }
 .li-dot.accent { background: var(--primary); }
 .li-dot.err { background: var(--err); }
-.li-dot.dim { background: #55534c; }
+.li-dot.dim { background: var(--dim); }
 .li-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 56vw; }
 .li-time { color: var(--dim); font-size: 11px; flex: 0 0 auto; }
 

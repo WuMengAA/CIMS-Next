@@ -1,5 +1,16 @@
 // 星集控 · 面板逻辑（零依赖，事件委托，渲染即绑定）
 (function () {
+  // 主题跟随：宿主后台（SvelteKit）切亮/暗时实时 postMessage 过来，
+  // 同步到 <html> 的 dark 类，避免整页 reload 丢视图状态。
+  window.addEventListener("message", (e) => {
+    const d = e.data;
+    if (!d || d.type !== "theme") return;
+    if (d.theme === "dark" || d.theme === "light") {
+      document.documentElement.classList.toggle("dark", d.theme === "dark");
+      try { localStorage.setItem("console-theme", d.theme); } catch (_) {}
+    }
+  });
+
   const $ = (s) => document.querySelector(s);
   const view = $("#view");
   let current = "dashboard";
