@@ -1462,17 +1462,18 @@ export class ArchiveScene {
     const responsiveOpening = Boolean(cinematic) && this.container.closest<HTMLElement>("[data-layout]")?.dataset.layout === "opening";
     const openingAspect = responsiveOpening ? this.container.clientWidth / this.container.clientHeight / (16 / 9) : 1;
     const openingSpan = (value: number) => value / Math.min(1, openingAspect);
+    // 归档浏览取景：原版收敛到极远长焦（140 / fov≈3°），那是为 40 份高密
+    // 档案墙调优的。我们教程文档少、墙稀疏，3° 长焦下卡片只剩一两个角落、
+    // 大片空地面（用户反馈「卡片全跑下面去了」）。把浏览态距离收到更近的 72
+    // （引擎 detail 取景的参考距离），fov 相应变宽、卡片落入画面且可读。
     const distance = THREE.MathUtils.lerp(
-      THREE.MathUtils.lerp(28 + 7 * orbit, 140, settle),
+      THREE.MathUtils.lerp(28 + 7 * orbit, 72, settle),
       72,
       detail,
     );
     const arrayAim = new THREE.Vector3(
       -1.091,
-      // 卡片锚在 y=-4.6；原版倾向让镜头瞄准 y≈0（适应高密度满墙）。
-      // 我们教程列数少、墙偏稀疏，若仍瞄 0 会让卡片整片贴近/越出视口下缘。
-      // 收敛后回到卡片平面，让档案卡落入视野中央。
-      THREE.MathUtils.lerp(-2.55 + 0.4 * orbit, -4.6, settle),
+      THREE.MathUtils.lerp(-2.55 + 0.4 * orbit, -0.045, settle),
       THREE.MathUtils.lerp(2.48, 0.481, settle),
     );
     const cameraAim = arrayAim.clone();
