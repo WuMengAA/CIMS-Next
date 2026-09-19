@@ -166,7 +166,11 @@ h1, h2, h3, h4, h5, .brand, .login-card h2, .card h3, .hero-title {
   cursor: pointer; font-size: 13px; font-family: var(--font-sans);
   transition: background-color .18s ease, color .18s ease, transform .12s ease;
   position: relative;
+  /* 图标 + 文案水平对齐（内联 SVG 用 currentColor 自动跟随主题） */
+  display: flex; align-items: center; gap: 10px;
 }
+/* 内联 SVG 图标：固定 18px、不伸缩、继承文字色 → 亮/暗主题自动跟随 */
+.nav svg { flex: 0 0 auto; display: block; width: 18px; height: 18px; color: currentColor; }
 .nav:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
 .nav.active {
   background: var(--primary); color: var(--primary-foreground);
@@ -176,6 +180,9 @@ h1, h2, h3, h4, h5, .brand, .login-card h2, .card h3, .hero-title {
   content: ""; position: absolute; left: 0; top: 20%; bottom: 20%;
   width: 3px; border-radius: 2px; background: var(--ring);
 }
+
+/* 抽屉身份条（窄屏浮层才显示，见下方 @media）：与外层 CMS 抽屉做视觉区分 */
+.sidebar-head { display: none; }
 
 /* ===== 移动端侧栏抽屉 =====
    宽屏：侧栏常驻列，按钮与遮罩不出现，布局与旧版逐像素一致。
@@ -410,9 +417,28 @@ button, select, input, textarea { touch-action: manipulation; }
     transform: translateX(-100%);
     transition: transform .24s var(--ease-buffer);
     box-shadow: 2px 0 16px rgba(0,0,0,.45);
+    /* 顶部陶土橙身份条：与外层 CMS 抽屉（无此色条）一眼区分 */
+    border-top: 3px solid var(--primary);
   }
   #sidebar.open { transform: translateX(0); }
   #sidebar .nav { font-size: 13.5px; }
+  /* 抽屉内品牌头：明确这是「星集控」面板抽屉，而非站点 CMS 导航抽屉 */
+  #sidebar .sidebar-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 2px 12px 12px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--sidebar-border);
+    color: var(--sidebar-foreground);
+  }
+  #sidebar .sidebar-head .sh-mark {
+    width: 26px; height: 26px; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; background: var(--primary); color: var(--primary-foreground);
+    font-size: 14px; font-weight: 600; font-family: var(--font-sans);
+    box-shadow: 0 2px 8px -2px rgba(204,120,92,.5);
+  }
+  #sidebar .sidebar-head .sh-text {
+    font-family: var(--font-heading); font-size: 14px; font-weight: 500; letter-spacing: .01em;
+  }
   #main { overflow-x: auto; padding: 12px 10px 10px; }
   table { min-width: 520px; font-size: 11.5px; }
   th, td { padding: 6px 7px; }
