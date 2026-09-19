@@ -136,7 +136,11 @@ public sealed class StelarithCommandPollerService : BackgroundService
                 // 通过静态锁，保证与守护线程互斥
                 lock (PollLock)
                 {
-                    if (_staticOpt is not null) PollOnceAsync(_staticOpt, _staticLogger).GetAwaiter().GetResult();
+                    // 每轮重新读盘取配置：网络模式（内网↔公网）切换后**无需重启宿主**即可生效。
+                    // 只读一个小 JSON，成本远低于"让运维跑一趟教室去重启 ClassIsland"。
+                    var live = StelarithSyncOptions.Load();
+                    _staticOpt = live;
+                    PollOnceAsync(live, _staticLogger).GetAwaiter().GetResult();
                 }
             }
             catch (OperationCanceledException)
@@ -158,7 +162,9 @@ public sealed class StelarithCommandPollerService : BackgroundService
         {
             lock (PollLock)
             {
-                PollOnceAsync(_staticOpt!, _staticLogger).GetAwaiter().GetResult();
+                // 同上：守护线程每轮也重读，保证两条循环看到的是同一份最新配置。
+                _staticOpt = StelarithSyncOptions.Load();
+                PollOnceAsync(_staticOpt, _staticLogger).GetAwaiter().GetResult();
             }
             Thread.Sleep(MinPollInterval);
         }

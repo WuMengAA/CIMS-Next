@@ -57,9 +57,42 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
     /// <summary>两次不同内容的推送最小间隔（秒），避免连续报错把通知刷爆。</summary>
     private const double MinGapSeconds = 1.5;
 
-    /// <summary>推一条播报：遮罩显示标题，正文显示内容。带同内容去重 + 短时限频 + 字数自适应时长。
-    /// 任何异常都被吞掉，绝不影响命令执行。</summary>
-    public void Push(string title, string? content, double seconds = 8)
+    /// <summary>
+    /// 集控通知的附加开关（对应 CIMS <c>NotificationPayload</c> 的布尔字段）。
+    /// 为 <c>null</c> = 「插件内部推送」（如"配置已同步"）→ 不动
+    /// <c>RequestNotificationSettings</c>，让宿主按自己的提醒设置处理。
+    /// </summary>
+    public sealed class NotificationFlags
+    {
+        public bool IsSpeechEnabled { get; init; }
+        public bool IsEffectEnabled { get; init; }
+        public bool IsSoundEnabled { get; init; }
+        public bool IsTopmost { get; init; }
+        public bool IsEmergency { get; init; }
+    }
+
+    /// <summary>
+    /// 推一条播报：**遮罩只显示标题（且不设时长）**，正文以「滚动文本浮层」显示并由它携带时长。
+    /// 带同内容去重 + 短时限频。
+    ///
+    /// <para><b>时长挂在谁身上 —— 曾搞错过，务必看清：</b>
+    /// 官方 <c>ClassIsland/Services/NotificationProviders/ManagementNotificationProvider.cs</c> 的做法是：
+    /// <code>
+    /// MaskContent    = NotificationContent.CreateTwoIconsMask(maskText, rightIcon: "\uE7E7")   // ← 不设 Duration
+    /// OverlayContent = NotificationContent.CreateRollingTextContent(content, seconds * repeatCounts, repeatCounts)
+    /// RequestNotificationSettings = { IsSettingsEnabled = true, IsSpeechEnabled, IsNotificationEffectEnabled,
+    ///                                 IsNotificationSoundEnabled, IsNotificationTopmostEnabled }
+    /// </code>
+    /// 即：**时长属于正文浮层**，遮罩用默认值。旧实现把同一个 Duration 同时写到 MaskContent 与
+    /// OverlayContent 上，等于让遮罩替正文决定显示时间 —— 这正是「不应该是遮罩的时长」所指。</para>
+    ///
+    /// <para><paramref name="seconds"/> ≤ 0：取官方默认 5 秒，并在正文较长时按字数**抬高下限**
+    /// （只增不减，避免长广播被 5 秒掐断）。&gt; 0：严格照用集控端给的 <c>DurationSeconds</c>。</para>
+    /// </summary>
+    /// <param name="repeatCounts">重复次数（官方为 duration × repeatCounts 的总时长）。</param>
+    /// <param name="flags">集控载荷里的提醒开关；null 表示不改动请求级提醒设置。</param>
+    public void Push(string title, string? content, double seconds = 0, int repeatCounts = 1,
+        NotificationFlags? flags = null)
     {
         try
         {
@@ -86,11 +119,14 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
                 _recentPushTicks = now;
             }
 
-            // 3) 时长随字数自适应：默认时长(8)按「读速≈每字0.4s +基线」推导，长广播不被掐断、
-            //    短提示不长时间占屏；外部显式传2/5/6等特殊时长依然保留。
-            var effective = seconds;
-            if (seconds == 8.0) // 默认 → 自适应
-                effective = Math.Clamp(2.5 + (content?.Length ?? 0) * 0.12, 3.0, 20.0);
+            // 3) 时长策略（官方语义为准）：
+            //    · 集控端显式给了 DurationSeconds（>0）→ 严格照用（上限 1 小时，与 CIMS 字段约束一致）；
+            //    · 未指定（≤0）→ 官方默认 5 秒，并**只在正文较长时抬高下限**（只增不减），
+            //      这样长广播不会被 5 秒掐断，短提示也不会长时间占屏。
+            var repeat = Math.Max(1, repeatCounts);
+            double effective;
+            if (seconds > 0) effective = Math.Min(seconds, 3600.0);
+            else effective = Math.Max(5.0, 2.5 + (content?.Length ?? 0) * 0.12);
 
             // 构造 NotificationContent / LucideIconSource 等 Avalonia 控件必须在 UI 线程进行，
             // 而本方法由后台轮询线程（守护线程/ThreadPool）调用，直接构造会抛 "Call from invalid thread"。
@@ -98,29 +134,45 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
             var effTitle = safeTitle;
             var effContent = content;
             var effDuration = effective;
+            var effRepeat = repeat;
+            var effFlags = flags;
             Dispatcher.UIThread.InvokeAsync(() =>
             {
                 try
                 {
-                    var duration = TimeSpan.FromSeconds(effDuration > 0 ? effDuration : 8);
-
+                    // 遮罩：**不设 Duration**（官方语义）—— 整体显示时间由正文浮层的时长决定。
                     var mask = NotificationContent.CreateTwoIconsMask(effTitle);
-                    mask.Duration = duration;
 
+                    // 正文：滚动文本浮层，时长挂在它身上（duration × repeatCounts，与官方一致）。
                     NotificationContent? overlay = null;
                     if (!string.IsNullOrWhiteSpace(effContent))
                     {
-                        overlay = NotificationContent.CreateSimpleTextContent(effContent!);
-                        overlay.Duration = duration;
+                        var total = TimeSpan.FromSeconds(effDuration) * effRepeat;
+                        overlay = NotificationContent.CreateRollingTextContent(effContent!, total, effRepeat);
                     }
 
-                    ShowNotification(new NotificationRequest
+                    var req = new NotificationRequest
                     {
                         MaskContent = mask,
                         OverlayContent = overlay,
-                    });
+                    };
 
-                    Diag($"Push ok: title={effTitle} contentLen={effContent?.Length ?? 0} duration={effDuration:N1}s");
+                    // 只有这些开关来自集控载荷时才写请求级提醒设置（与官方一致）；
+                    // 插件内部推送保持"不动它"，让宿主的提醒设置照常生效。
+                    if (effFlags is not null && req.RequestNotificationSettings is not null)
+                    {
+                        var s = req.RequestNotificationSettings;
+                        s.IsSettingsEnabled = true;
+                        s.IsSpeechEnabled = effFlags.IsSpeechEnabled;
+                        s.IsNotificationEffectEnabled = effFlags.IsEffectEnabled;
+                        s.IsNotificationSoundEnabled = effFlags.IsSoundEnabled;
+                        s.IsNotificationTopmostEnabled = effFlags.IsTopmost;
+                    }
+
+                    ShowNotification(req);
+
+                    Diag($"Push ok: title={effTitle} contentLen={effContent?.Length ?? 0} " +
+                         $"overlayDuration={effDuration:N1}s×{effRepeat} flags={(effFlags is null ? "宿主默认" : "集控载荷")}");
                 }
                 catch (Exception ex)
                 {
