@@ -81,6 +81,7 @@ public sealed class StelarithCommandPollerService : BackgroundService
     {
         // 兜底守护：宿主可能不调 StartAsync（AIIsland 启动异常连累），此处直接用后台线程拉起轮询
         PollerDiag("static ctor: 拉起守护轮询线程");
+        try { _staticOpt ??= StelarithSyncOptions.Load(); } catch { }
         var t = new Thread(() =>
         {
             try
@@ -122,37 +123,12 @@ public sealed class StelarithCommandPollerService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // 宿主正常启动路径（可能不会被调用，见类注释）
-        PollerDiag($"ExecuteAsync entered. opt: slug={_opt.Slug} uid={_opt.ClientUid}");
-        _logger.LogInformation(
-            "Stelarith poller: 宿主启动路径，轮询 Host={host} URL={url}（Slug={slug}, ClientUid={uid}）",
-            $"{_opt.Slug}.{_opt.BaseDomain}",
-            $"{_opt.ClientAppBase}/api/v1/client/{_opt.ClientUid}/command/queued",
-            _opt.Slug, _opt.ClientUid);
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                // 通过静态锁，保证与守护线程互斥
-                lock (PollLock)
-                {
-                    // 每轮重新读盘取配置：网络模式（内网↔公网）切换后**无需重启宿主**即可生效。
-                    // 只读一个小 JSON，成本远低于"让运维跑一趟教室去重启 ClassIsland"。
-                    var live = StelarithSyncOptions.Load();
-                    _staticOpt = live;
-                    PollOnceAsync(live, _staticLogger).GetAwaiter().GetResult();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Stelarith poller: 轮询命令队列失败，下个周期重试");
-            }
-            await Task.Delay(MinPollInterval, stoppingToken);
-        }
+        // ⚠️ 本方法只是占位：真正的同步/轮询/上报考由**专用守护线程**执行（见静态构造函数）。
+        // 为什么不能在这里做：BackgroundService.ExecuteAsync 跑在**线程池线程**上，
+        // 而本项目的 HTTP 调用是同步阻塞（.GetAwaiter().GetResult()）→ 会持续占用线程池线程
+        // → **线程池饥饿** → 宿主 Host.StartAsync 的异步续体排不上队 → AppStarted 永不触发
+        // → ClassIsland 主界面不创建。实测：把工作挪出 ExecuteAsync 后主界面立刻恢复。
+        await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
     }
 
     /// <summary>守护线程循环：与 ExecuteAsync 互斥地持续轮询。</summary>
@@ -269,15 +245,13 @@ public sealed class StelarithCommandPollerService : BackgroundService
 
     /// <summary>
     /// 文件诊断（不依赖宿主 logger；宿主启动异常时 logger 可能被 Dispose 丢失）。
-    /// 写入 AppContext.BaseDirectory/ste-poller-diag.log。
+    /// 写入官方 PluginConfigFolder/logs/ste-poller-diag.log。
     /// </summary>
     private static void PollerDiag(string msg)
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-poller-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-poller-diag.log", msg);
         }
         catch { /* 忽略诊断写失败 */ }
     }

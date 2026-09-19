@@ -281,9 +281,7 @@ internal static class StelarithReflection
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-reflect-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-reflect-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }

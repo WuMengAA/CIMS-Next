@@ -20,7 +20,7 @@
       manifest 仍是旧版（Content 项只在构建时复制），部署后界面仍显示 1.2.0.0。
       改 version 后**必须重新构建并连 manifest.yml 一起部署**。
     -->
-    <Version>1.0.1.0</Version>
+    <Version>1.0.8.0</Version>
   </PropertyGroup>
 
   <!--
@@ -51,6 +51,8 @@
   <!--
     集控面板入口需要 Avalonia 的托盘菜单类型（NativeMenuItem 等）。
     运行时 ClassIsland 已加载这些程序集，此处仅编译期引用（HintPath 指向运行版目录，随部署环境替换）。
+    上岛组件（可选，用户手动添加到主界面）需要 Avalonia 的媒体/线程/标记扩展等类型，
+    同样只编译期引用、不随插件发布（Private=false）。
   -->
   <ItemGroup>
     <Reference Include="Avalonia.Base">
@@ -59,6 +61,14 @@
     </Reference>
     <Reference Include="Avalonia.Controls">
       <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Controls.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Avalonia.Markup.Xaml">
+      <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Markup.Xaml.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Avalonia.Markup">
+      <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Markup.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

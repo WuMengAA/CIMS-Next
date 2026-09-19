@@ -450,7 +450,7 @@ public sealed class StelarithCommandHandler
     {
         try
         {
-            var dir = AppContext.BaseDirectory;
+            var dir = StelarithLog.ConfigDir!;
             var path = System.IO.Path.Combine(dir, "stelarith-config-snapshot.json");
             var snap = StelarithSyncState.Current;
             System.IO.File.WriteAllText(path, JsonSerializer.Serialize(new

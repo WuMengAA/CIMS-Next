@@ -1,9 +1,15 @@
 {
-  "_说明": "把本文件复制成插件目录下的 stelarith-sync.json 即可生效（改完重启 ClassIsland）。",
+  "_说明": "把本文件复制成插件目录 / PluginConfigFolder 下的 stelarith-sync.json 即可生效（改完重启 ClassIsland）。默认即公网，无需再切模式。",
   "_字段说明": {
-    "ClientAppBase": "CIMS 客户端应用基址（教室端拉配置/上报的落点）",
-    "Slug": "租户 slug，与 Host 头 <slug>.<BaseDomain> 共同决定租户",
-    "ClientUid": "本机在 CIMS 注册的客户端 uid（教室一体机标识）",
+    "NetworkMode": "wan=公网域名（默认；教室机在校园网/外网都能直连）| lan=内网直连（备用）",
+    "ClientAppBase": "CIMS 客户端应用基址（教室端拉配置/上报的落点）；默认=公网入口",
+    "BaseDomain": "租户基域，与 Host 头 <slug>.<BaseDomain> 共同决定租户；默认=公网基域",
+    "Slug": "租户 slug（多租户部署必须改，且要与 ClientAppBase 的子域一致）",
+    "ClientUid": "本机在 CIMS 注册的客户端 uid（教室一体机标识）；留空则用机器名",
+    "LanClientAppBase": "内网模式备用基址（直连本机 CIMS）",
+    "LanBaseDomain": "内网模式备用基域",
+    "WanClientAppBase": "公网模式基址（按模式切换时与 WanBaseDomain 一起写入 ClientAppBase/BaseDomain）",
+    "WanBaseDomain": "公网模式基域（与服务端 CIMS_BASE_DOMAIN 一致）",
     "NotificationSourceName": "播报来源名——教室大屏遮罩上显示的发送方，默认「集控广播」",
     "VoiceHubBase": "校园点歌站基址，留空则不启用点歌类上岛组件",
     "VoiceHubKey": "点歌站开放 API Key（需 songs:read 权限）",
@@ -11,10 +17,15 @@
     "SongboardRefreshSeconds": "点歌数据刷新间隔（秒，最小 5）"
   },
 
-  "ClientAppBase": "http://127.0.0.1:8096",
-  "BaseDomain": "localhost",
+  "NetworkMode": "wan",
+  "ClientAppBase": "https://demo-class.245959623.xyz",
+  "BaseDomain": "245959623.xyz",
   "Slug": "demo-class",
-  "ClientUid": "lab-pc-001",
+  "ClientUid": "",
+  "LanClientAppBase": "http://127.0.0.1:8096",
+  "LanBaseDomain": "localhost",
+  "WanClientAppBase": "https://demo-class.245959623.xyz",
+  "WanBaseDomain": "245959623.xyz",
   "ClassPlanName": "default_classplan",
   "ComponentsName": "default_components",
   "RefreshIntervalSeconds": 30,
@@ -23,7 +34,7 @@
 
   "NotificationSourceName": "集控广播",
 
-  "VoiceHubBase": "https://voicehub.example.edu",
+  "VoiceHubBase": "",
   "VoiceHubKey": "",
   "SongboardResource": "songboard",
   "SongboardRefreshSeconds": 15

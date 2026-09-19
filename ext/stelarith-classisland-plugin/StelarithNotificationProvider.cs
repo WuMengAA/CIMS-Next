@@ -186,14 +186,12 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
         }
     }
 
-    /// <summary>文件诊断：写 AppContext.BaseDirectory/ste-notify-diag.log，不依赖宿主 logger。</summary>
+    /// <summary>文件诊断：写官方 PluginConfigFolder/logs/ste-notify-diag.log，不依赖宿主 logger。</summary>
     internal static void Diag(string msg)
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-notify-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-notify-diag.log", msg);
         }
         catch { /* 诊断写入失败忽略 */ }
     }

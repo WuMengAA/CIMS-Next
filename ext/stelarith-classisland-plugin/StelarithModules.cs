@@ -99,7 +99,7 @@ public static class StelarithModules
         get { lock (Lock) return _revision; }
     }
 
-    private static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "stelarith-modules.json");
+    private static string ConfigPath => Path.Combine(StelarithLog.ConfigDir!, "stelarith-modules.json");
 
     private static void EnsureLoaded()
     {
@@ -109,6 +109,23 @@ public static class StelarithModules
             _loaded = true;
             _state = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (var def in All) _state[def.Id] = def.DefaultEnabled;
+
+            // 一次性迁移：旧版把 stelarith-modules.json 写在程序目录（AppContext.BaseDirectory），
+            // 现改为官方 PluginConfigFolder。若新位置没有、旧位置有，则搬过去，避免用户开关丢失。
+            try
+            {
+                var legacy = Path.Combine(AppContext.BaseDirectory, "stelarith-modules.json");
+                if (!File.Exists(ConfigPath) && File.Exists(legacy))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
+                    File.Copy(legacy, ConfigPath, true);
+                    Diag("migrated modules config from program dir -> " + ConfigPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Diag("modules config migration skipped: " + ex.Message);
+            }
 
             try
             {
@@ -306,9 +323,7 @@ public static class StelarithModules
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-modules-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-modules-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }

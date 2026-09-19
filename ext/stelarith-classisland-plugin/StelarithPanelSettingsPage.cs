@@ -275,8 +275,7 @@ public class StelarithPanelSettingsPage : SettingsPageBase
     {
         try
         {
-            var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location)
-                      ?? AppContext.BaseDirectory;
+            var dir = StelarithLog.ConfigDir!;
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", dir)
             {
                 UseShellExecute = true,
