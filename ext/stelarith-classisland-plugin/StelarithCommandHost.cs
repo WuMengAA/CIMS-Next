@@ -179,14 +179,12 @@ public class StelarithCommandHost : BackgroundService
         };
     }
 
-    /// <summary>文件诊断：写 AppContext.BaseDirectory/ste-cmdhost-diag.log。</summary>
+    /// <summary>文件诊断：写官方 PluginConfigFolder/logs/ste-cmdhost-diag.log。</summary>
     internal static void CmdHostDiag(string msg)
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-cmdhost-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-cmdhost-diag.log", msg);
         }
         catch { /* 诊断写入失败忽略 */ }
     }

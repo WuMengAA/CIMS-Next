@@ -127,9 +127,7 @@ public static class StelarithSongBoard
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-songboard-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-songboard-diag.log", msg);
         }
         catch { /* 诊断写入失败忽略 */ }
     }

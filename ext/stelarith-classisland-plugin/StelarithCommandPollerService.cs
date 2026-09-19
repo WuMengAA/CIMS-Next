@@ -245,15 +245,13 @@ public sealed class StelarithCommandPollerService : BackgroundService
 
     /// <summary>
     /// 文件诊断（不依赖宿主 logger；宿主启动异常时 logger 可能被 Dispose 丢失）。
-    /// 写入 AppContext.BaseDirectory/ste-poller-diag.log。
+    /// 写入官方 PluginConfigFolder/logs/ste-poller-diag.log。
     /// </summary>
     private static void PollerDiag(string msg)
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-poller-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-poller-diag.log", msg);
         }
         catch { /* 忽略诊断写失败 */ }
     }

@@ -44,9 +44,7 @@ internal static class StelarithProfileWriter
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-profile-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-profile-diag.log", msg);
         }
         catch { /* 诊断写失败忽略 */ }
     }

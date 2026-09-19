@@ -272,14 +272,12 @@ public sealed class StelarithSyncService : BackgroundService
         return body;
     }
 
-    /// <summary>文件诊断（不依赖宿主 logger；宿主启动异常时 logger 可能丢失）。写入 AppContext.BaseDirectory/ste-sync-diag.log。</summary>
+    /// <summary>文件诊断（不依赖宿主 logger；宿主启动异常时 logger 可能丢失）。写入官方 PluginConfigFolder/logs/ste-sync-diag.log。</summary>
     private static void SyncDiag(string msg)
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-sync-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-sync-diag.log", msg);
         }
         catch { /* 忽略诊断写失败 */ }
     }

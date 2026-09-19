@@ -367,9 +367,7 @@ public sealed class StelarithStatusReporter : BackgroundService
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-status-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-status-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }

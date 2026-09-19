@@ -79,9 +79,7 @@ public sealed class StelarithMessageFeed
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-feed-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+                StelarithLog.Write("ste-feed-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }

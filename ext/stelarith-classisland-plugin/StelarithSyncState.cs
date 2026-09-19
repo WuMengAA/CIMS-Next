@@ -173,9 +173,7 @@ public sealed class StelarithSyncOptions
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(ResolveConfigDir(), "stelarith-sync-diag.log"),
-                $"{DateTime.Now:HH:mm:ss} {msg}{Environment.NewLine}");
+                StelarithLog.Write("stelarith-sync-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }

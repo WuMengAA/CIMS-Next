@@ -53,8 +53,7 @@ public sealed class StelarithPanelService : IHostedService
     {
         try
         {
-            File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "ste-panel-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+            StelarithLog.Write("ste-panel-diag.log", msg);
         }
         catch { /* 诊断日志写入失败忽略 */ }
     }
@@ -235,7 +234,7 @@ public sealed class StelarithPanelService : IHostedService
     {
         try
         {
-            var baseDir = AppContext.BaseDirectory;
+            var baseDir = StelarithLog.ConfigDir!;
             var cfg = Path.Combine(baseDir, "stelarith-panel.json");
             if (File.Exists(cfg))
             {

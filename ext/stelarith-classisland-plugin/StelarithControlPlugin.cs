@@ -71,6 +71,7 @@ public class StelarithControlPlugin : PluginBase
         try
         {
             StelarithSyncOptions.ConfigDir = PluginConfigFolder;
+            StelarithLog.ConfigDir = PluginConfigFolder;
             DiagBridge("Initialize: 插件设置目录 -> " + PluginConfigFolder);
         }
         catch (Exception ex)
@@ -121,11 +122,13 @@ public class StelarithControlPlugin : PluginBase
         // NotificationProviderRegistryService，否则 NotificationProviderBase 的构造函数会抛异常。
         services.AddNotificationProvider<StelarithNotificationProvider>();
 
-        // ---- 上岛组件已移除 ----
-        // 原注册 StelarithNowPlayingComponent / StelarithSongQueueComponent /
-        // StelarithStatusComponent 三个 ClassIsland 主界面小组件（含 StelarithIslandSettings）。
-        // 移除原因：组件直接挂在宿主主界面上，属于「极端侵入」且与集控核心职责无关；
-        // 相关展示改由桌面客户端承担，插件只保留「收指令 + 报状态」的最小职责。
+        // ---- 上岛组件（可选，用户在【主界面排版】里手动添加；注册不强制渲染）----
+        // 三个 ClassIsland 主界面小组件：正在播放 / 点歌名单 / 集控状态（含 StelarithIslandSettings）。
+        // 严格遵循官方组件铁律：字号取宿主动态资源、前景色不设、UI 线程 marshal、卸载即停定时器，
+        // 绝不阻塞宿主启动。组件渲染在用户排版时按需实例化，不会拖垮 AppStarted。
+        services.AddComponent<StelarithNowPlayingComponent, StelarithIslandSettings>();
+        services.AddComponent<StelarithSongQueueComponent, StelarithIslandSettings>();
+        services.AddComponent<StelarithStatusComponent, StelarithIslandSettings>();
     }
 
     /// <summary>
@@ -136,9 +139,7 @@ public class StelarithControlPlugin : PluginBase
     {
         try
         {
-            System.IO.File.AppendAllText(
-                System.IO.Path.Combine(AppContext.BaseDirectory, "ste-plugin-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+            StelarithLog.Write("ste-plugin-diag.log", msg);
         }
         catch
         {
@@ -423,9 +424,7 @@ public static class StelarithDispatch
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-dispatch-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+            StelarithLog.Write("ste-dispatch-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }

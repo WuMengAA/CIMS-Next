@@ -37,9 +37,7 @@ public static class StelarithBranding
     {
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "ste-branding-diag.log"),
-                $"{DateTime.Now:HH:mm:ss.fff} {msg}{Environment.NewLine}");
+            StelarithLog.Write("ste-branding-diag.log", msg);
         }
         catch { /* 忽略 */ }
     }
