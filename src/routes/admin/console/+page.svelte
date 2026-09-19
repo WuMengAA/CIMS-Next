@@ -45,7 +45,44 @@
 			if (t !== theme) theme = t;
 		});
 		mo.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-		return () => mo.disconnect();
+
+		// 高度兜底（确定方案）：右侧 Sidebar.Content 是 flex-1 但实测会被内部塌缩内容拉低到
+		// 150px（iframe 默认高），absolute/flex 子元素都只能拿到 150 → 面板扁。而外层
+		// Sidebar.Inset 高度确定（=视口高，position:relative）。故直接把 .console-root 绝对
+		// 定位到 Inset，顶部让出后台顶栏，彻底绕过塌缩的 Content。Content 改 static 让 abs
+		// 越过它去找 Inset（否则 abs 会相对 Content 的 150 高）。ResizeObserver 跟随顶栏/
+		// 窗口变化重算 top。
+		const root = document.querySelector(".console-root");
+		const content = root?.closest('[data-slot="sidebar-content"]') as HTMLElement | null;
+		const inset = document.querySelector('[data-slot="sidebar-inset"]') as HTMLElement | null;
+		if (content) content.style.position = "static";
+		const apply = () => {
+			if (root && inset) {
+				const top = (inset.firstElementChild as HTMLElement | null)?.offsetHeight ?? 0;
+				const insetRect = inset.getBoundingClientRect();
+				// 内容区的左偏移 = 左侧 CMS 侧栏宽度（桌面 256；移动端侧栏是浮层，
+				// content 为 null → left 归 0，面板占满整宽）。用真实测量而非硬编码，
+				// 跟随侧栏折叠/响应式。
+				const left = content ? Math.max(0, content.getBoundingClientRect().left - insetRect.left) : 0;
+				root.style.position = "absolute";
+				root.style.top = top + "px";
+				root.style.left = left + "px";
+				root.style.right = "0";
+				root.style.bottom = "auto";
+				root.style.height = inset.clientHeight - top + "px";
+			}
+		};
+		apply();
+		const ro = new ResizeObserver(apply);
+		if (inset) ro.observe(inset);
+		window.addEventListener("resize", apply);
+
+		return () => {
+			mo.disconnect();
+			ro.disconnect();
+			window.removeEventListener("resize", apply);
+			if (content) content.style.position = "";
+		};
 	});
 
 	// 主题变化且 iframe 已存在 → 实时通知（不 reload）
@@ -91,10 +128,13 @@
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
-<!-- 撑满后台内容区：用 position:absolute;inset:0 相对 Sidebar.Content（已 relative 且
-     flex-1 min-h-0 有确定高度）铺满。绝对定位不依赖父级 flex 链、也不受 Sidebar.Content
-     的 padding 影响，能彻底规避「{@render children()} 被 in:pageIn 块级包装 div 包住 →
-     flex:1 失效 → 高度塌缩成横带」的扁 bug。面板内部自带顶栏/侧栏/状态栏，全高铺开。 -->
+<!-- 撑满后台内容区：实测右侧 Sidebar.Content(flex-1) 会被内部塌缩内容拉低到 150px
+     （iframe 默认高），absolute/flex 子元素都只能拿到 150 → 面板扁。而外层 Sidebar.Inset
+     高度确定（=视口高，position:relative）。故 .console-root 走 position:absolute，由
+     onMount 的 JS 直接相对 Inset 定位：top=后台顶栏高、left=左侧 CMS 侧栏宽（移动端侧栏
+     是浮层→归 0）、height=Inset 高-top。并临时把 Content 改 static，让 abs 越过它去找
+     Inset。ResizeObserver 跟随顶栏/窗口变化重算。这彻底绕开塌缩的 Content 高度链。面板
+     内部自带顶栏/侧栏/状态栏，全高铺开。 -->
 <div class="console-root">
 	<iframe bind:this={frameEl} class="console-frame" src={frameSrc} title="星集控面板"></iframe>
 </div>

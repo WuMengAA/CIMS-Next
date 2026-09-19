@@ -203,9 +203,14 @@
 			</div>
 		</div>
 	</Sidebar.Header>
-	<Sidebar.Content class="relative p-4 md:p-6">
+	<!-- 集控面板：包装 div 要成为有确定高度的 flex 容器（h-full + flex-col），
+	     否则里面 .console-root 的 flex:1 会失效、面板塌缩成横带。
+	     注意：view-transition-name 会让本 div 变成 containing block，所以绝对定位
+	     的子元素会相对它定位——它一旦没高度，面板就扁。故这里绝不用 absolute 撑满，
+	     改用正常流 flex。集控页内容区去 padding（!p-0），让面板贴边铺满。 -->
+	<Sidebar.Content class="relative p-4 md:p-6 {isConsole ? '!p-0' : ''}">
 		{#key currentPath}
-			<div in:pageIn style="view-transition-name: admin-content">
+			<div in:pageIn style="view-transition-name: admin-content" class={isConsole ? 'flex h-full min-h-0 flex-col' : ''}>
 				{@render children()}
 			</div>
 		{/key}
