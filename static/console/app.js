@@ -2766,6 +2766,17 @@
   $("#btn-login").addEventListener("click", doLogin);
   $("#btn-demo").addEventListener("click", enterDemo);
 
+  // 登录框预填：默认指向网站 CIMS 同源代理（公网可直达），去掉误导的 admin@example.edu。
+  // 独立直开（非 /admin/console 内嵌）时用户无需猜地址/端口，填一次密码即可连上。
+  (function initLoginForm() {
+    const h = $("#in-host"), e = $("#in-email");
+    // 优先用当前页面同源代理（公网时即 https://www.245959623.xyz/api/console/cims），
+    // 避免出现内网 127.0.0.1 让公网用户连不上。
+    const sameOrigin = (location.protocol + "//" + location.host) + "/api/console/cims";
+    if (h && !h.value.trim()) h.value = API.state.mgmtHost || sameOrigin;
+    if (e && (!e.value || e.value === "admin@example.edu")) e.value = "owner@stelarith.local";
+  })();
+
   // ---- 全权接入 website 账号信息 ----
   // 内嵌态与宿主同源：实时拉 /api/me 校准账号（邮箱/头像/班级/年级/最近登录），
   // 更新顶栏身份区；若账号尚未绑定班级，则在总览顶部渲染「补充班级信息」引导卡。
@@ -2861,9 +2872,53 @@
     applyGating();
     renderTopbarIdentity();           // 先按 query 注入的身份渲染
     syncAccount();                     // 再实时拉 /api/me 校准 + 触发班级引导
-    loadClasses().then(() => go("dashboard"));
+    // 账户归属自愈：宿主没注入 accountId（或注入了空）时，自行从 /account/list 取首个。
+    // 否则 canUseBackend() 为假 → 整链降级成「未连接后端」。
+    (async () => {
+      if (!API.state.accountId) {
+        try {
+          const r = await fetch("/api/console/cims/account/list", { credentials: "same-origin" });
+          const a = r.ok ? await r.json() : null;
+          if (Array.isArray(a) && a.length) API.setAccountId(a[0].id || "");
+        } catch (_) {}
+      }
+      await loadClasses();
+      go("dashboard");
+    })();
     return;
   }
+
+  // 同源自愈登录（一个账号走遍项目）：
+  // 直接打开 /console（非 /admin/console 内嵌）时，只要**当前站点已登录**（admin_token 有效），
+  // 就用网站同源代理接管，绝不弹「后端地址/邮箱/密码」表单。
+  // 探测：/api/console/cims/account/list 带 cookie —— 200 说明网站会话有效。
+  (function autoEnterSameOrigin() {
+    const base = location.protocol + "//" + location.host;
+    if (!/^https?:/.test(location.protocol)) return;
+    // 先隐藏登录框，探测失败再放出来（避免闪一下表单）
+    const mask = $("#login-mask");
+    if (mask) mask.classList.add("hidden");
+    fetch(base + "/api/console/cims/account/list", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((accts) => {
+        if (!Array.isArray(accts) || !accts.length) throw new Error("no account");
+        API.setMgmtHost(base + "/api/console/cims");
+        API.setClientHost(base + "/api/console/cims");
+        API.setExtHost(base + "/api/console/ext");
+        API.setDemo(false);
+        API.setSiteHost("");
+        API.setAccountId(accts[0].id || "");
+        if (mask) mask.classList.add("hidden");
+        setConn(true, "网站账号");
+        renderTopbarIdentity();
+        fetch(base + "/api/me", { credentials: "same-origin" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((me) => { if (me) { if (me.email) PERM.email = me.email; if (me.displayName) PERM.displayName = me.displayName; renderTopbarIdentity(); syncAccount(); } })
+          .catch(() => {});
+        loadClasses().then(() => go("dashboard"));
+      })
+      .catch(() => { if (mask) mask.classList.remove("hidden"); });
+  })();
 
   // 自动进入：若已配置过 token 则直接进
   if (API.state.token && API.state.host) {

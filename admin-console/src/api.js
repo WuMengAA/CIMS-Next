@@ -37,7 +37,7 @@
     clientHost: localStorage.getItem(K_CLIENT) || "",
     extHost: localStorage.getItem(K_EXT) || "",
     token: localStorage.getItem(K_TOKEN) || "",
-    accountId: "",
+    accountId: localStorage.getItem("cims_account_id") || "",
     classId: localStorage.getItem(K_CLASS) || "",
     demo: localStorage.getItem(K_DEMO) === "1",
     voicehubHost: localStorage.getItem(K_VHUB_HOST) || "",
@@ -350,10 +350,14 @@
       });
       if (r.requires_2fa) throw new Error("后端启用了 2FA，当前面板未支持，请用非 2FA 账户或扩展网关处理");
       setToken(r.token || "");
-      // 自动选择首个账户作为操作上下文
+      // 自动选择首个账户作为操作上下文，并**持久化**——否则刷新后 accountId 归零，
+      // 设备/课表请求会降级成非真实（桌面端同款坑：登录成功但请求却像"没连上"）。
       try {
         const accts = await reqTo(state.mgmtHost, "/account/list");
-        if (Array.isArray(accts) && accts.length) state.accountId = accts[0].id;
+        if (Array.isArray(accts) && accts.length) {
+          state.accountId = accts[0].id;
+          try { localStorage.setItem("cims_account_id", state.accountId); } catch (_) {}
+        }
       } catch (_) { /* 登录成功但取账户失败，后续真实调用会降级 */ }
       return r;
     },

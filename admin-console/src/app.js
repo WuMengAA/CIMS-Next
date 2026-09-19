@@ -2766,6 +2766,16 @@
   $("#btn-login").addEventListener("click", doLogin);
   $("#btn-demo").addEventListener("click", enterDemo);
 
+  // ---- 登录框预填（让桌面集控客户端一打开就能连上本机 CIMS，而不是让用户猜地址）----
+  // 默认指向本机 CIMS 管理端口 8097（与 CIMS-backend/.env 的 CIMS_MANAGEMENT_PORT 一致）；
+  // 若之前登录过，则沿用已持久化的 mgmtHost。邮箱用真实 CIMS 管理员，去掉误导的 admin@example.edu。
+  (function initLoginForm() {
+    const h = $("#in-host");
+    const e = $("#in-email");
+    if (h && !h.value.trim()) h.value = API.state.mgmtHost || "http://127.0.0.1:8097";
+    if (e && (!e.value || e.value === "admin@example.edu")) e.value = "owner@stelarith.local";
+  })();
+
   // ---- 全权接入 website 账号信息 ----
   // 内嵌态与宿主同源：实时拉 /api/me 校准账号（邮箱/头像/班级/年级/最近登录），
   // 更新顶栏身份区；若账号尚未绑定班级，则在总览顶部渲染「补充班级信息」引导卡。

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="99f2AcTwXtmtygBWzcCgEL">
+<head data-page-node-id="Gymnz3uFWMOsKpQPywiXA5">
+  <meta charset="utf-8" data-page-node-id="ntXtVDAkl7MAHndQjnXWBR" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="zzERoWfFaDnKnXbDtwglBA" />
+  <title>远程控制 · 星集控</title>
+  <style>
+    :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --muted:#8b949e; --acc:#2f81f7; --ok:#3fb950; --bad:#f85149; }
+    * { box-sizing:border-box; }
+    body { margin:0; height:100vh; display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,"Segoe UI",sans-serif; }
+    header { display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+    header b { font-size:15px; }
+    header input { flex:0 0 200px; background:#0d1117; border:1px solid var(--line); color:var(--fg); border-radius:6px; padding:6px 8px; }
+    header button { background:var(--acc); color:#fff; border:0; border-radius:6px; padding:6px 14px; cursor:pointer; }
+    header button.ghost { background:transparent; border:1px solid var(--line); color:var(--fg); }
+    header .status { margin-left:auto; font-size:13px; color:var(--muted); }
+    header .status b { color:var(--ok); }
+    header .status.bad b { color:var(--bad); }
+    main { position:relative; flex:1; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+    video { max-width:100%; max-height:100%; background:#000; }
+    .placeholder { position:absolute; color:var(--muted); text-align:center; }
+    footer { display:flex; align-items:center; gap:8px; padding:8px 14px; background:var(--panel); border-top:1px solid var(--line); flex-wrap:wrap; }
+    footer button { background:#21262d; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 10px; cursor:pointer; }
+    footer button:hover { border-color:var(--acc); }
+    footer .spacer { flex:1; }
+    footer select { background:#0d1117; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px; }
+    footer .hint { color:var(--muted); font-size:12px; }
+  </style>
+</head>
+<body data-page-node-id="Lul4IgB3AAfebBaEgVgqVU">
+  <header data-page-node-id="F5s6UMACuGpOPMM6rr4PKy">
+    <b data-page-node-id="qEJ39frpQIXHjEFycog7Us">远程控制</b>
+    <input id="uid" placeholder="设备码，如 lab-pc-001" data-page-node-id="eLxFLEiBfAImbatZ27Fr3P" />
+    <button id="connect" data-page-node-id="0FAWKqUw03okCOu3lbARrV">连接</button>
+    <button id="disconnect" class="ghost" data-page-node-id="YSVFXpo4EEV8qwauRDQPLL">断开</button>
+    <span id="status" class="status" data-page-node-id="dIcIUZUSpjSLpamMW4viHB">未连接</span>
+  </header>
+  <main data-page-node-id="TZhNgDpe1JGz8QIaEC2Tz0">
+    <div id="placeholder" class="placeholder" data-page-node-id="L8dZKA6MvvmftQHCQSMmDh">输入设备码并点击「连接」<br data-page-node-id="Yzkn9AjaNoxBxBmAQI3F2n"/>远控画面将显示在这里</div>
+    <video id="screen" autoplay playsinline style="display:none" data-page-node-id="rb7k67ixEgeuQBSvssFGGx"></video>
+  </main>
+  <footer data-page-node-id="XnmptRvQrBTGJ04pBPWceZ">
+    <button id="kbd" data-page-node-id="0zBFBgSYSlwe2trBsUokWW">键盘输入</button>
+    <button id="cad" data-page-node-id="KD1XlUOXsS0tUNB6ABHdwT">Ctrl+Alt+Del</button>
+    <button id="fs" data-page-node-id="kVUTtIQv9F8ZDhviTuwayG">全屏</button>
+    <span class="spacer" data-page-node-id="ZbWM1tP5iGZ66N4LPeG9WV"></span>
+    <span class="hint" data-page-node-id="I1he2I7MrqzrkI3Y2Za1dt">鼠标在画面上移动/点击即下发；点击「键盘输入」后在弹窗中输入字符</span>
+    <select id="quality" data-page-node-id="D7y4nsFrjscUQrNN5KNbIi">
+      <option value="high" data-page-node-id="D2Djap9xLpQaVYyQ7Qes5p">画质：高</option>
+      <option value="balanced" selected data-page-node-id="HQf7fo1PcPzlyoLptUIo2b">画质：均衡</option>
+      <option value="low" data-page-node-id="7LGToAEltg5daC7ZnSiGHY">画质：流畅</option>
+    </select>
+  </footer>
+  <script type="module" src="./remote-webrtc.js"></script>
+</body>
+</html>

@@ -20,64 +20,81 @@
 //
 // 设计原则：单一出口、可换后端、请求失败/无后端/演示模式一律降级为演示数据，面板永不白屏。
 (function (global) {
-  const K_MGMT = "cims_mgmt";
-  const K_CLIENT = "cims_client";
-  const K_EXT = "cims_ext";
-  const K_TOKEN = "cims_token";
-  const K_CLASS = "cims_class";
-  const K_DEMO = "cims_demo";
-  const K_VHUB_HOST = "cims_vhub_host";
-  const K_VHUB_KEY = "cims_vhub_key";
-  const K_SITE = "cims_site_host";
-  const K_NOVNC = "cims_novnc_url";
-  const K_TASK_SECRET = "cims_task_secret";
-  const K_ACCOUNT = "cims_account_id";
-
-  const state = {
-    mgmtHost: localStorage.getItem(K_MGMT) || "",
-    clientHost: localStorage.getItem(K_CLIENT) || "",
-    extHost: localStorage.getItem(K_EXT) || "",
-    token: localStorage.getItem(K_TOKEN) || "",
-    // 必须持久化：刷新后若 accountId 归零，canUseBackend() 直接为 false，
-    // 整条真实数据链路会静默降级到演示分支 —— 表现为「真机列表里混进了假设备」。
-    accountId: localStorage.getItem(K_ACCOUNT) || "",
-    classId: localStorage.getItem(K_CLASS) || "",
-    // 后端不可用标记（非演示模式下拿不到真实数据时置位，供 UI 显示红色横幅）。
-    // 与 demo 严格分开：demo 是「用户主动要假数据」，offline 是「拿不到真数据」。
-    offline: false,
-    lastError: "",
-    demo: localStorage.getItem(K_DEMO) === "1",
-    voicehubHost: localStorage.getItem(K_VHUB_HOST) || "",
-    voicehubKey: localStorage.getItem(K_VHUB_KEY) || "",
-    siteHost: localStorage.getItem(K_SITE) || "",
-    noVncUrl: localStorage.getItem(K_NOVNC) || "",
-    taskSecret: localStorage.getItem(K_TASK_SECRET) || "",
-    embedded: false,
-    timeout: 8000,
+  /**
+   * 持久化设置项的统一声明（单一事实源）。
+   *
+   * 每项声明 key 名、状态默认值与“是否去除尾斜杠”，state 与 getter/setter
+   * 全部由此表驱动 —— 消除原先 12 组「const K_x + state.x + setXxx + localStorage]
+   * 五行样板」的重复，也让「该字段要不要 trim 尾斜杠」的策略集中到一处可查。
+   * 语义不需要持久化的运行时项（embedded/offline/lastError/timeout）保持独立 state。
+   */
+  const FIELDS = {
+    mgmtHost: { pkey: "cims_mgmt", trimSlash: 1 },
+    clientHost: { pkey: "cims_client", trimSlash: 1 },
+    extHost: { pkey: "cims_ext", trimSlash: 1 },
+    siteHost: { pkey: "cims_site_host", trimSlash: 1 },
+    // noVncUrl 是 URL 而非 host，但过去也统一 trimSlash；保留行为以避免跨版本差异。
+    noVncUrl: { pkey: "cims_novnc_url", trimSlash: 1 },
+    voicehubHost: { pkey: "cims_vhub_host", trimSlash: 1 },
+    voicehubKey: { pkey: "cims_vhub_key", trimSlash: 0 },
+    taskSecret: { pkey: "cims_task_secret", trimSlash: 0 },
+    token: { pkey: "cims_token", trimSlash: 0 },
+    accountId: { pkey: "cims_account_id", trimSlash: 0 },
+    classId: { pkey: "cims_class", trimSlash: 0 },
+    demo: { pkey: "cims_demo", trimSlash: 0, bool: 1 },
   };
 
-  function setMgmtHost(v) { state.mgmtHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_MGMT, state.mgmtHost); }
-  function setClientHost(v) { state.clientHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_CLIENT, state.clientHost); }
-  function setExtHost(v) { state.extHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_EXT, state.extHost); }
-  function setVoicehubHost(v) { state.voicehubHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_VHUB_HOST, state.voicehubHost); }
-  function setVoicehubKey(v) { state.voicehubKey = v || ""; localStorage.setItem(K_VHUB_KEY, state.voicehubKey); }
-  function setSiteHost(v) { state.siteHost = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_SITE, state.siteHost); }
-  function setNoVncUrl(v) { state.noVncUrl = (v || "").replace(/\/+$/, ""); localStorage.setItem(K_NOVNC, state.noVncUrl); }
-  function setTaskSecret(v) { state.taskSecret = v || ""; localStorage.setItem(K_TASK_SECRET, state.taskSecret); }
-  function setEmbedded(on) { state.embedded = !!on; }
-  function setHost(v) { setMgmtHost(v); } // 兼容旧调用：host 视作 management 端口
-  function setToken(v) { state.token = v || ""; localStorage.setItem(K_TOKEN, state.token); }
-  function setAccountId(v) { state.accountId = v || ""; localStorage.setItem(K_ACCOUNT, state.accountId); }
-  function setClass(v) { state.classId = v || ""; localStorage.setItem(K_CLASS, state.classId); }
+  // 由 FIELDS 表生成 state 初始值；运行时项在下方显式补上。
+  const state = {};
+  for (const key in FIELDS) {
+    const f = FIELDS[key];
+    const raw = localStorage.getItem(f.pkey) || "";
+    state[key] = f.bool ? raw === "1" : raw;
+  }
+  // 运行时（非持久化）状态
+  state.offline = false;
+  state.lastError = "";
+  state.embedded = false;
+  state.timeout = 8000;
+
+  /**
+   * 按字段名写值并持久化；bool 项转 "1"/"0"，trimSlash 项去尾斜杠。
+   * 所有持久化 setter 的公共实现 —— 调用处仍可用 setMgmtHost(v) 等具名函数
+   * （各自定义为薄别名，见下），本函数只在类型与归一化逻辑变化时改一处。
+   */
+  function setField(key, v) {
+    const f = FIELDS[key];
+    if (!f) return;
+    if (f.bool) { state[key] = !!v; localStorage.setItem(f.pkey, state[key] ? "1" : "0"); return; }
+    const next = f.trimSlash ? String(v || "").replace(/\/+$/, "") : String(v || "");
+    state[key] = next;
+    localStorage.setItem(f.pkey, next);
+  }
+
+  // ---- 持久化 setter：由 setField 派生的薄别名，保持既有成员名与调用处兼容 ----
+  function setMgmtHost(v) { setField("mgmtHost", v); }
+  function setClientHost(v) { setField("clientHost", v); }
+  function setExtHost(v) { setField("extHost", v); }
+  function setVoicehubHost(v) { setField("voicehubHost", v); }
+  function setVoicehubKey(v) { setField("voicehubKey", v); }
+  function setSiteHost(v) { setField("siteHost", v); }
+  function setNoVncUrl(v) { setField("noVncUrl", v); }   // 语义是“noVNC 页面地址（URL）”
+  function setTaskSecret(v) { setField("taskSecret", v); }
+  function setToken(v) { setField("token", v); }
+  function setAccountId(v) { setField("accountId", v); }
+  function setClass(v) { setField("classId", v); }
   function setDemo(on) {
-    state.demo = !!on;
-    localStorage.setItem(K_DEMO, state.demo ? "1" : "0");
+    setField("demo", on);
     // 切回真实模式时清掉离线标记，否则横幅会赖着不走。
     if (!state.demo) { state.offline = false; state.lastError = ""; }
   }
+  // 兼容旧调用：裸 host 视作 management 端口。名称保留以不破坏既有调用；
+  // 新代码请直接用 setMgmtHost，从名字即可分辨目标端点，避免 “setHost” 该指哪个端点的模糊。
+  function setHost(v) { setMgmtHost(v); }
+  function setEmbedded(on) { state.embedded = !!on; }
   function clearAuth() {
     state.token = ""; state.accountId = "";
-    localStorage.removeItem(K_TOKEN); localStorage.removeItem(K_ACCOUNT);
+    localStorage.removeItem(FIELDS.token.pkey); localStorage.removeItem(FIELDS.accountId.pkey);
   }
   function acct() { return state.accountId; }
 
@@ -146,8 +163,8 @@
       // 提示"请重新登录"会误导用户去折腾账号，实际是 CIMS 服务暂时连不上。
       markOffline(
         state.mgmtHost
-          ? "后端地址已配置但账户归属为空 —— CIMS 服务此刻可能不可达，请稍后刷新重试"
-          : "未连接后端：缺少后端地址，请检查配置"
+          ? `后端 ${state.mgmtHost} 已配置但账户归属为空 —— 后端此刻可能不可达，请稍后刷新重试`
+          : "未连接后端：缺少后端地址。留空可自动使用本站同源代理；或到设置页填写后端地址后重新登录"
       );
       return {};
     }
@@ -762,17 +779,18 @@
     // ---- 认证（CIMS 原生）----
     async login(host, email, password) {
       setMgmtHost(host);
-      if (!host) { state.demo = true; localStorage.setItem(K_DEMO, "1"); return { token: "demo" }; }
+      if (!host) { setField("demo", true); return { token: "demo" }; }
       const r = await reqTo(state.mgmtHost, "/user/auth", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
       if (r.requires_2fa) throw new Error("后端启用了 2FA，当前面板未支持，请用非 2FA 账户或扩展网关处理");
       setToken(r.token || "");
-      // 自动选择首个账户作为操作上下文
+      // 自动选择首个账户作为操作上下文，并**持久化**——否则刷新后 accountId 归零，
+      // canUseBackend() 变 false，整条真实链路降级成"未连接后端"（正是本次 500 报错的诱因之一）。
       try {
         const accts = await reqTo(state.mgmtHost, "/account/list");
-        if (Array.isArray(accts) && accts.length) state.accountId = accts[0].id;
+        if (Array.isArray(accts) && accts.length) setAccountId(accts[0].id);
       } catch (_) { /* 登录成功但取账户失败，后续真实调用会降级 */ }
       return r;
     },
