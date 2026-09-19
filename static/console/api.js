@@ -452,6 +452,9 @@
     { id: "notification", label: "集控播报", core: false, desc: "把集控广播落到 ClassIsland 官方提醒系统，在大屏播放遮罩播报。" },
     { id: "os_actions", label: "本机动作（锁屏 / 截图）", core: false, desc: "允许集控对这台机器执行锁屏与截屏。" },
     { id: "remote_control", label: "远程控制转发", core: false, desc: "允许集控经本地代理发起远程控制（VNC）会话。" },
+    { id: "class_switch", label: "远程切班", core: false, desc: "允许集控把本班大屏切到指定课表群。考试/重要活动期间可临时关闭。" },
+    { id: "camera_capture", label: "摄像头抓拍与录像", core: false, desc: "允许集控抓取本机摄像头画面（抓拍/短录像）。关闭后摄像头类指令一律拒绝。" },
+    { id: "media_p2p", label: "P2P 媒体直连", core: false, desc: "允许本机作为点对点端点被直连观看（高带宽画面走设备之间，不经服务器）。" },
     { id: "message_feed", label: "岛内消息中心", core: false, desc: "在 ClassIsland 设置页 / 托盘里查看本机最近的广播与通知。" },
   ];
   const MODULE_BY_ID = MODULE_CATALOG.reduce((m, x) => (m[x.id] = x, m), {});
@@ -701,6 +704,45 @@
     return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
   }
 
+  // ---- 设备侧动作的统一下发口（摄像头 / 媒体 / 系统动作都走它）----
+  //
+  // 三个必须收敛在一处的理由：
+  //   ① 签名与打包形态只有一种：token=HMAC(action|ts)，载荷走 MessageContent.stelarith_task；
+  //   ② **回执不回流**：本地代理的返回值不会出现在这个调用的返回里（它只写设备日志
+  //      与失败通知）。所以调用方必须"下发后轮询结果"，而不是"等返回值"——写在一处
+  //      才不会有人误会成 await 完就拿到了结果；
+  //   ③ 失败判定必须读回执体（远端用 HTTP 200 表达业务失败），只读状态码会把
+  //      「被拒绝」与「已下发」变成同一个样子。
+  //
+  // 参数分层（这一层极易踩）：代理从**任务顶层**读 camera / kind / name，
+  // 而码率、缩放、段长、画质这些数值旋钮统一读 `params` 对象。
+  // 放错层的表现是「指令成功、参数被忽略」——静默且难查。
+  const TASK_TOP_LEVEL_KEYS = { camera: 1, kind: 1, name: 1 };
+  async function sendDeviceTask(uid, action, scope, extra) {
+    if (!uid) return { ok: false, status: "error", message: "未选择设备" };
+    if (wantDemo()) return { ok: true, status: "demo", message: "（演示）已模拟下发 " + action };
+    if (!canUseBackend()) return { ok: false, status: "error", message: "未连接后端，指令未下发" };
+    const ts = Math.floor(Date.now() / 1000);
+    const token = await signTask(action, ts);
+    const task = { action, token, scope: scope || "class", ts };
+    const inner = {};
+    const ex = extra || {};
+    for (const k of Object.keys(ex)) {
+      const v = ex[k];
+      if (v === undefined || v === null || v === "") continue;
+      if (TASK_TOP_LEVEL_KEYS[k]) task[k] = v;
+      else inner[k] = v;
+    }
+    if (Object.keys(inner).length) task.params = inner;
+    const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+    const r = await reqTo(
+      state.mgmtHost,
+      "/account/" + acct() + "/client/" + uid + "/command/send-notification",
+      { method: "POST", body }
+    );
+    return { ...(r || {}), ok: !(r && r.status === "error"), reason: (r && r.message) || "" };
+  }
+
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setAccountId, setClass, setDemo, clearAuth, acct, canUseBackend, wantDemo, markOffline, markOnline,
     // 展示层辅助（面板渲染设备状态/模块开关直接用，避免在 app.js 里各写一套格式化）
@@ -929,7 +971,10 @@
       const token = await signTask("remote_control_start", ts);
       const task = { action: "remote_control_start", token, scope: scope || "class", ts };
       const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
-      return reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
+      const r = await reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`, { method: "POST", body });
+      // 铁律：远端会用 HTTP 200 表达业务失败（如「gRPC 通道未开启」）→ **必须读回执体**，
+      // 否则「被拒绝」与「已下发」在面板上长得一模一样，这类问题最难查。
+      return { ...(r || {}), ok: !(r && r.status === "error"), reason: (r && r.message) || "" };
     },
     deviceRemoteStop: async (uid, scope) => {
       if (wantDemo()) return { status: "demo", message: "（演示）已模拟结束会话" };
@@ -950,6 +995,125 @@
         return r && r.session ? r.session : null;
       } catch (_) { return null; }
     },
+    /**
+     * VNC 自查：把「为什么没画面」拆成**可判定的几条**，逐条给结论。
+     *
+     * 为什么需要：VNC 断在链路的哪一环，外观上长得一模一样 —— 都是「等 30 秒没画面」。
+     * 运维只能靠猜。这里对每一环做一次只读探测，把「哪一环没通」直接摊开：
+     *   扩展网关地址 / noVNC 页面 / 任务签名密钥 / 设备心跳 / 网关 /vnc-session 可达性。
+     * 全部只读，不改状态、不抛异常（探测失败本身就是一条结论）。
+     */
+    vncDiagnose: async (uid) => {
+      const items = [];
+      // ① 扩展网关地址：内嵌网站会自动注入 /api/console/ext；独立打开需手配。
+      const extHost = state.extHost || state.siteHost;
+      items.push({
+        ok: !!extHost,
+        label: "扩展网关地址",
+        detail: extHost || "未配置 → 无法收取设备会话回执（内嵌网站应自动注入 /api/console/ext）",
+      });
+      // ② noVNC 页面地址
+      items.push({
+        ok: !!state.noVncUrl,
+        label: "noVNC 页面地址",
+        detail: state.noVncUrl || "未配置 → 即便拿到会话也无法显示画面（「设置」页可填）",
+      });
+      // ③ 任务签名密钥（代理侧验签）
+      items.push({
+        ok: !!state.taskSecret,
+        label: "任务签名密钥",
+        detail: state.taskSecret
+          ? "已配置（下发 remote_control_start 时带 HMAC 签名）"
+          : "未配置 → 代理启用验签时会拒绝执行（当前仅时间戳占位）",
+      });
+      // ④ 设备心跳（离线设备根本收不到指令）
+      try {
+        const st = await reqTo(state.mgmtHost, "/class/device-status");
+        const d = (Array.isArray(st && st.devices) ? st.devices : []).find((x) => x.id === uid);
+        items.push({
+          ok: !!(d && d.online),
+          label: "设备心跳",
+          detail: d
+            ? `${d.last || "无记录"} · ${d.online ? "在线（可接收指令）" : "离线 → 指令会写队列但设备不会取走"}` +
+              (d.app ? ` · ${d.app}` : "")
+            : "该设备不在本账户设备列表（可能未上报心跳 / 未绑班）",
+        });
+      } catch (e) {
+        items.push({ ok: false, label: "设备心跳", detail: "查询失败：" + ((e && e.message) || e) });
+      }
+      // ⑤ 扩展网关可达性 + 是否已有回执
+      try {
+        const r = await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`);
+        items.push({
+          ok: true,
+          label: "扩展网关可达",
+          detail: r && r.session
+            ? `已有会话回执 ${r.session.ip || "?"}:${r.session.port || "?"}`
+            : "可达，但该设备尚无会话回执（本地代理未启动 VNC，或未把回执回报到网关）",
+        });
+      } catch (e) {
+        items.push({ ok: false, label: "扩展网关可达", detail: "请求失败：" + ((e && e.message) || e) });
+      }
+      // ⑥ 教室端前提（本地知识，非探测所得，但正是最常被忽略的一环）
+      items.push({
+        ok: null,
+        label: "教室端前提（需人工确认）",
+        detail:
+          "VNC 必须有**桌面会话**才有意义：本地代理若以服务方式跑在会话 0（无桌面），" +
+          "即便启动成功也看不到画面。请确认代理随「用户登录后的交互式会话」启动。",
+      });
+      return items;
+    },
+
+    // ---- 面板配置（服务端持久化：控制 / 媒体 / 实验特性）----
+    // 为什么在服务端：这些值决定**教室端行为**（走不走 P2P、压缩目标、录像保留），
+    // 必须全校一致。localStorage 是每台电脑一份，运维在 A 机改了 B 机不生效。
+    getSettings: async () => {
+      try {
+        const r = await ext("/settings");
+        return (r && r.settings) || {};
+      } catch (_) { return {}; }
+    },
+    saveSettings: async (patch) => {
+      // 写失败必须抛：配置没存进去而界面显示"已保存"，是最容易误导运维的一种假成功。
+      const r = await ext("/settings", { method: "POST", body: JSON.stringify(patch || {}) }, "settings");
+      // 超时是「本机面板行为」，服务端存的是给别人的默认值 —— 本会话立即生效才有意义。
+      const t = Number(patch && patch.dev_request_timeout_ms);
+      if (Number.isFinite(t) && t >= 2000) state.timeout = t;
+      return (r && r.settings) || {};
+    },
+
+    // ---- 开发者选项：原始请求控制台 ----
+    // 刻意**不**复用 reqTo：reqTo 在 !ok 时抛异常，而开发者恰恰需要看到 4xx/5xx 的
+    // **原始响应体**才能定位（「错误响应被上层吞掉」正是最难查的那类问题）。
+    // 这里只有网络层失败才算异常，HTTP 状态码一律原样返回。
+    rawRequest: async (host, method, path, bodyText) => {
+      const t0 = performance.now();
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), Math.max(state.timeout || 8000, 5000));
+      try {
+        if (!host) throw new Error("未指定主机");
+        const headers = { "Content-Type": "application/json" };
+        if (state.token) headers.Authorization = "Bearer " + state.token;
+        const m = (method || "GET").toUpperCase();
+        const res = await fetch(host + path, {
+          method: m,
+          headers,
+          body: m === "GET" || m === "HEAD" ? undefined : (bodyText || ""),
+          signal: ctl.signal,
+        });
+        const text = await res.text();
+        return {
+          ok: res.ok, status: res.status, ms: Math.round(performance.now() - t0),
+          body: text, ctype: res.headers.get("content-type") || "",
+        };
+      } catch (e) {
+        return {
+          ok: false, status: 0, ms: Math.round(performance.now() - t0),
+          body: String((e && e.message) || e), networkError: true, ctype: "",
+        };
+      } finally { clearTimeout(timer); }
+    },
 
     // ---- 通知广播 ----
     // 下发通知
@@ -962,13 +1126,17 @@
     // 只有「独立打开面板且未配站点后端」时才退化为直连 CIMS 的旧路径。
     listNotices: async (classId) =>
       normNotices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
-    sendNotice: async (title, scope, classes, content) => {
+    sendNotice: async (title, scope, classes, content, seconds) => {
       const body = {
         title,
         scope: scope || "本班",
         content: content || "",
         classes: Array.isArray(classes) ? classes : [],
       };
+      // 显示时长（秒）：留空 = 不指定，由教室端按正文字数自适应；显式填了就照用。
+      // CIMS 侧 NotificationPayload.DurationSeconds 本就存在（0~3600），一路透传即可。
+      const sec = Number(seconds);
+      if (Number.isFinite(sec) && sec > 0) body.duration_seconds = sec;
       // ① 内嵌网站 / 配了站点后端：走服务端（推荐路径，含定向与去重）
       if (state.embedded || state.siteHost) {
         return ext("/notices", { method: "POST", body: JSON.stringify(body) }, "notices");
@@ -1173,7 +1341,13 @@
     auditVerify: async () => {
       try {
         const r = await ext("/audit/verify", {}, null);
-        return r && r.verify ? r : null;
+        // 后端返回的是两层：{ verify: 链自检结论, policy: 保留策略 }。
+        // 曾经直接 `return r`，而视图按平铺字段读（v.checked / v.ok / v.mode …），
+        // 结果全部读到 undefined —— 页面把「链完整」显示成「链断裂」，
+        // 还印出「已校验 undefined 条 / 算法 undefined / 保留策略 undefined 天」。
+        // 安全结论被误报是最不能接受的一类 bug，所以在这里把两层拍平。
+        if (!r || !r.verify) return null;
+        return { ...r.verify, ...(r.policy || {}) };
       } catch (e) { return null; }
     },
     /** 按保留期裁剪审计（需 device.manage）。 */
@@ -1216,6 +1390,65 @@
       if (state.demo) return { ok: true, demo: true };
       return siteFetch("/api/me", { method: "PUT", body: JSON.stringify(patch) });
     },
+    // ---- 摄像头 / 媒体库（设备侧执行，面板侧轮询取结果）----
+    // 说明：这些动作**不会**在返回值里给出结果，只表示"已下发成功"。
+    // 真正的产物要靠 deviceMediaSession() + mediaLibrary() 去取。
+    cameraList: (uid, scope) => sendDeviceTask(uid, "camera_list", scope),
+    cameraSnapshot: (uid, scope, extra) => sendDeviceTask(uid, "camera_snapshot", scope, extra),
+    recordStart: (uid, scope, extra) => sendDeviceTask(uid, "camera_record_start", scope, extra),
+    recordStop: (uid, scope) => sendDeviceTask(uid, "camera_record_stop", scope),
+    mediaDelete: (uid, kind, name, scope) => sendDeviceTask(uid, "media_delete", scope, { kind, name }),
+    mediaSessionStart: (uid, scope) => sendDeviceTask(uid, "media_session_start", scope),
+    mediaSessionStop: (uid, scope) => sendDeviceTask(uid, "media_session_stop", scope),
+
+    /** 设备已登记的媒体直连会话（{ip,port,token}）或 null。 */
+    deviceMediaSession: async (uid) => {
+      try {
+        const r = await ext("/media-session?uid=" + encodeURIComponent(uid));
+        return (r && r.session) || null;
+      } catch (_) { return null; }
+    },
+    /** 全部未过期设备会话（诊断用：一眼看出"代理到底有没有报过"，而不是只有 null）。 */
+    deviceSessions: async () => {
+      try {
+        const r = await ext("/sessions");
+        return (r && r.sessions) || [];
+      } catch (_) { return []; }
+    },
+    /**
+     * 直连取设备媒体库清单。
+     * **必须把失败原因带回去**：跨协议（https 面板 → http 教室机被浏览器拦）、
+     * 跨网段、令牌过期，三者在界面上都以"什么都没发生"的形式出现，
+     * 而它们对应的处置完全不一样 —— 只说"失败"等于把排查退回到猜。
+     */
+    mediaLibrary: async (session) => {
+      if (!session || !session.ip || !session.port) {
+        return {
+          ok: false, reason: "no_session",
+          message: "设备尚未登记媒体直连会话：可能还没执行过抓拍/录像，也可能代理未配置上报地址（STELARITH_EXT_URL）。",
+        };
+      }
+      const base = "http://" + session.ip + ":" + session.port;
+      try {
+        const res = await fetch(base + "/list?t=" + encodeURIComponent(session.token || ""), { cache: "no-store" });
+        if (res.status === 403) {
+          return { ok: false, reason: "forbidden", message: "直连令牌被拒绝：会话已被轮换或已关闭，请重新触发一次抓拍。" };
+        }
+        if (!res.ok) return { ok: false, reason: "http_" + res.status, message: "直连返回 HTTP " + res.status };
+        const j = await res.json();
+        return { ok: true, items: (j && j.items) || [], base, token: session.token || "" };
+      } catch (e) {
+        return {
+          ok: false, reason: "network",
+          message: "无法直连教室机 " + base + "：" + ((e && e.message) || e)
+            + "｜常见原因：① 面板走 HTTPS 而教室机是 HTTP（浏览器按混合内容拦截）；"
+            + "② 面板与教室机不在同一网段；③ 教室机防火墙未放行该端口。",
+        };
+      }
+    },
+    /** 拼直连文件地址（图片/视频标签直接用拼好的 URL，浏览器不会为它们发自定义头）。 */
+    mediaUrl: (base, token, kind, name) =>
+      base + "/file/" + encodeURIComponent(kind) + "/" + encodeURIComponent(name) + "?t=" + encodeURIComponent(token || ""),
   };
 
   global.API = API;

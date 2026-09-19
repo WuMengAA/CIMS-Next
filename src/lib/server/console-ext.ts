@@ -247,6 +247,64 @@ function metaSet(key: string, value: string): void {
 		.run(key, value);
 }
 
+/** 面板「控制与媒体 / 实验特性」配置的存储键（复用 console_meta 这层 KV）。 */
+const CONSOLE_SETTINGS_KEY = "console_settings";
+
+/**
+ * 允许通过面板写入的配置键白名单。
+ *
+ * 用白名单而不是「全量收下」：console_settings 是个开放 JSON 对象，若不限制键名，
+ * 任何拿到 manage 权限的调用方都能往里塞任意键 —— 读取侧虽然只认已知键，
+ * 但脏键会永久留在库里、且日后排查时没人记得它是干嘛的。
+ */
+export const CONSOLE_SETTINGS_KEYS = [
+	// ── 远程控制 / VNC ──
+	"novnc_url", // noVNC 页面地址
+	"vnc_wait_seconds", // 下发指令后等待设备回报会话的秒数
+	"vnc_require_token", // 是否要求会话级令牌
+	// ── 媒体通道（摄像头抓拍 / 录像调取）──
+	"media_mode", // p2p | relay | off —— 高带宽优先 P2P
+	"media_ice_servers", // STUN/TURN，逗号分隔
+	"media_snapshot_interval", // 抓拍间隔（秒）
+	"media_retention_days", // 录像保留天数
+	"media_max_bitrate_kbps", // 压缩目标码率
+	"media_codec", // h264 | vp8 | av1
+	"media_scale", // 画面最长边（像素）
+	// ── 开发者 ──
+	"dev_verbose", // 详细日志
+	"dev_request_timeout_ms" // 请求超时（毫秒）
+] as const;
+
+/**
+ * 读取面板持久化配置（控制 / 媒体 / 实验特性）。
+ *
+ * 为什么必须放服务端而不是 localStorage：这些值**决定教室端行为**（是否走 P2P、压缩目标、
+ * 录像保留天数），必须全校一致；localStorage 是「每台电脑各存一份」—— 运维在 A 机改了，
+ * B 机登录面板看到的还是旧值，两边下发的策略不一致，排查时会怀疑人生。
+ */
+export function getConsoleSettings(): Record<string, unknown> {
+	const raw = metaGet(CONSOLE_SETTINGS_KEY);
+	if (!raw) return {};
+	try {
+		const o = JSON.parse(raw);
+		return o && typeof o === "object" && !Array.isArray(o) ? (o as Record<string, unknown>) : {};
+	} catch {
+		// 存坏了当空配置处理（不抛异常，免得把整个设置页连带打挂）
+		return {};
+	}
+}
+
+/**
+ * 合并写入配置（PATCH 语义：只覆盖传入的键，其余保留）。
+ * 显式传 `null` 的键会被删除，用于「恢复默认」。返回写入后的完整配置，便于前端立即回显。
+ */
+export function saveConsoleSettings(patch: Record<string, unknown>): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...getConsoleSettings(), ...(patch || {}) };
+	for (const k of Object.keys(merged)) if (merged[k] === null) delete merged[k];
+	metaSet(CONSOLE_SETTINGS_KEY, JSON.stringify(merged));
+	return merged;
+}
+
 export function addAudit(input: {
 	actor?: string;
 	role?: string;
@@ -620,4 +678,97 @@ export function canTalkInRoom(meId: number, room: string): boolean {
 	if (a !== meId && b !== meId) return false; // 不是这条会话的参与者
 	const peer = a === meId ? b : a;
 	return areFriends(meId, peer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 设备会话登记（VNC / 媒体直连）
+//
+// 为什么必须真存：教室端的本地代理（stelarith-agent）起了 VNC 或媒体直连服务后，
+// 会把 `{uid, ip, port, token}` 回报到扩展网关，面板再轮询取用。
+// 旧实现在这两端都返回固定值（GET 恒 `{session:null}`、POST 只 `{ok:true}`）——
+// 于是**代理报的会话被直接丢掉**，面板"永远等不到会话地址"。
+// 那不是一个可以靠重试解决的问题，是链路里少了一环。
+//
+// 为什么放内存而不是 console_meta：
+//   会话是**瞬时**的，且 IP/端口/令牌每次启动都变。若持久化，服务重启后
+//   面板会拿到一条已经死掉的会话地址去连 —— 症状是"面板显示了地址但连不上"，
+//   比"没有会话"更难排查。所以刻意不落库：进程重启 = 会话全部失效，
+//   代理下一轮上报会重新登记。
+// 另加 TTL 兜底：代理崩溃/断电来不及上报关闭时，会话不能永久留在内存里。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type DeviceSession = {
+	uid: string;
+	proto: string; // vnc | media
+	ip: string;
+	port: number;
+	token: string;
+	/** 登记时间（epoch ms） */
+	at: number;
+	/** 可选：媒体会话额外字段（如当前录像文件名、可用文件数） */
+	extra?: Record<string, unknown>;
+};
+
+const SESSION_TTL_MS = Math.max(30, Number(process.env.CONSOLE_SESSION_TTL_SECONDS ?? 300)) * 1000;
+const deviceSessions = new Map<string, DeviceSession>();
+
+const sKey = (proto: string, uid: string) => `${proto}:${uid}`;
+
+/** 登记/覆盖一个设备会话，返回落库后的对象。 */
+export function putDeviceSession(
+	input: Omit<DeviceSession, "at"> & { at?: number }
+): DeviceSession {
+	const s: DeviceSession = { ...input, at: input.at ?? Date.now() };
+	deviceSessions.set(sKey(s.proto, s.uid), s);
+	return s;
+}
+
+/** 取一个未过期的会话；过期即清掉并返回 null（顺带做惰性清理）。 */
+export function getDeviceSession(proto: string, uid: string): DeviceSession | null {
+	const k = sKey(proto, uid);
+	const s = deviceSessions.get(k);
+	if (!s) return null;
+	if (Date.now() - s.at > SESSION_TTL_MS) {
+		deviceSessions.delete(k);
+		return null;
+	}
+	return s;
+}
+
+/** 主动注销（代理上报"已停止"时调用，别让面板拿到死地址）。 */
+export function clearDeviceSession(proto: string, uid: string): boolean {
+	return deviceSessions.delete(sKey(proto, uid));
+}
+
+/** 列出全部未过期会话（面板诊断页用：能看到"到底有没有人报过"）。 */
+export function listDeviceSessions(proto?: string): DeviceSession[] {
+	const now = Date.now();
+	const alive: DeviceSession[] = [];
+	for (const [k, s] of deviceSessions) {
+		if (now - s.at > SESSION_TTL_MS) {
+			deviceSessions.delete(k);
+			continue;
+		}
+		if (!proto || s.proto === proto) alive.push(s);
+	}
+	return alive.sort((a, b) => b.at - a.at);
+}
+
+/**
+ * 校验设备回报密钥（本地代理 → 网关）。
+ *
+ * 代理没有用户会话，走不了 viewConsole 那套鉴权；但它必须有权限登记会话，
+ * 否则面板永远看不到教室端地址。用一枚部署级共享密钥：
+ *   · 未配置 `CONSOLE_DEVICE_REPORT_SECRET` → **一律拒绝**（fail-closed）。
+ *     这里绝不能"没配就放行"—— 那等于把"任意人可伪造教室端会话地址"这个洞
+ *     留给一个默认配置缺失的场景，而面板会把伪造地址直接嵌进 iframe。
+ */
+export function verifyDeviceReportSecret(provided: string | null | undefined): boolean {
+	const expect = (process.env.CONSOLE_DEVICE_REPORT_SECRET ?? "").trim();
+	if (!expect) return false;
+	const got = String(provided ?? "").trim();
+	if (!got || got.length !== expect.length) return false;
+	let diff = 0;
+	for (let i = 0; i < expect.length; i++) diff |= expect.charCodeAt(i) ^ got.charCodeAt(i);
+	return diff === 0;
 }

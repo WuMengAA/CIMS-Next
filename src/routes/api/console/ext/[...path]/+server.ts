@@ -36,7 +36,11 @@ import {
 	requestFriend,
 	respondFriend,
 	removeFriend,
-	canTalkInRoom
+	canTalkInRoom,
+	// 面板持久化配置（控制 / 媒体 / 实验特性）—— 服务端存储，全校一致
+	getConsoleSettings,
+	saveConsoleSettings,
+	CONSOLE_SETTINGS_KEYS as SETTINGS_KEYS
 } from "$lib/server/console-ext.js";
 
 /**
@@ -53,7 +57,11 @@ import {
  *   POST   /api/console/ext/audit              记一条操作日志
  *   POST   /api/console/ext/audit/prune        按保留期裁剪审计（需 device.manage；裁剪本身也留痕）
  *   GET    /api/console/ext/summary            面板汇总计数
- *   GET|DELETE /api/console/ext/vnc-session    设备会话回执（无设备代理时恒为空，保持面板轮询不报错）
+ *   GET|DELETE /api/console/ext/vnc-session    设备会话回执（面板轮询取教室端 VNC 地址）
+ *   POST       /api/console/ext/vnc-session    教室端代理回报 VNC 会话（**设备密钥鉴权，非用户会话**）
+ *   GET        /api/console/ext/media-session  媒体直连会话（快照/录像下载用）
+ *   POST       /api/console/ext/media-session  代理回报媒体直连地址（同设备密钥鉴权）
+ *   GET        /api/console/ext/sessions       全部未过期会话（诊断用；没有它就只能靠猜）
  *
  * 权限：所有端点需 viewConsole（等级轴 L1+）；写操作另需设备档位或内容能力 ——
  * 通知留痕/清空需 device.control，其余写操作需 submitIssue（L2 参与能力）。
@@ -150,9 +158,26 @@ export async function GET(event: RequestEvent) {
 				outgoing: list.filter((f) => f.status === "pending" && f.outgoing)
 			});
 		}
-		case "vnc-session":
-			// 无设备侧代理回报时恒为空会话；面板据此走「未收到回执」分支，行为与之前一致。
-			return json({ session: null });
+		case "vnc-session": {
+			// 面板轮询：按 uid 取教室端回报的 VNC 会话。
+			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+			if (!uid) return json({ session: null, reason: "missing_uid" });
+			const s = getDeviceSession("vnc", uid);
+			// 明确区分「没人报过」与「报过但已过期」—— 前者要查代理，后者只要重发一次指令。
+			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
+		}
+		case "media-session": {
+			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+			if (!uid) return json({ session: null, reason: "missing_uid" });
+			const s = getDeviceSession("media", uid);
+			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
+		}
+		case "sessions":
+			// 诊断页用：一眼看到"代理到底有没有报过"，而不是只有 session:null 一个空字。
+			return json({ sessions: listDeviceSessions() });
+		case "settings":
+			// 面板配置读取：任何能进面板的人都能读（只读不敏感，且前端要用它渲染当前策略）。
+			return json({ settings: getConsoleSettings() });
 		default:
 			return json({ error: "unknown path" }, { status: 404 });
 	}
@@ -162,6 +187,69 @@ export async function POST(event: RequestEvent) {
 	const path = (event.params.path ?? "").replace(/^\/+|\/+$/g, "");
 	const body = await readBody(event);
 
+	// ── 设备回报分支（先于用户鉴权）────────────────────────────────────────
+	// 教室端的本地代理是**无用户会话**的常驻进程，走不了 viewConsole。
+	// 它需要登记「VNC 起好了，地址是 ip:port，令牌是 xxx」——这是面板能连上教室端的
+	// **唯一来源**。旧实现把这条汇报直接丢弃（POST 只回 ok、GET 恒 null），
+	// 造成"面板一直等待设备回报会话地址…"这个永远等不到的状态。
+	//
+	// 鉴权用部署级共享密钥（`CONSOLE_DEVICE_REPORT_SECRET`），且**未配置即拒绝**：
+	// 这个入口会把 ip/port 写进面板要嵌的 iframe，一旦可被任意伪造，
+	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
+	if (path === "vnc-session" || path === "media-session") {
+		const secret = event.request.headers.get("x-stelarith-device-secret");
+		if (verifyDeviceReportSecret(secret)) {
+			const proto = path === "vnc-session" ? "vnc" : "media";
+			const uid = String(body.uid ?? "").trim();
+			if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
+
+			// 代理上报 stopped/closed 时注销会话，别留死地址给面板。
+			const stopped = body.state === "stopped" || body.state === "closed" || body.port === 0;
+			if (stopped) {
+				const removed = clearDeviceSession(proto, uid);
+				addAudit({
+					actor: `device:${uid}`,
+					role: "device",
+					action: `${proto}.session.stop`,
+					target: uid,
+					detail: removed ? "会话已注销" : "无在册会话"
+				});
+				return json({ ok: true, session: null, state: "cleared" });
+			}
+
+			const ip = String(body.ip ?? "").trim();
+			const port = Number(body.port ?? 0);
+			if (!ip || !Number.isFinite(port) || port <= 0 || port > 65535) {
+				return json({ error: "ip/port 非法" }, { status: 400 });
+			}
+			const token = String(body.token ?? "").trim();
+			const requireToken = getConsoleSettings().vnc_require_token !== false;
+			if (requireToken && !token) {
+				// 面板配置要求令牌时，无令牌会话视为不可用 —— 直接拒收，
+				// 好过登记下来让面板连一个裸端口。
+				return json({ error: "配置要求会话令牌，但上报未带 token" }, { status: 400 });
+			}
+			const s = putDeviceSession({
+				uid,
+				proto,
+				ip,
+				port,
+				token,
+				extra: typeof body.extra === "object" && body.extra ? (body.extra as Record<string, unknown>) : undefined
+			});
+			addAudit({
+				actor: `device:${uid}`,
+				role: "device",
+				action: `${proto}.session.report`,
+				target: uid,
+				detail: `${ip}:${port}${token ? "（含令牌）" : "（无令牌）"}`
+			});
+			return json({ ok: true, session: s });
+		}
+		// 密钥不对/未配置 → 落到下面的用户鉴权分支：
+		// 面板自己也可能带用户会话 POST 这个路径（历史行为），不能一律 403 打死。
+	}
+
 	// 写操作权限：按语义分档（越敏感越收紧）
 	//   · notices（向大屏广播）→ device.control：设备级可见操作，电教委员及以上
 	//   · chat（班级/年级群发言）→ chatClass/chatGrade：内容轴 L2，注册电教委员即可
@@ -169,6 +257,8 @@ export async function POST(event: RequestEvent) {
 	const need: Action | DeviceTier =
 		path === "notices" ? "control"
 		: path === "audit/prune" ? "manage"
+		// settings 决定教室端行为（P2P/压缩/录像保留），属部署级配置 → 设备管理档。
+		: path === "settings" ? "manage"
 		: path === "chat" || path === "friends" ? "chatClass"
 		: "submitIssue";
 	const g = guard(event, need);
@@ -218,6 +308,11 @@ export async function POST(event: RequestEvent) {
 				if (classes.length === 0) classes = [myClass];
 			}
 
+			// 显示时长（秒）：可选字段。非法值/越界一律当「未指定」—— 绝不因为一个坏字段
+			// 把整条广播拒掉（广播是时效性操作，宁可按时长自适应也不能发不出去）。
+			const durRaw = Number(body.duration_seconds);
+			const seconds = Number.isFinite(durRaw) && durRaw > 0 ? Math.min(durRaw, 3600) : undefined;
+
 			// 真推送到教室端（这是「自动推送」的核心：留痕不等于送达）。
 			// ⚠️ 留痕由 broadcastToClassrooms 内部**唯一收口**，本函数不再自己 addNotice ——
 			//    曾经这里又写了一次，导致每条通知在历史里出现两遍（重复 2 次的根因）。
@@ -227,7 +322,8 @@ export async function POST(event: RequestEvent) {
 					scope: body.scope || (classes.length ? classes.join("、") : "本班"),
 					classes,
 					source: "notice",
-					author: actor
+					author: actor,
+					seconds
 				});
 			}
 
@@ -371,7 +467,30 @@ export async function POST(event: RequestEvent) {
 			return json(item, { status: 201 });
 		}
 		case "vnc-session":
-			return json({ ok: true });
+		case "media-session":
+			// 能走到这里说明没带有效设备密钥（上面那个分支已经处理过设备回报）。
+			// 面板自己不会 POST 这两个路径。返回明确原因而不是 `{ok:true}` ——
+			// 「回 ok 但什么都没发生」正是这类问题最难查的形态（调用方以为成功了）。
+			return json(
+				{ error: "该端点由教室端代理用设备密钥上报，不接受用户会话写入", code: "device_secret_required" },
+				{ status: 403 }
+			);
+		case "settings": {
+			// PATCH 语义：只覆盖传入的键。除白名单键外一律忽略 ——
+			// 这个 KV 是开放对象，若不设白名单，将来任何字段都能被写进来，
+			// 等于给了一个"无害但无界"的写入面。
+			const patch: Record<string, unknown> = {};
+			for (const k of SETTINGS_KEYS) if (k in body) patch[k] = body[k];
+			const saved = saveConsoleSettings(patch);
+			addAudit({
+				actor,
+				role: u.role,
+				action: "settings.update",
+				target: "console",
+				detail: `更新面板配置：${Object.keys(patch).join("、") || "（无变化）"}`.slice(0, 200)
+			});
+			return json({ ok: true, settings: saved });
+		}
 		default:
 			return json({ error: "unknown path" }, { status: 404 });
 	}
@@ -382,7 +501,11 @@ export async function DELETE(event: RequestEvent) {
 	const g = guard(event, path === "notices" ? "manage" : "submitIssue");
 	if ("error" in g) return g.error;
 
-	if (path === "vnc-session") return json({ ok: true });
+	if (path === "vnc-session" || path === "media-session") {
+		const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+		if (uid) clearDeviceSession(path === "vnc-session" ? "vnc" : "media", uid);
+		return json({ ok: true });
+	}
 	if (path === "notices") return json({ ok: true, cleared: clearNotices() });
 	return json({ error: "unknown path" }, { status: 404 });
 }

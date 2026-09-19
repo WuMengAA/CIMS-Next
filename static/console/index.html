@@ -13,7 +13,7 @@
        并且**必须重启 StelarithServer**（adapter-node 的 sirv 会缓存文件 size，
        文件被替换后仍按旧长度发送，表现为 HTML/JS 被拦腰截断、面板只剩线框）。
 -->
-<link rel="stylesheet" href="styles.css?v=20260919a" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
+<link rel="stylesheet" href="styles.css?v=20260920a" data-page-node-id="wctFnIbSpRINzmaYqKGr3E" />
 </head>
 <body data-page-node-id="poMxhzuD8ICT6zZOOZDeGB">
 
@@ -60,6 +60,7 @@
     <button class="nav" data-view="devices" data-need="control" data-page-node-id="YSFURThKJPl3BJAj2fEhnh"><i data-page-node-id="5sBymMT0B0Amzbq9gEBvFx"></i>设备控制</button>
     <button class="nav" data-view="classisland" data-need="control" data-page-node-id="Ci1sland001ProvAvail00"><i data-page-node-id="Ci1sland002ProvAvail00"></i>ClassIsland 专页</button>
     <button class="nav" data-view="remote" data-need="remote" data-page-node-id="kR3mZxQvLp9Wc2bN7uT8Ya"><i data-page-node-id="pQ1wE7rYt5Uu0oI3sD6hG"></i>远程控制</button>
+    <button class="nav" data-view="media" data-need="remote" data-page-node-id="MediaCamView0001List0"><i data-page-node-id="MediaCamView0002List0"></i>摄像头 / 录像</button>
     <button class="nav" data-view="voicehub" data-page-node-id="vH7mZxQvLp9Wc2bN7uT8Yb"><i data-page-node-id="vQ1wE7rYt5Uu0oI3sD6hH"></i>校园点歌</button>
     <button class="nav" data-view="notify" data-need="control" data-page-node-id="AH6XER2oUxHUNeaQHT9CYc"><i data-page-node-id="VNoLDzl83wri0xqW2fs1h5"></i>通知广播</button>
     <button class="nav" data-view="scheduled" data-need="control" data-page-node-id="ScHedBr0ad20260918P2"><i data-page-node-id="ScHedBr0ad002P2ve"></i>定时广播</button>
@@ -68,6 +69,10 @@
     <button class="nav" data-view="bug" data-need="issue" data-page-node-id="djfGM3VSX5EBcfBpz8bUdo"><i data-page-node-id="WTig2ZtrEMou1Cz12Fsm5F"></i>提交 Bug</button>
     <button class="nav" data-view="audit" data-page-node-id="M4bpUwnOxVYMCVhL97dZZz"><i data-page-node-id="MpKjBrCMMZz4Q9ShIgUbp4"></i>操作日志</button>
     <button class="nav" data-view="roles" data-page-node-id="Ro1esMatrix0001Roles00"><i data-page-node-id="Ro1esMatrix0002Roles00"></i>权限与分级</button>
+    <!-- 自检：任何有设备控制权的人都能跑（排查"没反应"是日常动作） -->
+    <button class="nav" data-view="test" data-need="control" data-page-node-id="DiagTestView0001Probe0"><i data-page-node-id="DiagTestView0002Probe0"></i>自检 / 测试</button>
+    <!-- 开发者选项：能发任意原始请求、改全局媒体策略 → 收到设备管理档 -->
+    <button class="nav" data-view="dev" data-need="manage" data-page-node-id="DiagDevView00001Raw00"><i data-page-node-id="DiagDevView00002Raw00"></i>开发者选项</button>
   </nav>
   <main id="main" data-page-node-id="mBqTPeYtepQISwQuehKxOJ"><div id="view" data-page-node-id="hCMKXe4bC8pQgS8xwDGbKq"></div></main>
 </div>
@@ -94,7 +99,7 @@
   </div>
 </div>
 
-<script src="api.js?v=20260919a"></script>
-<script src="app.js?v=20260919a"></script>
+<script src="api.js?v=20260920a"></script>
+<script src="app.js?v=20260920a"></script>
 </body>
 </html>

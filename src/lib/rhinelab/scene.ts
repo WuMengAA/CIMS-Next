@@ -1469,7 +1469,10 @@ export class ArchiveScene {
     );
     const arrayAim = new THREE.Vector3(
       -1.091,
-      THREE.MathUtils.lerp(-2.55 + 0.4 * orbit, -0.045, settle),
+      // 卡片锚在 y=-4.6；原版倾向让镜头瞄准 y≈0（适应高密度满墙）。
+      // 我们教程列数少、墙偏稀疏，若仍瞄 0 会让卡片整片贴近/越出视口下缘。
+      // 收敛后回到卡片平面，让档案卡落入视野中央。
+      THREE.MathUtils.lerp(-2.55 + 0.4 * orbit, -4.6, settle),
       THREE.MathUtils.lerp(2.48, 0.481, settle),
     );
     const cameraAim = arrayAim.clone();
