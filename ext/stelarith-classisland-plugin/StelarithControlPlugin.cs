@@ -195,6 +195,22 @@ public class StelarithTask
     /// <summary>批量开关：{moduleId: enabled}。</summary>
     [System.Text.Json.Serialization.JsonPropertyName("modules")]
     public System.Collections.Generic.Dictionary<string, bool>? Modules { get; set; }
+
+    // ---- 未知字段透传（摄像头 / 媒体动作的参数走这里）----
+    //
+    // 为什么需要它：摄像头抓拍/录像/媒体调取这类动作的参数是**开放集合**
+    // （camera / kind / name / params{kbps, scale, segment_seconds, retention_days…}），
+    // 而它们对插件而言只是"要转交给本地代理的行李"——插件既不解读、也不校验。
+    // 逐个加属性意味着：每加一个可调参数就要改一次插件、重新出包、全教室升级；
+    // 而这些参数本来只跟"面板 ↔ 代理"有关，插件不该成为它们的版本瓶颈。
+    //
+    // [JsonExtensionData] 让 System.Text.Json 把未识别的字段原样收下，
+    // 序列化时又原样写回根级 —— 正好是"透明转发"这个语义。
+    //
+    // ⚠️ 这不等于把通道放开：真正的动作白名单在插件的 switch（RunAsync）与代理的
+    // execute 里，且代理仍要验签。透传只影响"同一条已授权指令带什么参数"。
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? Extra { get; set; }
 }
 
 /// <summary>
@@ -328,6 +344,8 @@ public static class StelarithDispatch
             // SelectedClassPlanGroupId，只能由本地插件改档案）。见 StelarithProfileWriter。
             case "set_active_class":
             case "switch_class":
+                // 切班是纪律相关动作（考试期间不希望被打断）→ 单独一个模块可控。
+                if (!RequireModule(StelarithModules.ClassSwitch, "远程切班")) break;
                 StelarithReflection.EnsureResolved();
                 var r = StelarithProfileWriter.SetActiveClassGroup(task.GroupId, task.GroupName);
                 StelarithProfileWriter.Diag("dispatch set_active_class -> " + r);
@@ -347,6 +365,25 @@ public static class StelarithDispatch
             case "remote_control_stop":
                 if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
                 await ForwardToAgentAsync(task, "远程控制");
+                break;
+            // 摄像头：抓拍单帧 / 短录像 / 媒体库（列举·删除）。真正的取流由本地代理做
+            //（它才有 OS 级设备访问权），插件这层的职责是**门控**（隐私动作必须能一键全关）
+            // 与**把失败原因推上大屏**。
+            case "camera_snapshot":
+            case "camera_record_start":
+            case "camera_record_stop":
+            case "camera_list":
+            case "media_list":
+            case "media_delete":
+                if (!RequireModule(StelarithModules.CameraCapture, "摄像头")) break;
+                await ForwardToAgentAsync(task, "摄像头");
+                break;
+            // P2P 媒体会话：本机作为点位被观看端直连（高带宽画面不过服务器）。
+            // 关掉这个模块 = 只允许经服务器转发，属**降级**而非拒绝。
+            case "media_session_start":
+            case "media_session_stop":
+                if (!RequireModule(StelarithModules.MediaP2P, "P2P 媒体")) break;
+                await ForwardToAgentAsync(task, "P2P 媒体");
                 break;
             case "shell":
             case "reboot":

@@ -16,6 +16,11 @@ use std::io::Write;
 use std::process::{Child, Command};
 use std::sync::{Mutex, OnceLock};
 
+// 摄像头 / 录像 / 媒体直连服务独立成模块：
+// 这块代码量已超过主文件的"指令分发"职责，而且它自带一组明确的取舍
+// （ffmpeg 缺失即报错、录像必须分段、停止必须优雅收尾）——分出去才有地方写清这些理由。
+mod media;
+
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -35,28 +40,97 @@ type HmacSha256 = Hmac<Sha256>;
 struct Task {
     action: String,
     token: String,
+    /// 指令作用域（class / grade / school）。当前代理不按 scope 做分支——
+    /// 范围控制在上游（面板权限 + 插件门控）完成；这里保留字段是为了让协议完整、
+    /// 将来真要做设备侧二次校验时不必再改一次线格式。
     #[serde(default = "default_scope")]
+    #[allow(dead_code)]
     scope: String,
     ts: i64,
     /// 可选：shell 动作的命令（仅管理员角色且经 RBAC 允许时执行）
     #[serde(default)]
     cmd: Option<String>,
+    /// 摄像头动作：设备名（DirectShow 友好名，如 `USB Camera`）。缺省取枚举到的第一个。
+    #[serde(default)]
+    camera: Option<String>,
+    /// 媒体动作：`snapshots` | `recordings`
+    #[serde(default)]
+    kind: Option<String>,
+    /// 媒体动作：文件名（删除用；只接受 basename，见 media::safe_media_name）
+    #[serde(default)]
+    name: Option<String>,
+    /// 其余参数（码率 / 缩放 / 段长 / 画质 / 保留天数 …）。
+    ///
+    /// 为什么留一个开放字典而不是逐个加字段：摄像头/媒体这类动作的参数会随面板配置
+    /// 变化（码率、缩放、段长、画质都是可调项），每加一个都要改协议、改插件字段、
+    /// 改面板 —— 而它们**全都只是喂给 ffmpeg 的命令行参数**。收敛成字典后，
+    /// 新增一个可调项只动面板与这里两处。
+    /// 注意：这不代表"什么都能传"—— `p_num` 会把每个取值夹到安全区间，
+    /// 绝不把未校验的值直接拼进 ffmpeg 参数。
+    #[serde(default)]
+    params: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl Task {
+    /// 取字符串参数：先看顶层同名字段（插件直接透传），再看 params。
+    fn p_str(&self, key: &str) -> Option<String> {
+        let direct = match key {
+            "camera" => self.camera.clone(),
+            "kind" => self.kind.clone(),
+            "name" => self.name.clone(),
+            _ => None,
+        };
+        if let Some(v) = direct {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+        self.params
+            .as_ref()
+            .and_then(|m| m.get(key))
+            .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+    }
+
+    /// 取数值参数并夹到 [min, max]。
+    ///
+    /// 夹取而不是"校验后拒绝"：这些值是**性能/画质旋钮**，面板传了个离谱数字
+    /// （比如码率 999999999）时正确行为是退到安全上限继续录，而不是整条指令失败
+    /// —— 录像这种带时间窗的操作，失败一次就少一段证据。
+    fn p_num(&self, key: &str, default: f64, min: f64, max: f64) -> f64 {
+        let raw = self.params.as_ref().and_then(|m| m.get(key)).and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+        });
+        match raw {
+            Some(n) if n.is_finite() => n.clamp(min, max),
+            _ => default,
+        }
+    }
 }
 
 fn default_scope() -> String {
     "class".into()
 }
 
-/// 进程级状态：当前 VNC 子进程 + 分配的会话端口。
+/// 进程级状态：VNC 子进程 + 摄像头录像进程。
 struct AgentState {
     secret: String,
     vnc_cmd: String,
     active: Mutex<Option<VncSession>>,
+    /// 正在进行的录像（None = 未录）。放在 main 侧而不是 media 模块内部，
+    /// 是为了让"同一台机器只能有一段录像"这条约束由状态结构本身保证，
+    /// 而不是靠调用方自觉。
+    recorder: Mutex<Option<media::Recorder>>,
 }
 
 struct VncSession {
     child: Child,
     port: u16,
+    /// 连接令牌。**刻意不通过 /status 回显**（见 status_handler 注释）——
+    /// 它由 report_session 直接送到扩展网关，不进任何诊断输出。
+    #[allow(dead_code)]
     conn_token: String,
 }
 
@@ -174,9 +248,11 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
                     out.insert("result".into(), "vnc_started".into());
                     out.insert("vnc_port".into(), port.to_string());
                     out.insert("conn_token".into(), conn_token.clone());
-                    // 真实联动：把 vnc_port+conn_token 经扩展网关 /vnc-session 回报面板（见 docs/扩展能力设计.md §2.2）。
+                    // 真实联动：把 vnc_port+conn_token 经扩展网关 /vnc-session 回报面板
+                    // （见 docs/扩展能力设计.md §2.2）。网关以 x-stelarith-device-secret 鉴权。
                     let _ = write_status(&format!("vnc up port={port} token={conn_token}"));
-                    report_vnc_session(port, &conn_token);
+                    let ip = local_lan_ip().unwrap_or_else(|| "127.0.0.1".into());
+                    media::report_session("vnc", &ip, port, &conn_token, "up");
                 }
                 Err(e) => {
                     out.insert("error".into(), e.to_string());
@@ -222,6 +298,42 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
                 out.insert("error".into(), "missing cmd".into());
             }
         }
+        // ═══ 摄像头 / 媒体（模块门控在插件侧；这里只负责真干活）═══
+        // 注意每个分支都 return，不走下面统一的 out 收集 —— 这些动作的回执字段
+        // 差异很大（有的带 ip:port:token，有的带文件清单），塞进同一个 map 反而更乱。
+        "camera_list" => return media::camera_list(),
+        "camera_snapshot" | "snapshot" => return media::take_snapshot(task),
+        "camera_record_start" | "record_start" => return media::start_recording(task, &st.recorder),
+        "camera_record_stop" | "record_stop" => return media::stop_recording(&st.recorder),
+        "media_list" => return media::media_list_payload(task),
+        "media_delete" => return media::media_delete(task),
+        "media_session_start" => {
+            let mut out = HashMap::new();
+            match media::ensure_media_server() {
+                Some((ip, port, token)) => {
+                    out.insert("result".into(), "media_session_up".into());
+                    out.insert("media_ip".into(), ip.clone());
+                    out.insert("media_port".into(), port.to_string());
+                    out.insert("media_token".into(), token);
+                    out.insert("media_base".into(), format!("http://{ip}:{port}"));
+                }
+                None => {
+                    out.insert(
+                        "error".into(),
+                        "媒体直连服务无法启动（端口被占且系统分配也失败？），详见 agent.status.log".into(),
+                    );
+                }
+            }
+            return out;
+        }
+        "media_session_stop" => {
+            let mut out = HashMap::new();
+            out.insert(
+                "result".into(),
+                if media::stop_media_server() { "media_session_down".into() } else { "no_active_session".into() },
+            );
+            return out;
+        }
         other => {
             out.insert("error".into(), format!("unknown action: {other}"));
         }
@@ -229,7 +341,7 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
     out
 }
 
-fn write_status(line: &str) -> std::io::Result<()> {
+pub(crate) fn write_status(line: &str) -> std::io::Result<()> {
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -237,36 +349,8 @@ fn write_status(line: &str) -> std::io::Result<()> {
     writeln!(f, "{} {}", Utc::now().to_rfc3339(), line)
 }
 
-/// 把 VNC 会话回执上报到扩展网关 /vnc-session（自有服务，非虚构网关）。
-/// 面板轮询该端点拿到 ip/port/token 后内嵌 noVNC。未配置 STELARITH_EXT_URL 则跳过。
-fn report_vnc_session(port: u16, conn_token: &str) {
-    let ext = match std::env::var("STELARITH_EXT_URL") {
-        Ok(v) if !v.is_empty() => v.trim_end_matches('/').to_string(),
-        _ => return,
-    };
-    let uid = std::env::var("STELARITH_DEVICE_UID").unwrap_or_else(|_| "unknown".into());
-    let ip = local_lan_ip().unwrap_or_else(|| "127.0.0.1".into());
-    let body = serde_json::json!({
-        "uid": uid,
-        "ip": ip,
-        "port": port,
-        "token": conn_token,
-        "proto": "vnc",
-    });
-    let url = format!("{ext}/vnc-session");
-    std::thread::spawn(move || {
-        if let Ok(client) = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(3)).build() {
-            let _ = client
-                .post(&url)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send();
-        }
-    });
-}
-
 /// 取本机首个非回环 IPv4（用于告诉面板从哪连 VNC）。失败回退 127.0.0.1。
-fn local_lan_ip() -> Option<String> {
+pub(crate) fn local_lan_ip() -> Option<String> {
     use std::net::UdpSocket;
     let s = UdpSocket::bind("0.0.0.0:0").ok()?;
     s.connect("8.8.8.8:80").ok()?;
@@ -285,8 +369,12 @@ async fn task_handler(
     Json(execute(&task, &st))
 }
 
-/// 只读健康/会话状态：供 ClassIsland 插件或运维工具查询当前 VNC 会话（端口 + 连接令牌）。
+/// 只读健康/会话状态：供 ClassIsland 插件或运维工具查询当前 VNC / 录像 / 媒体直连状态。
 /// 不暴露任何写能力，仅 127.0.0.1 可达。
+///
+/// 刻意**不回显 VNC 连接令牌与媒体令牌**：这个端点虽然只绑本地回环，但它会被运维脚本、
+/// 诊断包、乃至截图带出去；令牌一旦进了诊断包就等于进了工单系统。
+/// 需要令牌的场景（面板连 VNC）走的是"代理主动上报到网关"那条路，不经过这里。
 async fn status_handler(
     State(st): State<std::sync::Arc<AgentState>>,
 ) -> Json<HashMap<String, String>> {
@@ -295,9 +383,23 @@ async fn status_handler(
     if let Some(s) = st.active.lock().unwrap().as_ref() {
         m.insert("vnc".into(), "running".into());
         m.insert("vnc_port".into(), s.port.to_string());
-        m.insert("conn_token".into(), s.conn_token.clone());
     } else {
         m.insert("vnc".into(), "stopped".into());
+    }
+    match media::recorder_status(&st.recorder) {
+        Some((started_at, camera, seg, kbps)) => {
+            m.insert("recording".into(), "running".into());
+            m.insert("recording_since".into(), started_at.to_string());
+            m.insert("recording_camera".into(), camera);
+            m.insert("segment_seconds".into(), seg.to_string());
+            m.insert("recording_bitrate_kbps".into(), kbps.to_string());
+        }
+        None => {
+            m.insert("recording".into(), "stopped".into());
+        }
+    }
+    for (k, v) in media::status_lines() {
+        m.insert(k, v);
     }
     Json(m)
 }
@@ -311,18 +413,29 @@ async fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(17999);
 
+    // 开机先按保留期清一次媒体目录。放在起服务之前：清盘可能耗时（大量小文件），
+    // 而这一秒的延迟发生在无人使用服务的时间窗里，代价最小。
+    media::startup_prune();
+
     let st = std::sync::Arc::new(AgentState {
         secret,
         vnc_cmd,
         active: Mutex::new(None),
+        recorder: Mutex::new(None),
     });
 
     // 仅绑 localhost：外部不可直接访问，符合"占用少 + 默认安全"。
+    // （媒体直连服务是**另一个**监听器，由 media 模块在真的发生媒体动作时才按需启动，
+    //   见 media::ensure_media_server。把两者分开是为了让默认状态下教室机不多开端口。）
     let app = Router::new()
         .route("/task", post(task_handler))
         .route("/status", get(status_handler))
         .with_state(st);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.unwrap();
-    println!("[StelarithAgent] listening on 127.0.0.1:{port}");
+    println!(
+        "[StelarithAgent] listening on 127.0.0.1:{port} | uid={} | media_root={}",
+        media::device_uid(),
+        media::media_root()
+    );
     axum::serve(listener, app).await.unwrap();
 }

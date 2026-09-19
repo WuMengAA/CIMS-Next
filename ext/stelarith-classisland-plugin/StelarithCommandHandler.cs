@@ -57,8 +57,8 @@ public sealed class StelarithCommandHandler
             case CmdSendNotification:
                 // 反解 protobuf wire，提取 MessageContent(2)/MessageMask(1)；其中 MessageContent
                 // 可能内嵌 stelarith_task JSON，ExtractTask 会二次取用。
-                var (title, content) = ParseNotificationProto(raw);
-                return HandleSendNotificationCore(content, title, ct);
+                var (title, content, spec) = ParseNotificationProto(raw);
+                return HandleSendNotificationCore(content, title, spec, ct);
             default:
                 // 其余命令 payload 为空或可选，直接按 JSON 形态处理（String 视图）
                 var str = raw is null ? null : BytesToSafeString(raw);
@@ -167,12 +167,12 @@ public sealed class StelarithCommandHandler
     /// <summary>处理 SendNotification（轮询通道：payload 为 JSON）。</summary>
     private Task HandleSendNotificationAsync(string? payload, CancellationToken ct)
     {
-        var (title, content) = ParseNotificationText(payload);
-        return HandleSendNotificationCore(content ?? payload, title, ct);
+        var (title, content, spec) = ParseNotificationText(payload);
+        return HandleSendNotificationCore(content ?? payload, title, spec, ct);
     }
 
     /// <summary>SendNotification 统一核心：提取内嵌 stelarith_task 执行 + 展示通知文案。</summary>
-    private async Task HandleSendNotificationCore(string? textContent, string? title, CancellationToken ct)
+    private async Task HandleSendNotificationCore(string? textContent, string? title, NotificationSpec spec, CancellationToken ct)
     {
         // 先尝试提取内嵌 stelarith_task（面板经 send-notification 下发的形态，打包在 MessageContent）
         var task = StelarithDispatch.ExtractTask(textContent);
@@ -187,8 +187,10 @@ public sealed class StelarithCommandHandler
         {
             var finalTitle = string.IsNullOrWhiteSpace(title) ? StelarithBranding.SourceName : title;
             StelarithNotificationProvider.Diag(
-                $"处理 SendNotification: title={finalTitle} contentLen={textContent!.Length} provider={(StelarithNotificationProvider.Current is null ? "未就绪(降级)" : "已就绪")}");
-            Notify(finalTitle, textContent);
+                $"处理 SendNotification: title={finalTitle} contentLen={textContent!.Length} " +
+                $"seconds={(spec.Seconds?.ToString("N1") ?? "官方默认")} repeat={Math.Max(1, spec.RepeatCounts)} " +
+                $"flags={(spec.HasFlags ? "载荷指定" : "宿主默认")} provider={(StelarithNotificationProvider.Current is null ? "未就绪(降级)" : "已就绪")}");
+            Notify(finalTitle, textContent, spec);
         }
         else if (task is null)
         {
@@ -212,11 +214,55 @@ public sealed class StelarithCommandHandler
         }
     }
 
-    /// <summary>解析 protobuf wire 格式的 SendNotification，提取 MessageMask(1)/MessageContent(2) 字符串。</summary>
-    private static (string? title, string? content) ParseNotificationProto(byte[]? raw)
+    /// <summary>
+    /// SendNotification 载荷中与「显示」相关的可选项。JSON（命令队列）与 protobuf（gRPC）
+    /// 两条通道统一收敛到这里，避免同一组字段在两处各解一遍、各错一遍。
+    /// </summary>
+    private readonly struct NotificationSpec
     {
-        if (raw is null || raw.Length == 0) return (null, null);
+        /// <summary>集控端指定的显示秒数；null = 未指定（由提供方取官方默认）。</summary>
+        public double? Seconds { get; init; }
+        public int RepeatCounts { get; init; }
+        /// <summary>载荷是否带了提醒开关字段（带了才写请求级提醒设置，否则保持宿主默认）。</summary>
+        public bool HasFlags { get; init; }
+        public bool IsSpeechEnabled { get; init; }
+        public bool IsEffectEnabled { get; init; }
+        public bool IsSoundEnabled { get; init; }
+        public bool IsTopmost { get; init; }
+        public bool IsEmergency { get; init; }
+
+        /// <summary>转成提供方认识的开关对象；载荷没带这些字段 → null（不改动请求级设置）。</summary>
+        public StelarithNotificationProvider.NotificationFlags? ToFlags() =>
+            HasFlags
+                ? new StelarithNotificationProvider.NotificationFlags
+                {
+                    IsSpeechEnabled = IsSpeechEnabled,
+                    IsEffectEnabled = IsEffectEnabled,
+                    IsSoundEnabled = IsSoundEnabled,
+                    IsTopmost = IsTopmost,
+                    IsEmergency = IsEmergency,
+                }
+                : null;
+    }
+
+    /// <summary>把载荷里的重复次数归一到 [1, 100]（越界/缺失一律取 1）。</summary>
+    private static int NormalizeRepeat(double? v) =>
+        v.HasValue && v.Value >= 1 ? (int)Math.Min(v.Value, 100.0) : 1;
+
+    /// <summary>
+    /// 解析 protobuf wire 格式的 SendNotification。字段定义见
+    /// ClassIsland.Shared/Protobuf/Command/SendNotification.proto：
+    ///   1 MessageMask(str) / 2 MessageContent(str) / 3·4 图标(int32) / 5 IsEmergency(bool)
+    ///   6 IsSpeechEnabled / 7 IsEffectEnabled / 8 IsSoundEnabled / 9 IsTopmost
+    ///   10 DurationSeconds(double) / 11 RepeatCounts(int32)
+    /// </summary>
+    private static (string? title, string? content, NotificationSpec spec) ParseNotificationProto(byte[]? raw)
+    {
+        if (raw is null || raw.Length == 0) return (null, null, default);
         string? mask = null, content = null;
+        double? seconds = null;
+        int repeat = 1;
+        bool emergency = false, speech = false, effect = false, sound = false, topmost = false, anyFlags = false;
         try
         {
             int i = 0;
@@ -228,9 +274,23 @@ public sealed class StelarithCommandHandler
                 switch (wire)
                 {
                     case 0: // varint
-                        ReadVarint(raw, ref i, out var v1);
+                        var v = ReadVarint(raw, ref i, out var okv);
+                        if (!okv) break;
+                        // 5~9 是提醒开关：**字段出现**即认为集控端显式指定了它们（哪怕值为 false）。
+                        if (field >= 5 && field <= 9) anyFlags = true;
+                        switch (field)
+                        {
+                            case 5: emergency = v != 0; break;
+                            case 6: speech = v != 0; break;
+                            case 7: effect = v != 0; break;
+                            case 8: sound = v != 0; break;
+                            case 9: topmost = v != 0; break;
+                            case 11: repeat = NormalizeRepeat(v); break;
+                        }
                         break;
-                    case 1: // 64-bit
+                    case 1: // 64-bit；DurationSeconds(10) 是 double（proto3 wire type 1）
+                        if (field == 10 && i + 8 <= raw.Length)
+                            seconds = BitConverter.ToDouble(raw, i);
                         i += 8;
                         break;
                     case 2: // length-delimited
@@ -253,7 +313,18 @@ public sealed class StelarithCommandHandler
         {
             // 解析失败则返回 null，交给调用方降级
         }
-        return (mask, content);
+        var spec = new NotificationSpec
+        {
+            Seconds = seconds,
+            RepeatCounts = repeat,
+            HasFlags = anyFlags,
+            IsSpeechEnabled = speech,
+            IsEffectEnabled = effect,
+            IsSoundEnabled = sound,
+            IsTopmost = topmost,
+            IsEmergency = emergency,
+        };
+        return (mask, content, spec);
     }
 
     /// <summary>读取 protobuf varint。</summary>
@@ -283,10 +354,10 @@ public sealed class StelarithCommandHandler
         catch { return Encoding.Latin1.GetString(bytes); }
     }
 
-    /// <summary>从 SendNotification 载荷提取 (标题, 正文)。兼容 JSON 与内嵌 stelarith_task 容错。</summary>
-    private (string? title, string? content) ParseNotificationText(string? payload)
+    /// <summary>从 SendNotification 载荷提取 (标题, 正文, 显示选项)。兼容 JSON 与内嵌 stelarith_task 容错。</summary>
+    private (string? title, string? content, NotificationSpec spec) ParseNotificationText(string? payload)
     {
-        if (string.IsNullOrWhiteSpace(payload)) return (null, null);
+        if (string.IsNullOrWhiteSpace(payload)) return (null, null, default);
         try
         {
             using var doc = JsonDocument.Parse(payload);
@@ -296,21 +367,82 @@ public sealed class StelarithCommandHandler
             {
                 var content = GetString(root, "MessageContent");
                 var title = GetString(root, "MessageMask");
-                return (title, content);
+                var spec = new NotificationSpec
+                {
+                    Seconds = GetDouble(root, "DurationSeconds"),
+                    RepeatCounts = NormalizeRepeat(GetDouble(root, "RepeatCounts")),
+                    // 带没带开关字段比"值是多少"更重要：带了才覆盖宿主设置，
+                    // 没带就保持 null（否则会把宿主自己的提醒开关一次性全写成 false）。
+                    HasFlags = TryGetProp(root, "IsSpeechEnabled", out _)
+                               || TryGetProp(root, "IsEffectEnabled", out _)
+                               || TryGetProp(root, "IsSoundEnabled", out _)
+                               || TryGetProp(root, "IsTopmost", out _),
+                    IsSpeechEnabled = GetBool(root, "IsSpeechEnabled"),
+                    IsEffectEnabled = GetBool(root, "IsEffectEnabled"),
+                    IsSoundEnabled = GetBool(root, "IsSoundEnabled"),
+                    IsTopmost = GetBool(root, "IsTopmost"),
+                    IsEmergency = GetBool(root, "IsEmergency"),
+                };
+                return (title, content, spec);
             }
         }
         catch
         {
             // payload 可能是 protobuf 二进制，非 JSON——不强解析，只作提示
         }
-        return (null, payload);
+        return (null, payload, default);
+    }
+
+    /// <summary>
+    /// 取对象属性（大小写不敏感）。
+    /// 先按原名精确匹配，失败再逐属性做 OrdinalIgnoreCase 扫描 —— CIMS 侧 <c>model_dump()</c>
+    /// 输出 PascalCase，但历史上出现过「响应被中间层转小写后字段全取不到」的静默吞命令事故，
+    /// 这里放宽匹配以免重蹈覆辙。
+    /// </summary>
+    private static bool TryGetProp(JsonElement el, string prop, out JsonElement value)
+    {
+        value = default;
+        if (el.ValueKind != JsonValueKind.Object) return false;
+        if (el.TryGetProperty(prop, out value)) return true;
+        foreach (var p in el.EnumerateObject())
+        {
+            if (string.Equals(p.Name, prop, StringComparison.OrdinalIgnoreCase))
+            {
+                value = p.Value;
+                return true;
+            }
+        }
+        return false;
     }
 
     private static string? GetString(JsonElement el, string prop)
     {
-        if (el.ValueKind == JsonValueKind.Object && el.TryGetProperty(prop, out var v))
-            return v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        if (!TryGetProp(el, prop, out var v)) return null;
+        return v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+    }
+
+    /// <summary>读数值字段（容忍「数字」与「数字字符串」两种写法）。取不到返回 null。</summary>
+    private static double? GetDouble(JsonElement el, string prop)
+    {
+        if (!TryGetProp(el, prop, out var v)) return null;
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)) return d;
+        if (v.ValueKind == JsonValueKind.String && double.TryParse(v.GetString(), out var s)) return s;
         return null;
+    }
+
+    /// <summary>读布尔字段（容忍 true/"true"/1 三种写法）。取不到按 false。</summary>
+    private static bool GetBool(JsonElement el, string prop)
+    {
+        if (!TryGetProp(el, prop, out var v)) return false;
+        if (v.ValueKind == JsonValueKind.True) return true;
+        if (v.ValueKind == JsonValueKind.False) return false;
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)) return d != 0;
+        if (v.ValueKind == JsonValueKind.String)
+        {
+            var s = v.GetString();
+            return s != null && (s.Equals("true", StringComparison.OrdinalIgnoreCase) || s == "1");
+        }
+        return false;
     }
 
     /// <summary>把最近同步快照完整写入插件目录下的 stelarith-config-snapshot.json（供管理端/审计复用）。</summary>
@@ -347,7 +479,8 @@ public sealed class StelarithCommandHandler
     ///
     /// 若提供方尚未被 DI 构造（极早期或宿主异常），降级为 Windows 托盘气泡，保证不静默丢失。
     /// </summary>
-    private void Notify(string title, string message)
+    /// <param name="spec">集控载荷里的显示选项（时长 / 重复 / 提醒开关）。</param>
+    private void Notify(string title, string message, NotificationSpec spec = default)
     {
         // 模块门控：停用「集控播报」后不再往大屏推遮罩。
         // 这是教室纪律相关的开关（比如考试期间不希望被广播打断），必须真的生效。
@@ -361,7 +494,8 @@ public sealed class StelarithCommandHandler
         var provider = StelarithNotificationProvider.Current;
         if (provider is not null)
         {
-            provider.Push(title, message);
+            // 时长挂在**正文浮层**上（官方语义）；未指定则用官方默认 5 秒。
+            provider.Push(title, message, spec.Seconds ?? 0, Math.Max(1, spec.RepeatCounts), spec.ToFlags());
             return;
         }
 

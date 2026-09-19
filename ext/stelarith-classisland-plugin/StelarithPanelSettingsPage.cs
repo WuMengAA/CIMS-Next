@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
@@ -56,6 +57,7 @@ public class StelarithPanelSettingsPage : SettingsPageBase
     private StackPanel _modulePanel = null!;
     private StackPanel _pluginPanel = null!;
     private TextBox _groupBox = null!;
+    private TextBlock _netText = null!;
 
     // OOBE 引导横幅：本机尚未绑定班级时渲染，把"去面板绑定"显式告诉电教委员。
     private Border _oobEBorder = null!;
@@ -126,6 +128,15 @@ public class StelarithPanelSettingsPage : SettingsPageBase
         root.Children.Add(SectionHeader("快捷操作"));
         root.Children.Add(BuildActionRows());
         root.Children.Add(_toastText);
+
+        root.Children.Add(SectionHeader("网络模式"));
+        root.Children.Add(Body(
+            "教室端既可以直连校内 CIMS，也可以统一走公网域名。两边的服务基址与租户基域"
+            + "**必须成对切换** —— 只改一个会让第一批请求直接 403（租户识别靠 HTTP Host 头，"
+            + "从现象上完全看不出原因）。切换会写入插件目录的 stelarith-sync.json，"
+            + "命令轮询线程每轮重读该文件，因此**无需重启 ClassIsland**。",
+            StelarithTheme.SubtleOpacity, 12, wrap: true));
+        root.Children.Add(BuildNetworkRow());
 
         root.Children.Add(SectionHeader("功能模块开关"));
         root.Children.Add(Body(
@@ -214,6 +225,70 @@ public class StelarithPanelSettingsPage : SettingsPageBase
         return rows;
     }
 
+    /// <summary>
+    /// 网络模式行：显示当前生效地址（含 Host 头），并一键在内网直连 / 公网域名之间切换。
+    /// </summary>
+    /// <remarks>
+    /// 为什么必须在这里把 Host 头也显示出来：租户识别完全依赖
+    /// `<slug>.<BaseDomain>` 这个 Host —— 运维排查"为什么教室端拉不到配置"时，
+    /// 第一件要确认的事就是它，而它恰恰不在任何显眼的界面上。
+    /// </remarks>
+    private Control BuildNetworkRow()
+    {
+        _netText = Body("读取中…", StelarithTheme.SubtleOpacity, 13, wrap: true);
+
+        var rows = new StackPanel { Spacing = 8 };
+        rows.Children.Add(_netText);
+        rows.Children.Add(ButtonRow(
+            Btn("切到内网直连", () => SwitchNetwork("lan")),
+            Btn("切到公网域名", () => SwitchNetwork("wan")),
+            Btn("打开插件目录", OpenSyncConfigFolder)));
+        return rows;
+    }
+
+    private void SwitchNetwork(string mode)
+    {
+        try
+        {
+            var opt = StelarithSyncOptions.Load();
+            var err = opt.ApplyNetworkMode(mode);
+            if (err is not null)
+            {
+                // 半改这套地址的后果（全线 403）比"切不动"严重得多，所以宁可拒绝也不猜一个值。
+                Toast(err);
+                return;
+            }
+            opt.Save();
+            StelarithStatusBridge.RequestImmediateReport();
+            Toast(mode == "wan"
+                ? $"已切到公网：{opt.ClientAppBase}（Host: {opt.Slug}.{opt.BaseDomain}）"
+                : $"已切回内网：{opt.ClientAppBase}（Host: {opt.Slug}.{opt.BaseDomain}）");
+            RefreshStatus();
+        }
+        catch (Exception ex)
+        {
+            Toast("切换失败：" + ex.Message);
+        }
+    }
+
+    private void OpenSyncConfigFolder()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location)
+                      ?? AppContext.BaseDirectory;
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", dir)
+            {
+                UseShellExecute = true,
+            });
+            Toast("已打开插件目录：" + dir);
+        }
+        catch (Exception ex)
+        {
+            Toast("打开目录失败：" + ex.Message);
+        }
+    }
+
     private Control BuildSwitchRow()
     {
         _groupBox = new TextBox
@@ -263,6 +338,18 @@ public class StelarithPanelSettingsPage : SettingsPageBase
                 ? $"在线 · 最近上报 {st.At:HH:mm:ss}（{Humanize(ago)}前）"
                 : $"未上报 · {st.At:HH:mm:ss} 失败：{st.Error ?? "—"}"
                   + (st.FailStreak > 1 ? $"（已连续失败 {st.FailStreak} 次，正在退避重试）" : "");
+
+            // ①-B 网络模式（内网直连 / 公网域名）
+            // 用 Environment.NewLine 拼接而不写转义换行：这几个字符串里带中文与括号，
+            // 一旦被工具链做转义处理就会把换行真写进字面量（编译期直接报「字符串未终止」）。
+            _netText.Text =
+                $"当前模式：{(string.Equals(opt.NetworkMode, "wan", StringComparison.OrdinalIgnoreCase) ? "公网域名" : "内网直连")}"
+                + $" · 服务基址 {opt.ClientAppBase}"
+                + Environment.NewLine + $"租户 Host：{opt.Slug}.{opt.BaseDomain}"
+                + Environment.NewLine + $"内网备用：{opt.LanClientAppBase}（{opt.LanBaseDomain}）"
+                + Environment.NewLine + "公网备用：" + (string.IsNullOrWhiteSpace(opt.WanClientAppBase)
+                    ? "未配置（填好 WanClientAppBase / WanBaseDomain 后才能切到公网）"
+                    : opt.WanClientAppBase + "（" + opt.WanBaseDomain + "）");
 
             // ② 设备身份
             _identityText.Text = $"{Environment.MachineName} · uid={opt.ClientUid} · 租户={opt.Slug}"

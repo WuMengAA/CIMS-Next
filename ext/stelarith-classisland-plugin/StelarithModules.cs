@@ -52,6 +52,11 @@ public static class StelarithModules
     public const string RemoteControl = "remote_control";
     public const string MessageFeed = "message_feed";
     public const string Heartbeat = "heartbeat";
+    // 2026-09-19 新增：这三项都是**真的会改变教室端行为**的开关（各有对应的执行路径），
+    // 不是"信息展示"型开关。纪律相关（切班）与隐私相关（摄像头）必须能单独关掉。
+    public const string ClassSwitch = "class_switch";
+    public const string CameraCapture = "camera_capture";
+    public const string MediaP2P = "media_p2p";
 
     /// <summary>模块清单（顺序即面板展示顺序）。</summary>
     public static readonly IReadOnlyList<StelarithModuleDef> All = new List<StelarithModuleDef>
@@ -68,6 +73,12 @@ public static class StelarithModules
                 Description = "允许集控对这台机器执行锁屏与截屏。" },
         new() { Id = RemoteControl, Label = "远程控制转发", IsCore = false,
                 Description = "允许集控经本地代理发起远程控制（VNC）会话。" },
+        new() { Id = ClassSwitch, Label = "远程切班", IsCore = false,
+                Description = "允许集控把本班大屏切换到指定课表群。考试 / 重要活动期间可临时关闭，避免被打断。" },
+        new() { Id = CameraCapture, Label = "摄像头抓拍与录像", IsCore = false,
+                Description = "允许集控抓取本机摄像头画面（单帧抓拍 / 短录像）。关闭后摄像头类指令一律拒绝执行。" },
+        new() { Id = MediaP2P, Label = "P2P 媒体直连", IsCore = false,
+                Description = "允许本机作为点对点端点被直连观看（画面 / 录像走设备之间，不经服务器中转）。关闭则只能经服务器转发。" },
         new() { Id = MessageFeed, Label = "岛内消息中心", IsCore = false,
                 Description = "在 ClassIsland 设置页 / 托盘里查看本机最近的广播与通知。" },
         new() { Id = Heartbeat, Label = "状态心跳上报", IsCore = true,

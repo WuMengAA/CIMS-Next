@@ -79,6 +79,79 @@ public sealed class StelarithSyncOptions
     /// <summary>点歌数据刷新间隔（秒，最小 5）。</summary>
     public int SongboardRefreshSeconds { get; set; } = 15;
 
+    // ─────────────── 网络模式（内网直连 ↔ 公网域名）───────────────
+    //
+    // 为什么要把这件事做成"一键切换"而不是让人去手改 JSON：
+    // ClientAppBase 与 BaseDomain **必须成对修改**，且必须与服务端 .env 的
+    // CIMS_BASE_DOMAIN 一致。只改一个的症状是「第一批请求就 403」——
+    // 而 403 的原因（租户识别靠 Host 头）从现象上完全看不出来。
+    // 因此这里把两套值都存下来，切换时一起写，杜绝半改。
+
+    /// <summary>当前网络模式：`lan`（内网直连）| `wan`（公网域名）。</summary>
+    public string NetworkMode { get; set; } = "lan";
+
+    /// <summary>内网模式的服务基址（默认直连本机 CIMS）。</summary>
+    public string LanClientAppBase { get; set; } = "http://127.0.0.1:8096";
+
+    /// <summary>内网模式的租户基域。</summary>
+    public string LanBaseDomain { get; set; } = "localhost";
+
+    /// <summary>
+    /// 公网模式的服务基址，如 `https://demo-class.example.edu`。
+    /// 留空 = 本机尚未配置公网入口，切换会被拒绝并提示（而不是写进一个空 URL
+    /// 让整套同步静默失败）。
+    /// </summary>
+    public string WanClientAppBase { get; set; } = "";
+
+    /// <summary>公网模式的租户基域，如 `example.edu`（与服务端 CIMS_BASE_DOMAIN 一致）。</summary>
+    public string WanBaseDomain { get; set; } = "";
+
+    /// <summary>
+    /// 按模式把 `ClientAppBase` / `BaseDomain` 一起刷成该模式对应的值。
+    /// 返回 null 表示成功，否则返回不能切换的原因（供 UI 直接显示）。
+    /// </summary>
+    public string? ApplyNetworkMode(string mode)
+    {
+        if (string.Equals(mode, "wan", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(WanClientAppBase) || string.IsNullOrWhiteSpace(WanBaseDomain))
+            {
+                return "尚未配置公网地址（WanClientAppBase / WanBaseDomain 为空）。"
+                     + "请先填好公网入口 —— 半改这套地址会让所有请求直接 403。";
+            }
+            NetworkMode = "wan";
+            ClientAppBase = WanClientAppBase.Trim().TrimEnd('/');
+            BaseDomain = WanBaseDomain.Trim().Trim('.');
+            return null;
+        }
+        NetworkMode = "lan";
+        ClientAppBase = LanClientAppBase.Trim().TrimEnd('/');
+        BaseDomain = LanBaseDomain.Trim().Trim('.');
+        return null;
+    }
+
+    /// <summary>写回插件目录下的 stelarith-sync.json（保留未在本类声明的字段）。</summary>
+    public void Save()
+    {
+        var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location);
+        var path = Path.Combine(dir ?? AppContext.BaseDirectory, "stelarith-sync.json");
+        var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+        SyncOptionsDiag($"saved mode={NetworkMode} base={ClientAppBase} domain={BaseDomain}");
+    }
+
+    internal static void SyncOptionsDiag(string msg)
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(typeof(StelarithSyncOptions).Assembly.Location);
+            File.AppendAllText(
+                Path.Combine(dir ?? AppContext.BaseDirectory, "stelarith-sync-diag.log"),
+                $"{DateTime.Now:HH:mm:ss} {msg}{Environment.NewLine}");
+        }
+        catch { /* 忽略 */ }
+    }
+
     /// <summary>从插件目录下的 stelarith-sync.json 读取覆盖；文件不存在则用默认值。</summary>
     public static StelarithSyncOptions Load()
     {
