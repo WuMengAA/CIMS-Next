@@ -21,6 +21,22 @@ namespace StelarithControlPlugin;
 /// </summary>
 public static class StelarithOobE
 {
+    /// <summary>可选班级（由回读线程从 GET /status 的 suggest 填充；OOBE 下拉用）。</summary>
+    public sealed class ClassSuggestion
+    {
+        public string ClassId { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Code { get; set; } = "";
+        public bool Selectable { get; set; }
+    }
+
+    /// <summary>本机尚未绑定班级时，回读线程缓存的可选班级清单（仅 approved 班）。</summary>
+    public static List<ClassSuggestion> Suggestions { get; private set; } = new();
+
+    /// <summary>回读线程调用：写入服务端权威的可选班级清单。</summary>
+    public static void SetSuggestions(List<ClassSuggestion> list)
+        => Suggestions = list ?? new List<ClassSuggestion>();
+
     /// <summary>本机是否尚未绑定班级（由回读线程驱动）。</summary>
     public static bool Unbound { get; private set; }
 
