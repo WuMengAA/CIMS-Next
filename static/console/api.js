@@ -1353,6 +1353,17 @@
         null
       );
     },
+    // 解除班级绑定（重新注册的入口）。端点：POST /class/device/unassign?client_id=
+    // （CIMS management，Bearer 鉴权）。解绑后设备端 OOBE 引导会重新弹出，由教师重选班。
+    unassignDevice: async (clientId) => {
+      if (wantDemo()) return { status: "demo", message: "（演示）已模拟解绑 " + clientId };
+      if (!canUseBackend()) return { status: "error", message: "未连接后端，未解绑" };
+      return cims(
+        `/class/device/unassign?client_id=${encodeURIComponent(clientId)}`,
+        { method: "POST", body: "{}" },
+        null
+      );
+    },
 
     // ---- 定时广播（P2）----
     // 后端管理端 8097 /scheduled-broadcast/* ；后台调度器到点触发 command_queue 广播。

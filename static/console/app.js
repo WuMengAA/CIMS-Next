@@ -451,6 +451,7 @@
           <td>
             <select class="ci-assign" data-id="${esc(d.id)}" aria-label="绑定班级" style="max-width:160px">${assignOptions(d.classId)}</select>
             <button data-act="assign" data-need="manage" data-id="${esc(d.id)}">${bound ? "改绑" : "绑定"}</button>
+            <button data-act="unassign" data-need="manage" data-id="${esc(d.id)}" ${bound ? "" : "disabled"} title="解除班级绑定：设备端将重新弹出选班引导（OOBE 重新注册）">解绑</button>
           </td>
           <td>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart" ${d.online ? "" : "disabled"}>重启</button>
@@ -2327,6 +2328,21 @@
           toast(`已${el.textContent}：${cid} ${detail}`);
         } catch (e) {
           toast("绑定失败：" + (e && e.message ? e.message : e));
+        } finally {
+          el.disabled = false;
+        }
+        go("devices");
+      }
+      else if (act === "unassign") {
+        const id = el.dataset.id;
+        el.disabled = true;
+        try {
+          const r = await API.unassignDevice(id);
+          API.audit("device.unassign", id, "解除绑定（触发设备端重新注册 OOBE）");
+          const detail = r && (r.message || r.status) ? `（${r.message || r.status}）` : "";
+          toast(`已解除绑定：${id} ${detail}，设备端将重新走 OOBE 选班`);
+        } catch (e) {
+          toast("解绑失败：" + (e && e.message ? e.message : e));
         } finally {
           el.disabled = false;
         }
