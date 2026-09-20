@@ -313,6 +313,30 @@ public sealed class StelarithStatusReporter : BackgroundService
                 ? bEl.ValueKind == System.Text.Json.JsonValueKind.True
                 : !string.IsNullOrEmpty(_authoritativeClassId);
             StelarithOobE.Update(bound, _authoritativeClassId);
+
+            // OOBE：缓存可选班级清单，供设置页下拉展示（设备端自助选班）。
+            try
+            {
+                if (doc.RootElement.TryGetProperty("suggest", out var sEl)
+                    && sEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    var list = new List<StelarithOobE.ClassSuggestion>();
+                    foreach (var item in sEl.EnumerateArray())
+                    {
+                        list.Add(new StelarithOobE.ClassSuggestion
+                        {
+                            ClassId = item.TryGetProperty("class_id", out var c) ? (c.GetString() ?? "") : "",
+                            Name = item.TryGetProperty("name", out var n) ? (n.GetString() ?? "") : "",
+                            Code = item.TryGetProperty("code", out var cd) ? (cd.GetString() ?? "") : "",
+                            Selectable = item.TryGetProperty("selectable", out var se)
+                                && se.ValueKind == System.Text.Json.JsonValueKind.True,
+                        });
+                    }
+                    StelarithOobE.SetSuggestions(list);
+                }
+            }
+            catch { /* suggest 解析失败不影响回读主流程 */ }
+
             ReportDiag($"readback class_id={_authoritativeClassId} bound={bound}");
         }
         catch (Exception ex)
@@ -334,6 +358,66 @@ public sealed class StelarithStatusReporter : BackgroundService
             using var resp = await Http.SendAsync(req, CancellationToken.None);
             if (resp.IsSuccessStatusCode) return (true, null);
             return (false, $"HTTP {(int)resp.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 设备自助注册班级（OOBE 收口）。POST /api/v1/client/{uid}/register，租户经 Host 头识别，
+    /// 与心跳同一信任链，无需会话凭证。服务端只接受「已审核」班级，且「一班一号」——
+    /// 已属别的班时返回 409（需先调 <see cref="UnregisterClass"/>）。
+    /// 返回 (Ok, Error)；任何异常都收敛为 Error，绝不抛给调用方（UI 直接显示）。
+    /// </summary>
+    public static (bool Ok, string? Error) RegisterClass(string classId)
+    {
+        try
+        {
+            var opt = _staticOpt;
+            if (opt is null) return (false, "配置未加载");
+            if (string.IsNullOrWhiteSpace(classId)) return (false, "未选择班级");
+            var url = $"{opt.ClientAppBase}/api/v1/client/{Uri.EscapeDataString(opt.ClientUid)}/register";
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Headers = { Host = $"{opt.Slug}.{opt.BaseDomain}" },
+                Content = new StringContent("{\"class_id\":\"" + classId.Replace("\"", "") + "\"}",
+                    Encoding.UTF8, "application/json"),
+            };
+            using var resp = Http.SendAsync(req, CancellationToken.None).GetAwaiter().GetResult();
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+            var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            return (false, $"HTTP {(int)resp.StatusCode} {body}");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 设备自助解除班级绑定（重新注册入口）：POST /api/v1/client/{uid}/unregister。
+    /// 解绑后下次回读 bound=false，OOBE 引导重新弹出，引导教师重选班。
+    /// </summary>
+    public static (bool Ok, string? Error) UnregisterClass()
+    {
+        try
+        {
+            var opt = _staticOpt;
+            if (opt is null) return (false, "配置未加载");
+            var url = $"{opt.ClientAppBase}/api/v1/client/{Uri.EscapeDataString(opt.ClientUid)}/unregister";
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Headers = { Host = $"{opt.Slug}.{opt.BaseDomain}" },
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            using var resp = Http.SendAsync(req, CancellationToken.None).GetAwaiter().GetResult();
+            if (resp.IsSuccessStatusCode)
+                return (true, null);
+            var body = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            return (false, $"HTTP {(int)resp.StatusCode} {body}");
         }
         catch (Exception ex)
         {
