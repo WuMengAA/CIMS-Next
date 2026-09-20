@@ -458,6 +458,8 @@
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh" ${d.online ? "" : "disabled"}>刷新</button>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
+            <button class="danger" data-act="dev" data-need="control" data-id="${d.id}" data-a="shutdown" data-confirm="1" ${d.online ? "" : "disabled"}>关机</button>
+            <button data-act="shutdown-sched" data-need="control" data-id="${esc(d.id)}" data-name="${esc(d.host || d.id)}" ${d.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
           </td></tr>`;
 
     const body = !rows.length
@@ -496,6 +498,7 @@
           <input type="search" data-devfilter="1" value="${esc(devQuery)}" aria-label="筛选设备"
                  placeholder="搜索 班级 / 设备名 / 设备号 / IP / 版本…" style="min-width:240px;flex:1">
           <button data-act="dev-group">${devGrouped ? "改为平铺" : "按班级分组"}</button>
+          <button data-act="shutdown-class" data-need="control" title="对当前筛选出的所有在线设备下发同一份定时关机计划（教室端 60s 确认后生效）">整班定时关机</button>
           <button data-act="reload">刷新</button>
           <span class="muted" id="dev-shown" aria-live="polite"></span>
         </div>
@@ -533,6 +536,178 @@
     });
     const box = document.getElementById("dev-shown");
     if (box) box.textContent = q ? `命中 ${shown} / ${total} 台` : `${total} 台`;
+  }
+
+  // ============ 定时关机弹窗（长期计划：每天/每周/一次性/倒计时）============
+  // 面板只负责「下发计划」：教室端 60 秒确认窗确认后才由插件透传给代理生效；
+  // 拒绝/超时自动作废，处置结果进「回执收件箱」（notice_id = schedule.id）。
+  // 已下发计划记 localStorage（stelarith_sched_<uid>），可一键取消（同 id + enabled=false）。
+  const SHD_KEY = (uid) => "stelarith_sched_" + uid;
+  const WEEK_CN = "一二三四五六日";
+
+  function shdDescribe(s) {
+    const note = s.note ? "｜" + s.note : "";
+    const body =
+      s.mode === "daily" ? `每天 ${s.time} 自动关机`
+      : s.mode === "weekly" ? `每周 ${(s.days || []).map((d) => "周" + WEEK_CN[d - 1]).join("、")} 的 ${s.time} 自动关机`
+      : s.mode === "once" ? `一次性：${String(s.datetime || "").replace("T", " ")} 自动关机`
+      : s.mode === "countdown" ? `确认后 ${s.minutes} 分钟自动关机`
+      : `定时计划（${s.mode}）`;
+    return body + note;
+  }
+
+  /** 按模式切换显示/隐藏对应输入行。 */
+  function shdToggleMode() {
+    const m = document.getElementById("shd-modal");
+    if (!m) return;
+    const mode = m.querySelector("#shd-mode").value;
+    m.querySelector("#shd-time-row").style.display = mode === "daily" || mode === "weekly" ? "" : "none";
+    m.querySelector("#shd-days-row").style.display = mode === "weekly" ? "" : "none";
+    m.querySelector("#shd-once-row").style.display = mode === "once" ? "" : "none";
+    m.querySelector("#shd-min-row").style.display = mode === "countdown" ? "" : "none";
+  }
+
+  /**
+   * 打开定时关机弹窗。
+   * opts：{ uid, name } 单台，或 { uids: [...], name } 整班批量（同一条计划逐台下发）。
+   */
+  function openShutdownModal(opts) {
+    const single = !!opts.uid;
+    const targets = single ? [opts.uid] : opts.uids;
+    const old = document.getElementById("shd-modal");
+    if (old) old.remove();
+    let cur = "";
+    if (single) {
+      try {
+        const rec = JSON.parse(localStorage.getItem(SHD_KEY(opts.uid)) || "null");
+        if (rec && rec.id) cur = `<div class="shd-current">当前已下发：${esc(shdDescribe(rec))}<br><span class="muted">${esc(rec.id)}（教室端确认后才生效）</span></div>`;
+      } catch (_) {}
+    }
+    const box = document.createElement("div");
+    box.id = "shd-modal";
+    box.className = "shd-overlay";
+    box.dataset.uids = JSON.stringify(targets);
+    box.dataset.uid = single ? opts.uid : "";
+    box.innerHTML = `
+      <div class="shd-box">
+        <h3>定时关机</h3>
+        <p class="muted">目标：${esc(opts.name || (targets.length + " 台设备"))}</p>
+        <p class="muted">⚠ 下发后<b>不立即生效</b>：教室端弹出确认窗，<b>60 秒内确认</b>才启用；拒绝/超时自动作废（处置结果进回执收件箱）。</p>
+        ${cur}
+        <label>规则
+          <select id="shd-mode">
+            <option value="daily">每天固定时刻</option>
+            <option value="weekly">每周指定几天</option>
+            <option value="once">一次性时间点</option>
+            <option value="countdown">倒计时（确认后 N 分钟）</option>
+          </select>
+        </label>
+        <div class="shd-row" id="shd-time-row"><label>时间<input type="time" id="shd-time" value="21:00"></label></div>
+        <div class="shd-row shd-days" id="shd-days-row" style="display:none">
+          <label>周几</label>
+          <div>${[1, 2, 3, 4, 5, 6, 7].map((d) => `<label><input type="checkbox" value="${d}" ${d <= 5 ? "checked" : ""}>${WEEK_CN[d - 1]}</label>`).join("")}</div>
+        </div>
+        <div class="shd-row" id="shd-once-row" style="display:none"><label>时间点<input type="datetime-local" id="shd-once"></label></div>
+        <div class="shd-row" id="shd-min-row" style="display:none"><label>分钟后关机<input type="number" id="shd-min" min="1" max="720" value="30"></label></div>
+        <label>备注（可选）<input type="text" id="shd-note" placeholder="如：放学后自动关机" maxlength="60"></label>
+        <div class="shd-actions">
+          <button class="primary" data-act="shd-save">保存计划</button>
+          ${single ? `<button data-act="shd-cancel-plan">取消现有计划</button>` : ""}
+          <button data-act="shd-close">关闭</button>
+        </div>
+        <div class="shd-status" id="shd-status"></div>
+      </div>`;
+    document.body.appendChild(box);
+    shdToggleMode();
+  }
+
+  /** 保存计划：构建 schedule 并逐台下发（CIMS 递送成功即算下发成功，教室端确认见回执）。 */
+  async function saveShutdownPlan(btn) {
+    const m = document.getElementById("shd-modal");
+    if (!m) return;
+    const status = m.querySelector("#shd-status");
+    const targets = JSON.parse(m.dataset.uids || "[]");
+    const mode = m.querySelector("#shd-mode").value;
+    const note = (m.querySelector("#shd-note").value || "").trim();
+    const id = "sc-" + Date.now();
+    const sched = { id, mode, enabled: true, note };
+    if (mode === "daily" || mode === "weekly") {
+      const t = m.querySelector("#shd-time").value;
+      if (!t) { status.textContent = "请选择时间"; status.className = "shd-status err"; return; }
+      sched.time = t;
+      if (mode === "weekly") {
+        const days = [...m.querySelectorAll("#shd-days-row input:checked")].map((c) => Number(c.value));
+        if (!days.length) { status.textContent = "请至少勾选一个周几"; status.className = "shd-status err"; return; }
+        sched.days = days;
+      }
+    } else if (mode === "once") {
+      const dt = m.querySelector("#shd-once").value;
+      if (!dt) { status.textContent = "请选择时间点"; status.className = "shd-status err"; return; }
+      sched.datetime = dt.replace(" ", "T");
+    } else if (mode === "countdown") {
+      sched.minutes = Math.max(1, Math.min(720, Number(m.querySelector("#shd-min").value) || 30));
+    }
+    btn.disabled = true;
+    status.className = "shd-status";
+    status.textContent = `正在下发到 ${targets.length} 台设备…`;
+    let okN = 0, failN = 0, firstErr = "";
+    for (const uid of targets) {
+      try {
+        const r = await API.scheduleShutdown(uid, sched);
+        if (!r || r.ok === false) { failN++; firstErr = firstErr || (r && r.message) || "未知错误"; }
+        else {
+          okN++;
+          try {
+            localStorage.setItem(SHD_KEY(uid), JSON.stringify({
+              id, mode: sched.mode, time: sched.time || "", days: sched.days || [],
+              datetime: sched.datetime || "", minutes: sched.minutes || 0, note,
+            }));
+          } catch (_) {}
+        }
+      } catch (err) { failN++; firstErr = firstErr || ((err && err.message) || err); }
+    }
+    status.className = "shd-status " + (failN ? "err" : "ok");
+    status.textContent = failN
+      ? `已下发 ${okN} 台，${failN} 台失败：${firstErr}`
+      : `已下发 ${okN} 台设备，等待教室端 60s 内确认生效（结果见回执收件箱）`;
+    btn.disabled = false;
+    if (!failN) setTimeout(() => { const mm = document.getElementById("shd-modal"); if (mm) mm.remove(); }, 900);
+  }
+
+  /** 取消单台设备的现有计划：读 localStorage 里的计划 id，下发同 id + enabled=false（教室端确认后删除）。 */
+  async function cancelShutdownPlan(btn) {
+    const m = document.getElementById("shd-modal");
+    if (!m) return;
+    const status = m.querySelector("#shd-status");
+    const uid = m.dataset.uid || "";
+    if (!uid) return;
+    let rec = null;
+    try { rec = JSON.parse(localStorage.getItem(SHD_KEY(uid)) || "null"); } catch (_) {}
+    if (!rec || !rec.id) {
+      status.className = "shd-status err";
+      status.textContent = "本机没有该设备的计划记录：若设备端仍有计划，可在其确认窗里点「拒绝」，或让电教委员到设备上处理。";
+      return;
+    }
+    btn.disabled = true;
+    status.className = "shd-status";
+    status.textContent = "正在取消…";
+    try {
+      const r = await API.scheduleShutdown(uid, { id: rec.id, mode: "daily", enabled: false, note: "" });
+      if (!r || r.ok === false) {
+        status.className = "shd-status err";
+        status.textContent = "取消失败：" + ((r && r.message) || "未知错误");
+        btn.disabled = false;
+        return;
+      }
+      try { localStorage.removeItem(SHD_KEY(uid)); } catch (_) {}
+      status.className = "shd-status ok";
+      status.textContent = "已下发取消指令，等待教室端 60s 内确认（确认后计划删除）";
+      setTimeout(() => { const mm = document.getElementById("shd-modal"); if (mm) mm.remove(); }, 900);
+    } catch (err) {
+      status.className = "shd-status err";
+      status.textContent = "取消失败：" + ((err && err.message) || err);
+      btn.disabled = false;
+    }
   }
 
   views.remote = async () => {
@@ -649,6 +824,8 @@
           <button data-act="ci-act" data-need="control" data-id="${cur.id}" data-a="screenshot">截图</button>
           <button data-act="dev" data-need="control" data-id="${cur.id}" data-a="restart" ${cur.online ? "" : "disabled"}>重启 ClassIsland</button>
           <button data-act="ci-act" data-need="manage" data-id="${cur.id}" data-a="restart_island">宿主进程重启（软）</button>
+          <button class="danger" data-act="dev" data-need="control" data-id="${cur.id}" data-a="shutdown" data-confirm="1" ${cur.online ? "" : "disabled"}>关机</button>
+          <button data-act="shutdown-sched" data-need="control" data-id="${esc(cur.id)}" data-name="${esc(cur.host || cur.id)}" ${cur.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
         </div>
         <p class="muted" style="margin-top:8px">
           <b>切班</b>：把本机档案的当前课表群切到指定班级（集控通道下发不了
@@ -2132,6 +2309,31 @@
       if (act === "reload") return go(current);
       // 通用跳转：任意按钮都能把用户送到另一个视图（免得为了"去某页"写一个专用 action）
       if (act === "go") return go(el.dataset.v);
+      // ---- 定时关机（长期计划：每天/每周/一次性/倒计时；教室端 60s 确认后生效）----
+      if (act === "shutdown-sched") {
+        if (!allow("control")) return toast("无权限：设备控制");
+        return openShutdownModal({ uid: el.dataset.id, name: el.dataset.name || el.dataset.id });
+      }
+      if (act === "shutdown-class") {
+        if (!allow("control")) return toast("无权限：设备控制");
+        const body = document.getElementById("dev-body");
+        const uids = [];
+        if (body) {
+          body.querySelectorAll("tr.dev-row:not(.hidden)").forEach((tr) => {
+            const btn = tr.querySelector('button[data-act="shutdown-sched"]');
+            if (btn && btn.dataset.id) uids.push(btn.dataset.id);
+          });
+        }
+        if (!uids.length) return toast("当前筛选结果里没有可下发的设备");
+        return openShutdownModal({ uids, name: `整班（${uids.length} 台）` });
+      }
+      if (act === "shd-close") {
+        const m = document.getElementById("shd-modal");
+        if (m) m.remove();
+        return;
+      }
+      if (act === "shd-save") return await saveShutdownPlan(el);
+      if (act === "shd-cancel-plan") return await cancelShutdownPlan(el);
       // ---- 班级管理（#182 文件夹式 + 快捷选择）----
       if (act === "cls-pick") {
         if (!allow("control")) return toast("无权限：设备控制");
@@ -2311,6 +2513,9 @@
         toast("插件状态已更新"); go("plugins");
       }
       else if (act === "dev") {
+        // 关机是不可逆动作：必须二次确认（防误触把整间教室的机器全关掉）
+        if (el.dataset.a === "shutdown" && !el.dataset.confirmed && !confirm(`确认关机设备 ${el.dataset.id} 吗？\n关机后需人工到教室开机，请谨慎操作。`)) return;
+        el.dataset.confirmed = "1";
         await API.deviceAction(el.dataset.id, el.dataset.a);
         API.audit("device." + el.dataset.a, el.dataset.id, "下发设备指令");
         toast(`已下发指令：${el.dataset.a} → ${el.dataset.id}`);
@@ -2923,6 +3128,11 @@
     if (e.key === "Enter") { e.preventDefault(); const btn = document.querySelector('[data-act="send-chat"]'); btn && btn.click(); }
   });
   document.addEventListener("change", (e) => {
+    // 定时关机弹窗：切换规则模式 → 显示/隐藏对应输入行
+    if (e.target && e.target.id === "shd-mode") {
+      shdToggleMode();
+      return;
+    }
     // ClassIsland 专页：切换查看的设备。整个视图要按新设备重渲染，故直接 go()。
     if (e.target && e.target.id === "ci-device") {
       ciCert = e.target.value;

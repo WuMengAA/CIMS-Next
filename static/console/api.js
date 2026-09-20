@@ -1050,9 +1050,11 @@
         return reqTo(state.mgmtHost, `/account/${acct()}/client/${id}/command/${ep}`,
           { method: "POST", body });
       }
-      // ② 锁屏 / 截图：CIMS 无原生端点，经 send-notification 下发 stelarith_task，
+      // ② 锁屏 / 截图 / 重启 / 关机：CIMS 无原生端点，经 send-notification 下发 stelarith_task，
       //    由班级端 ClassIsland 插件解析后执行本地动作（与远程控制同一链路）。
-      if (action === "lock" || action === "screenshot") {
+      //    · lock / screenshot —— 插件本地动作（os_actions 模块）
+      //    · reboot / shutdown —— 代理 OS 级动作（remote_control 模块，shutdown 为 #196 新增）
+      if (action === "lock" || action === "screenshot" || action === "reboot" || action === "shutdown") {
         const ts = Math.floor(Date.now() / 1000);
         const token = await signTask(action, ts);
         const task = { action, token, scope: "device", ts };
@@ -1061,6 +1063,27 @@
           { method: "POST", body });
       }
       return { status: "error", message: `不支持的动作：${action}` };
+    },
+
+    // ---- 定时关机（长期计划：每天/每周/一次性/倒计时）----
+    // 真实：POST /account/{acct}/client/{uid}/command/send-notification
+    //   MessageContent = JSON({ stelarith_task:{action:"schedule_shutdown", token, scope, ts, schedule} })
+    // schedule 字段 snake_case（id/mode/time/days/datetime/minutes/enabled/note），
+    // 与插件 StelarithScheduleSpec / 代理 ScheduleEntry 逐一对齐。
+    // 下发后**不立即生效**：教室端 60 秒确认窗，确认后才由插件透传给代理落盘+调度；
+    // 拒绝/超时自动作废，处置结果进「回执收件箱」（notice_id = schedule.id）。
+    // 注意：本方法返回的是「CIMS 已递送」；教室端是否确认需看回执收件箱。
+    scheduleShutdown: async (uid, schedule) => {
+      if (wantDemo()) return { status: "demo", message: "（演示）已模拟下发定时关机计划" };
+      if (!canUseBackend()) return { status: "error", message: "未连接后端，计划未下发" };
+      const ts = Math.floor(Date.now() / 1000);
+      const token = await signTask("schedule_shutdown", ts);
+      const task = { action: "schedule_shutdown", token, scope: "device", ts, schedule };
+      const body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) });
+      const r = await reqTo(state.mgmtHost, `/account/${acct()}/client/${uid}/command/send-notification`,
+        { method: "POST", body });
+      // 铁律：远端用 HTTP 200 表达业务失败（如 gRPC 通道未开启）→ 必须读回执体
+      return { ...(r || {}), ok: !(r && r.status === "error"), reason: (r && r.message) || "" };
     },
 
     // ---- 远程屏幕控制（经 CIMS 通知下发 stelarith_task，触发设备侧代理按需启 VNC）----
