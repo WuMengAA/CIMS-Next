@@ -2,11 +2,11 @@ import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getProjectApplications, addProjectApplication, setProjectApplicationStatus } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 export const GET: RequestHandler = async ({ cookies, url }) => {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 	const status = url.searchParams.get("status") || undefined;
 	return json(getProjectApplications(status));
 };
@@ -18,7 +18,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	// 管理员操作：审核
 	if (body.action === "approve" || body.action === "reject") {
 		const u = verifyToken(cookies.get("admin_token"));
-		if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+		if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 		const status = body.action === "approve" ? "approved" : "rejected";
 		const app = setProjectApplicationStatus(body.id, status, body.makePage === true);
 		if (!app) return json({ error: "申请不存在" }, { status: 404 });

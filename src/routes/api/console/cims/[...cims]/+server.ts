@@ -3,7 +3,7 @@ import { env } from "$env/dynamic/private";
 import type { RequestEvent } from "@sveltejs/kit";
 import http from "node:http";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, canDevice, type DeviceTier } from "$lib/permissions.js";
+import { can, userCan, canDevice, type DeviceTier } from "$lib/permissions.js";
 
 // 集控面板（/admin/console 内嵌）对 CIMS 的服务端代理。
 // 浏览器只与同源网站通信；CIMS 地址与令牌仅在服务端配置，绝不下发前端。
@@ -211,7 +211,7 @@ async function forward(event: RequestEvent) {
 	const u = verifyToken(event.cookies.get("admin_token"));
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	// 等级轴：进得了集控面板（L1+）。设备轴：写操作另需对应档位。
-	if (!can(u.role, "viewConsole")) {
+	if (!userCan(u, "viewConsole")) {
 		return json({ error: "无权限" }, { status: 403 });
 	}
 	const tier = requiredTier(rel, method, body);

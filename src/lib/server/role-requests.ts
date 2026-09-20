@@ -28,7 +28,7 @@
 
 import { getDb, nowIso } from "./db.js";
 import { getUser, adminUpdateUser } from "./auth.js";
-import { can, roleToLevel, ROLE_LABELS, LEVEL_LABELS, PROOF_TYPES, PROOF_TYPE_KEYS } from "$lib/permissions.js";
+import { can, userCan, roleToLevel, ROLE_LABELS, LEVEL_LABELS, PROOF_TYPES, PROOF_TYPE_KEYS } from "$lib/permissions.js";
 import type { Role, Level } from "$lib/permissions.js";
 
 export { PROOF_TYPES };
@@ -331,7 +331,7 @@ export function reviewRoleRequest(
 	if (!rv) return { ok: false, error: "审批人不存在" };
 
 	// 规则 2：审批人须持 reviewPermission，且**严格高于**目标等级。
-	if (!can(rv.role as Role, "reviewPermission")) {
+	if (!userCan(rv, "reviewPermission")) {
 		return { ok: false, error: "无权审批权限申请" };
 	}
 	const rvLevel = roleToLevel(rv.role as Role) ?? 0;

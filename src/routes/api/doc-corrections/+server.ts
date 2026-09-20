@@ -2,11 +2,11 @@ import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getDocCorrections, addDocCorrection, setDocCorrectionStatus } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 export const GET: RequestHandler = async ({ cookies, url }) => {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 	const status = url.searchParams.get("status") || undefined;
 	return json(getDocCorrections(status));
 };
@@ -17,7 +17,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	if (body.action === "approve" || body.action === "reject") {
 		const u = verifyToken(cookies.get("admin_token"));
-		if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+		if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 		const c = setDocCorrectionStatus(body.id, body.action);
 		if (!c) return json({ error: "纠错不存在" }, { status: 404 });
 		return json({ ok: true, correction: c });

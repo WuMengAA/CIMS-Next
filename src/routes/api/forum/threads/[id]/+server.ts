@@ -9,7 +9,7 @@ import {
 	deleteForumThread
 } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 export const GET: RequestHandler = async ({ params }) => {
 	const { thread, replies } = getForumThread(params.id);
@@ -27,7 +27,7 @@ export const POST: RequestHandler = async ({ request, cookies, params }) => {
 
 	// 管理员操作：锁定 / 解锁 / 置顶 / 取消置顶 / 删除
 	if (["lock", "unlock", "pin", "unpin", "delete"].includes(body.action)) {
-		if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+		if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 		if (body.action === "delete") {
 			deleteForumThread(params.id);
 			return json({ ok: true });

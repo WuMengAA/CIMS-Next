@@ -13,6 +13,8 @@
 		LEVEL_LABELS,
 		LEVEL_DESCRIPTIONS,
 		LEVEL_SAMPLE_ROLE,
+		TITLES,
+		TITLE_KEYS,
 		DEVICE_LABELS,
 		DEVICE_DESCRIPTIONS,
 		ACTION_LABELS,
@@ -23,7 +25,8 @@
 		roleDeviceTiers,
 		type Level,
 		type DeviceTier,
-		type Role
+		type Role,
+		type TitleKey
 	} from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
@@ -53,8 +56,40 @@
 		<ShieldCheck class="size-6 text-primary" /> 权限总览
 	</h1>
 	<p class="mt-1 text-sm text-muted-foreground">
-		两条互相独立的权限轴：纵向「等级」决定内容与治理能力，横向「设备」决定集控操作敏感度。
+		权限由<b class="text-foreground">称号</b>承载，等级只是显示秩位。某人能做什么，取决于他持有哪些称号；
+		设备操作敏感度是与之正交的独立轴。
 	</p>
+</div>
+
+<!-- ── 我的称号（权限的真实载体）────────────────────────────────────────── -->
+<div class="mb-8 rounded-xl border border-primary/30 bg-primary/[0.04] p-5">
+	<div class="flex flex-wrap items-center gap-3">
+		<div class="flex items-center gap-2">
+			<Crown class="size-4 text-primary" />
+			<span class="font-heading font-medium">我的称号</span>
+		</div>
+		{#if data.titleLabels?.length}
+			{#each data.titleLabels as t, i (t)}
+				<Badge variant="default">{t}</Badge>
+			{/each}
+		{:else}
+			<span class="text-sm text-muted-foreground">（无）</span>
+		{/if}
+	</div>
+	<p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+		称号是权限的载体：每个称号授予一组能力（见下方矩阵）。管理员可为你<b class="text-foreground">独立追加或撤回</b>称号，
+		与你的角色/等级无关——这是「权限分配」的最小可操作单元。
+	</p>
+	{#if data.titleDetails?.length}
+		<ul class="mt-3 grid gap-2 sm:grid-cols-2">
+			{#each data.titleDetails as td (td.key)}
+				<li class="rounded-lg border border-border/60 bg-card px-3 py-2">
+					<div class="text-sm font-medium">{td.label}</div>
+					<div class="text-xs text-muted-foreground">{td.description}</div>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 </div>
 
 <!-- ── 当前账号 ─────────────────────────────────────────────────────────── -->
@@ -92,11 +127,12 @@
 	</div>
 </div>
 
-<!-- ── 纵向：等级 × 功能矩阵 ─────────────────────────────────────────────── -->
+<!-- ── 纵向：等级 × 功能矩阵（参考：各等级默认角色所持有的称号并集）─────────────────── -->
 <section class="mb-10">
-	<h2 class="mb-1 font-heading text-lg font-semibold">纵向 · 等级轴（五等）</h2>
+	<h2 class="mb-1 font-heading text-lg font-semibold">参考 · 各等级默认角色的称号并集</h2>
 	<p class="mb-4 text-sm text-muted-foreground">
-		等级越高包含越低等级的全部能力。「功能限制」即由此矩阵逐格体现。
+		等级<b class="text-foreground">本身不授予权限</b>——这里展示的是「该等级默认角色」所持有的称号并集对应的能力，
+		供你对照「我的称号」一节。具体某人能做什么，以他实际持有的称号为准（可被管理员独立追加/撤回）。
 	</p>
 
 	<div class="overflow-x-auto rounded-xl border border-border/60">
@@ -162,7 +198,8 @@
 	<p class="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
 		<Info class="mt-0.5 size-3.5 shrink-0" />
 		<span>
-			等级是「包含式」的：L4 自动拥有 L1–L3 的全部能力，因此表中低等级列为勾选的功能，高等级列必然也是勾选。
+			此矩阵为「默认角色 → 称号并集」的参考视图。由于不同等级默认授予的称号有重叠，高等级行会覆盖低等级已勾选的功能；
+			真正决定你权限的是「我的称号」一节。
 		</span>
 	</p>
 </section>

@@ -2,7 +2,7 @@ import { json } from "@sveltejs/kit";
 import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
 import { listActivities, onlineUsers, activitySummary } from "$lib/server/activity.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 /**
  * GET /api/activities
@@ -13,7 +13,7 @@ export function GET(event: RequestEvent) {
 	const { url, cookies } = event;
 	const user = verifyToken(cookies.get("admin_token"));
 	if (!user) return json({ error: "未登录" }, { status: 401 });
-	if (!(can(user.role, "viewAdmin") || can(user.role, "moderate"))) {
+	if (!(userCan(user, "viewAdmin") || userCan(user, "moderate"))) {
 		return json({ error: "无权限" }, { status: 403 });
 	}
 

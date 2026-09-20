@@ -2,7 +2,7 @@ import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { getVersions, getVersionRaw, restoreVersion, listItems, getItem, saveItem } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 const SECTIONS = ["posts", "projects", "docs", "pages"] as const;
 
@@ -52,7 +52,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
 export const POST: RequestHandler = async ({ request }) => {
 	const u = verifyToken(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
-	if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	const { section, slug, version } = body;
 

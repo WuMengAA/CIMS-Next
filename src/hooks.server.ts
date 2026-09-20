@@ -1,6 +1,6 @@
 import { redirect } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 import { recordActivity } from "$lib/server/activity.js";
 
 /** 这些前缀不参与「页面浏览」活动记录（API / 静态资源 / 文件）。 */
@@ -28,7 +28,7 @@ export async function handle({ event, resolve }) {
 			// 电教委员/注册用户可进，L1 只读访客一律禁止 —— 集控是可控教室设备的管理面）。
 			// 其余 /admin 管理页维持 viewAdmin 门槛（L4：admin / editor）。
 			const needConsole = url.pathname.startsWith("/admin/console");
-			const ok = u && (needConsole ? can(u.role, "viewConsole") : can(u.role, "viewAdmin"));
+			const ok = u && (needConsole ? userCan(u, "viewConsole") : userCan(u, "viewAdmin"));
 			if (!ok) {
 				throw redirect(303, "/admin/login");
 			}

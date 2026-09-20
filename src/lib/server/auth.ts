@@ -12,7 +12,8 @@
  *    为多用户系统与资料保存提供字段。
  */
 import crypto from "node:crypto";
-import type { Role } from "$lib/permissions.js";
+import type { Role, TitleKey } from "$lib/permissions.js";
+import { TITLE_KEYS } from "$lib/permissions.js";
 import { getDb, hashPassword as _hashPassword, nowIso } from "./db.js";
 
 export interface User {
@@ -39,6 +40,13 @@ export interface User {
 	/** 集控面板班级身份（新账号引导补充；用户自填）。 */
 	className?: string;
 	gradeName?: string;
+	/**
+	 * 该用户被显式授予的称号集合（来自 user_titles 表）。
+	 * - 非空数组 = 完整覆盖：以该集合为有效称号（可增可减，脱离角色预设）。
+	 * - null/undefined = 继承角色预设（ROLE_TITLES）。
+	 * 权限判定走 userCan()（permissions.ts），以此字段优先。
+	 */
+	titles?: TitleKey[] | null;
 }
 
 /** 会话有效期：30 天。 */
@@ -94,8 +102,58 @@ function rowToUser(r: UserRow): User {
 		lastLoginIp: r.last_login_ip,
 		loginCount: r.login_count ?? 0,
 		className: r.class_name || "",
-		gradeName: r.grade_name || ""
+		gradeName: r.grade_name || "",
+		titles: r.id != null ? getUserTitles(r.id) : null
 	};
+}
+
+/**
+ * 取某用户被显式授予的称号集合（user_titles 表）。
+ * - 有行 → 返回去重、且经 TITLE_KEYS 校验的有效键数组（完整覆盖角色预设）。
+ * - 无行 → 返回 null，调用方（userCan）回退到角色预设。
+ * 表不存在等异常 → 返回 null（不阻断登录）。
+ */
+export function getUserTitles(userId: number): TitleKey[] | null {
+	if (userId == null || Number.isNaN(userId)) return null;
+	try {
+		const valid = new Set<string>(TITLE_KEYS);
+		const rows = getDb()
+			.prepare("SELECT title_key FROM user_titles WHERE user_id = ?")
+			.all(userId) as unknown as { title_key: string }[];
+		if (!rows || rows.length === 0) return null;
+		const keys = rows.map((x) => x.title_key).filter((k) => valid.has(k)) as TitleKey[];
+		return keys.length ? keys : null;
+	} catch {
+		return null;
+	}
+}
+
+/** 设置某用户的称号集合（完整覆盖写：先清后插）。传空数组 = 清空所有显式称号（回退角色预设）。 */
+export function setUserTitles(userId: number, titles: TitleKey[]): void {
+	const valid = new Set<string>(TITLE_KEYS);
+	const clean = Array.from(new Set(titles.filter((t) => valid.has(t))));
+	const db = getDb();
+	// node:sqlite 的 DatabaseSync 没有 better-sqlite3 的 .transaction()，
+	// 用显式事务保证「清空 + 重插」的原子性。
+	db.exec("BEGIN");
+	try {
+		db.prepare("DELETE FROM user_titles WHERE user_id = ?").run(userId);
+		const ins = db.prepare("INSERT OR IGNORE INTO user_titles (user_id, title_key) VALUES (?, ?)");
+		for (const t of clean) ins.run(userId, t);
+		db.exec("COMMIT");
+	} catch (e) {
+		db.exec("ROLLBACK");
+		throw e;
+	}
+}
+
+/** 在现有集合上追加/撤回单个称号（幂等）。 */
+export function addUserTitle(userId: number, title: TitleKey): void {
+	if (!TITLE_KEYS.includes(title)) return;
+	getDb().prepare("INSERT OR IGNORE INTO user_titles (user_id, title_key) VALUES (?, ?)").run(userId, title);
+}
+export function removeUserTitle(userId: number, title: TitleKey): void {
+	getDb().prepare("DELETE FROM user_titles WHERE user_id = ? AND title_key = ?").run(userId, title);
 }
 
 const SELECT_USER = `SELECT id, username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires,

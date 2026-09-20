@@ -1,7 +1,7 @@
 import { json } from "@sveltejs/kit";
 import { getComments, addComment, deleteComment, toggleCommentApproval } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 // 简单内存限流：同一 IP 60 秒内最多 3 条
 const ipBuckets = new Map<string, number[]>();
@@ -25,7 +25,7 @@ export async function GET({ url, cookies }) {
 
 	if (all) {
 		const u = verifyToken(cookies.get("admin_token"));
-		if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+		if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 		const list = target ? getComments(target) : getComments();
 		return json(list);
 	}
@@ -56,7 +56,7 @@ export async function POST({ request, cookies, getClientAddress }) {
 
 		// 登录用户需有 comment 权限；游客允许，未填昵称时默认 Guest_<时间戳>
 		if (user) {
-			if (!can(user.role, "comment")) return json({ error: "无评论权限" }, { status: 403 });
+			if (!userCan(user, "comment")) return json({ error: "无评论权限" }, { status: 403 });
 		} else if (!name) {
 			name = "Guest_" + Date.now();
 		}

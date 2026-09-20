@@ -186,6 +186,19 @@ CREATE TABLE IF NOT EXISTS role_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_role_requests_status ON role_requests(status, created_at);
 CREATE INDEX IF NOT EXISTS idx_role_requests_user   ON role_requests(user_id, status);
+
+-- 用户称号表（2026-09-21 · 权限重构）：每人可独立追加/撤回称号。
+-- 权限的真正载体是「称号」而非「等级」，本表让单个用户的称号集合脱离角色预设，
+-- 实现「独立追加/撤回」：某用户有行时，其有效称号 = 本表集合（完整覆盖，可增可减）；
+-- 无行时回退到角色预设 ROLE_TITLES（见 permissions.ts）。
+-- title_key 取值见 permissions.ts 的 TITLE_KEYS。
+CREATE TABLE IF NOT EXISTS user_titles (
+  user_id    INTEGER NOT NULL,
+  title_key  TEXT    NOT NULL,
+  PRIMARY KEY (user_id, title_key),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_titles_user ON user_titles(user_id);
 `;
 
 export function nowIso(): string {

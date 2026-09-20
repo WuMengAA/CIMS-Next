@@ -1,6 +1,6 @@
 import { redirect } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, canDevice, isConsoleReadOnly, roleLevelLabel, allowedBroadcastScopes } from "$lib/permissions.js";
+import { can, userCan, canDevice, isConsoleReadOnly, roleLevelLabel, allowedBroadcastScopes } from "$lib/permissions.js";
 import { getCimsAccount } from "$lib/server/cims-account.js";
 import type { PageServerLoad } from "./$types";
 
@@ -11,7 +11,7 @@ import type { PageServerLoad } from "./$types";
 // 而不是让只读账号也看到一屏可点但会被服务端拒绝的按钮。
 export const load: PageServerLoad = async ({ cookies }) => {
 	const u = verifyToken(cookies.get("admin_token") ?? "");
-	if (!u || !can(u.role, "viewConsole")) throw redirect(303, "/admin/login");
+	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	// 班级绑定校验：进入集控面板前必须完成班级/年级绑定（集控是设备管理入口，
 	// 账号必须知道自己属于哪个班才能定位设备归属）。未绑定 → 引导到绑定页完成二次绑定。
 	// 站长（owner/admin）管理全校设备，不强制绑定单个班级。
@@ -42,7 +42,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			control: canDevice(u.role, "control"),
 			remote: canDevice(u.role, "remote"),
 			manage: canDevice(u.role, "manage"),
-			issue: can(u.role, "submitIssue")
+			issue: userCan(u, "submitIssue")
 		},
 		// 广播可达范围（第三维度：能发 ≠ 能发多远）。
 		// 面板据此只列出该账号可选的范围，避免「选了全校却被服务端 403」的挫败感。

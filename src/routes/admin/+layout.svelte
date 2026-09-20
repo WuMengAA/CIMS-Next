@@ -6,7 +6,7 @@
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import ThemeToggle from "$lib/components/theme-toggle.svelte";
 	import { pageIn } from "$lib/transition.js";
-	import { can, roleLevelLabel, type Action } from "$lib/permissions.js";
+	import { can, userCan, roleLevelLabel, type Action } from "$lib/permissions.js";
 	import { Avatar, AvatarImage, AvatarFallback } from "$lib/components/ui/avatar/index.js";
 	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
 	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck, ShieldPlus, Archive, Paperclip } from "@lucide/svelte";
@@ -73,7 +73,7 @@
 
 	// 按能力过滤，再按固定分组顺序归拢：无权限的整组自动消失。
 	const navGroups = $derived.by(() => {
-		const allowed = NAV.filter((i) => can(role, i.need));
+		const allowed = NAV.filter((i) => userCan(data.user as any, i.need));
 		return GROUP_ORDER
 			.map((g) => ({ group: g, items: allowed.filter((i) => i.group === g) }))
 			.filter((g) => g.items.length > 0);

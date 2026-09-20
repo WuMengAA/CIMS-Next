@@ -32,7 +32,7 @@
 	import { MorphIcon } from "morphicons/svelte";
 	import { ChevronDown, ChevronUp } from "lucide";
 	import ViewSwitch from "$lib/components/view-switch.svelte";
-	import { can } from "$lib/permissions.js";
+	import { can, userCan } from "$lib/permissions.js";
 	import { readMoreOpen, writeMoreOpen } from "$lib/sidebar-memory.js";
 	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
 	import { ICON_MAP } from "$lib/icon-library.js";
@@ -122,9 +122,9 @@
 	const adminHref = $derived(
 		!data?.user
 			? null
-			: can(data.user.role as any, "viewAdmin")
+			: userCan(data.user as any, "viewAdmin")
 				? "/admin"
-				: can(data.user.role as any, "viewConsole")
+				: userCan(data.user as any, "viewConsole")
 					? "/admin/console"
 					: null
 	);

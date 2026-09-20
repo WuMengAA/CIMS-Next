@@ -1,7 +1,7 @@
 import { json } from "@sveltejs/kit";
 import { getFeedback, getFeedbackById, addFeedback, setFeedbackStatus, addFeedbackReply, deleteFeedback } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 // GET /api/feedback  → 公开：全部反馈（issue 列表天然公开，类似 GitHub）
 // ?status=open → 按状态过滤
@@ -13,7 +13,7 @@ export function GET({ url }) {
 // POST /api/feedback  → 提交反馈（需登录，user 及以上）
 export async function POST({ request, cookies }) {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "submitFeedback")) return json({ error: "请先登录后再提交反馈" }, { status: 401 });
+	if (!u || !userCan(u, "submitFeedback")) return json({ error: "请先登录后再提交反馈" }, { status: 401 });
 	let body: any;
 	try {
 		body = await request.json();
@@ -35,7 +35,7 @@ export async function POST({ request, cookies }) {
 // PUT /api/feedback  → 改状态 / 官方回复（需审核权限）
 export async function PUT({ request, cookies }) {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "moderate")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	if (!body.id) return json({ error: "缺少 id" }, { status: 400 });
 	if (body.content) {
@@ -53,7 +53,7 @@ export async function PUT({ request, cookies }) {
 // DELETE /api/feedback  → 删除反馈（需 manageContent）
 export async function DELETE({ request, cookies }) {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "manageContent")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	if (!body.id) return json({ error: "缺少 id" }, { status: 400 });
 	return json({ ok: deleteFeedback(body.id) });

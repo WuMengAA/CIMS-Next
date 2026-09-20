@@ -1,7 +1,7 @@
 import { json } from "@sveltejs/kit";
 import { getAnnouncements, addAnnouncement, updateAnnouncement, deleteAnnouncement } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 import { broadcastToClassrooms } from "$lib/server/broadcast.js";
 
 // GET /api/announcements  → 公开：默认只返回“生效中”的公告
@@ -10,7 +10,7 @@ export function GET({ url, cookies }) {
 	const all = url.searchParams.get("all") === "1";
 	if (all) {
 		const u = verifyToken(cookies.get("admin_token"));
-		if (!u || !can(u.role, "manageContent")) return json({ error: "无权限" }, { status: 403 });
+		if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 		return json(getAnnouncements());
 	}
 	return json(getAnnouncements({ activeOnly: true }));
@@ -19,7 +19,7 @@ export function GET({ url, cookies }) {
 // POST /api/announcements  → 新建公告（需 manageContent）
 export async function POST({ request, cookies }) {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "manageContent")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	let body: any;
 	try {
 		body = await request.json();
@@ -55,7 +55,7 @@ export async function POST({ request, cookies }) {
 // PUT /api/announcements  → 更新公告
 export async function PUT({ request, cookies }) {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "manageContent")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	if (!body.id) return json({ error: "缺少 id" }, { status: 400 });
 	const updated = updateAnnouncement(body.id, {
@@ -67,7 +67,7 @@ export async function PUT({ request, cookies }) {
 // DELETE /api/announcements  → 删除公告
 export async function DELETE({ request, cookies }) {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "manageContent")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	if (!body.id) return json({ error: "缺少 id" }, { status: 400 });
 	return json({ ok: deleteAnnouncement(body.id) });

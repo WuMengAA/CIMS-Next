@@ -894,19 +894,20 @@
     return `
       <div class="card"><h3>我的权限快照</h3>
         <p class="muted">
-          由网站在服务端按同一套门控逻辑解算后下发（<code>can()</code> / <code>canDevice()</code> /
-          <code>canBroadcastTo()</code>），因此界面显示的能力与服务端实际放行**永远一致**。
+          等级只是<b>显示秩位</b>；<b>称号</b>才是权限的载体。网站在服务端按同一套门控逻辑解算后下发
+          （<code>userCan()</code> / <code>canDevice()</code> / <code>canBroadcastTo()</code>），
+          因此界面显示的能力与服务端实际放行**永远一致**。
         </p>
         <div class="grid2">
           <div class="kv">
             <div><span class="muted">角色</span><b>${esc(me.roleLabel || "—")}</b></div>
-            <div><span class="muted">内容等级</span><b>${esc(me.levelLabel || "—")}</b></div>
+            <div><span class="muted">显示秩位</span><b>${esc(me.levelLabel || "—")}</b></div>
             <div><span class="muted">管理分级</span><b>${esc(me.managementTierLabel || "—")}</b></div>
           </div>
           <div class="kv">
+            <div><span class="muted">我的称号</span><b>${(me.titleLabels || []).map((t) => esc(t)).join(" / ") || "无"}</b></div>
             <div><span class="muted">设备能力</span><b>${(me.deviceTiers || []).map((t) => NEED_LABEL_DEVICE[t] || t).join(" / ") || "无"}</b></div>
             <div><span class="muted">广播范围</span><b>${esc(me.broadcastScopeLabel || "不可广播")}</b></div>
-            <div><span class="muted">账号性质</span><b>${me.isUserPlusDevice ? "注册用户 + 设备权限（叠加）" : "常规"}</b></div>
           </div>
         </div>
         ${me.managementTierDescription ? `<p class="muted">${esc(me.managementTierDescription)}</p>` : ""}
@@ -914,7 +915,7 @@
 
       <div class="card"><h3>管理分级（谁管到哪一级）</h3>
         <p class="muted">
-          分级回答「管到哪一级」，与「等级轴（能做什么）」「设备轴（设备多敏感）」「广播范围（能喊多远）」
+          分级回答「管到哪一级」，与「称号（能做什么）」「设备轴（设备多敏感）」「广播范围（能喊多远）」
           是四条独立轴。分级只是<b>上限</b>：校级管理员若没有 <code>device.remote</code>，依然不能远控。
         </p>
         <table><thead><tr><th>分级</th><th>职责边界</th><th>对应角色</th></tr></thead><tbody>

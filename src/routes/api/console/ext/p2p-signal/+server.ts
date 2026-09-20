@@ -1,7 +1,7 @@
 import { json } from "@sveltejs/kit";
 import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, type User } from "$lib/server/auth.js";
-import { can, canDevice } from "$lib/permissions.js";
+import { can, userCan, canDevice } from "$lib/permissions.js";
 import crypto from "node:crypto";
 
 /**
@@ -31,7 +31,7 @@ const HMAC_KEY = (process.env.STELARITH_P2P_HMAC_KEY || process.env.CIMS_ADMIN_S
 function authUser(event: RequestEvent): User | null {
 	const u = verifyToken(event.cookies.get("admin_token"));
 	if (!u || typeof u.id !== "number") return null;
-	if (!can(u.role, "viewConsole")) return null;
+	if (!userCan(u, "viewConsole")) return null;
 	return u;
 }
 

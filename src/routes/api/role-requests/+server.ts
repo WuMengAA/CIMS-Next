@@ -16,7 +16,7 @@
 
 import { json } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 import {
 	submitRoleRequest,
 	listRoleRequests,
@@ -50,12 +50,12 @@ export async function GET({ url, request, cookies }) {
 
 	if (scope === "pending-count") {
 		// 角标只对能审的人有意义；无权者一律返回 0，避免泄露待办规模。
-		if (!can(user.role, "reviewPermission")) return json({ count: 0, canReview: false });
+		if (!userCan(user, "reviewPermission")) return json({ count: 0, canReview: false });
 		return json({ count: pendingRoleRequestCount(), canReview: true });
 	}
 
 	// scope=review：审批队列
-	if (!can(user.role, "reviewPermission")) return json({ error: "无权查看权限申请" }, { status: 403 });
+	if (!userCan(user, "reviewPermission")) return json({ error: "无权查看权限申请" }, { status: 403 });
 	const status = url.searchParams.get("status") || "pending";
 	return json({ requests: status === "all" ? listRoleRequests() : listRoleRequests(status) });
 }
@@ -98,7 +98,7 @@ export async function POST({ request, cookies }) {
 	if (action === "approve" || action === "reject") {
 		// 这里先做一次粗门控（快速失败、语义清晰）；细规则（严格高于目标等级、
 		// 不许审自己、陈旧申请）在 reviewRoleRequest 内统一执行。
-		if (!can(user.role, "reviewPermission")) {
+		if (!userCan(user, "reviewPermission")) {
 			return json({ error: "无权审批权限申请" }, { status: 403 });
 		}
 		const r = reviewRoleRequest(

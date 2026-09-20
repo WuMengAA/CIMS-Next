@@ -90,6 +90,80 @@ c("每级都有示例角色且等级自洽",
 	c("所有动作都被矩阵收录", all.every((a) => covered.has(a)));
 }
 
+// ---- 9. 称号模型（2026-09-20 #181 重构：称号才是权限载体，等级只是显示秩位）----
+// 核心不变量：can(role, action) 由 ROLE_TITLES 的称号并集推导，与重构前（等级阈值）逐角色逐 action 等价；
+// 且 userCan() 对「无显式称号」的用户必须与 can() 完全一致（回退语义不能漂移）。
+{
+	// 9.1 称号目录完整性：每个称号键都有定义、label 唯一、actions 都落在 ACTION_LABELS 内。
+	const keys = P.TITLE_KEYS;
+	c("称号目录非空", keys.length > 0);
+	c("称号键唯一", new Set(keys).size === keys.length);
+	c("每个称号有中文标签", keys.every((k) => !!P.TITLES[k].label));
+	c("每个称号的 actions 都是合法 Action",
+		keys.every((k) => P.TITLES[k].actions.every((a) => a in P.ACTION_LABELS)));
+
+	// 9.2 每个 Action 必须至少被一个称号授予（否则 `can()` 恒 false，该能力形同虚设）。
+	const coveredByTitle = new Set();
+	for (const k of keys) for (const a of P.TITLES[k].actions) coveredByTitle.add(a);
+	const actionKeys = Object.keys(P.ACTION_LABELS);
+	c("每个 Action 都被至少一个称号授予", actionKeys.every((a) => coveredByTitle.has(a)));
+
+	// 9.3 覆盖写语义：userCan 优先显式称号；null/undefined/空数组 → 回退角色预设 = can(role)。
+	for (const r of P.ASSIGNABLE_ROLES) {
+		// 无显式称号（null/undefined/空数组）→ 与 can(role) 逐 action 一致
+		for (const a of actionKeys) {
+			const viaRole = P.can(r, a);
+			c(`userCan({role:${r}}) == can(${r}) [${a}]`,
+				P.userCan({ role: r, titles: null }, a) === viaRole
+				&& P.userCan({ role: r, titles: [] }, a) === viaRole
+				&& P.userCan({ role: r }, a) === viaRole);
+		}
+		// 显式称号 → 完全由该集合决定，与角色无关
+		const explicit = ["stationmaster"];
+		c(`userCan 显式称号覆盖角色 [${r}]`,
+			P.userCan({ role: r, titles: explicit }, "manageUsers") === true
+			&& P.userCan({ role: r, titles: explicit }, "viewAdmin") === false);
+		// 空数组的语义是「回退角色预设」（auth.setUserTitles 传 [] 即清空 user_titles 行），
+		// 因此任何角色传 [] 都应与其 can(role) 一致；不存在「显式零称号」态。
+		const emptySemantics = P.userCan({ role: r, titles: [] }, "viewConsole");
+		c(`userCan 空数组=回退角色预设 [${r}]`, emptySemantics === P.can(r, "viewConsole"));
+	}
+
+	// 9.4 设备轴与称号正交：改称号不改变 canDevice / canBroadcastTo / 管理分级（它们按角色表驱动）。
+	for (const r of P.ASSIGNABLE_ROLES) {
+		c(`设备轴与称号正交 [${r}]`, P.canDevice(r, "watch") === true);
+	}
+
+	// 9.5 等级只是显示秩位：roleToLevel 仍存在且完整（UI 展示用），但不参与 can() 判定。
+	//     roleCapabilitiesSummary 的 actions 应来自称号并集而非等级阈值。
+	const summary = P.roleCapabilitiesSummary("techrep");
+	c("techrep 能力摘要含 viewConsole（称号授予）", summary.actions.includes("viewConsole"));
+	c("techrep 能力摘要不含 moderate（未被称号授予）", !summary.actions.includes("moderate"));
+	c("techrep 显示秩位 L3", summary.level === 3);
+
+	// 9.6 permissionMatrix 下发的称号字段齐全（前端「我的称号」渲染依赖）。
+	const mx = P.permissionMatrix("techrep");
+	c("矩阵含称号目录", Array.isArray(mx.titles) && mx.titles.length === keys.length);
+	c("矩阵 me 含称号与中文标签", Array.isArray(mx.me.titles) && Array.isArray(mx.me.titleLabels));
+	c("矩阵角色行含称号", mx.roles.every((r) => Array.isArray(r.titles) && Array.isArray(r.titleLabels)));
+
+	// 9.7 permissionMatrix 传用户对象时，me 快照必须反映显式称号（覆盖写优先），
+	//     与 userCan() 门控同源 —— 防止「界面显示的能力」与「服务端放行」漂移。
+	{
+		const overridden = P.permissionMatrix({ role: "viewer", titles: ["stationmaster"] });
+		c("permissionMatrix(用户对象) 反映显式称号",
+			overridden.me.titles.includes("stationmaster")
+			&& overridden.me.actions.includes("manageUsers")
+			&& !overridden.me.titleLabels.includes("访客"));
+		// 角色预设仍然反映到 roles 表（那是各角色的默认组合，不受单用户覆盖影响）
+		c("permissionMatrix roles 表仍按角色预设",
+			mx.roles.every((r) => Array.isArray(r.titles) && r.titles.length > 0));
+		// 纯角色参数兼容旧调用
+		const legacy = P.permissionMatrix("viewer");
+		c("permissionMatrix(纯角色) 兼容旧调用", legacy.me.titles.join() === "visitor");
+	}
+}
+
 const fail = checks.filter(([, ok]) => !ok);
 for (const [n, ok] of checks) console.log(`${ok ? "✅" : "❌"} ${n}`);
 console.log(`\n=== ${checks.length - fail.length}/${checks.length} 通过 ===`);

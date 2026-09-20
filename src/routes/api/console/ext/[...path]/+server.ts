@@ -1,22 +1,10 @@
 import { json } from "@sveltejs/kit";
 import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, type User } from "$lib/server/auth.js";
-import {
-	can,
-	canDevice,
-	broadcastScope,
-	canBroadcastTo,
-	clampBroadcastScope,
-	scopeFromLabel,
-	BROADCAST_SCOPE_LABELS,
-	type BroadcastScope,
-	// 权限矩阵（等级轴 / 设备轴 / 分级轴 / 广播范围轴 + 当前账号快照）
+import { can, userCan, canDevice, broadcastScope, canBroadcastTo, clampBroadcastScope, scopeFromLabel, BROADCAST_SCOPE_LABELS, type BroadcastScope, // 权限矩阵（等级轴 / 设备轴 / 分级轴 / 广播范围轴 + 当前账号快照）
 	// 全部由 permissions.ts 的 permissionMatrix() 计算，本路由只做透传 ——
 	// 因此不再逐个导入各轴的中文标签常量（它们只在 permissionMatrix 内部使用）。
-	permissionMatrix,
-	type Action,
-	type DeviceTier
-} from "$lib/permissions.js";
+	permissionMatrix, type Action, type DeviceTier } from "$lib/permissions.js";
 import { broadcastToClassrooms } from "$lib/server/broadcast.js";
 import {
 	listNotices,
@@ -108,13 +96,13 @@ function guard(event: RequestEvent, need: Action | DeviceTier = "viewConsole") {
 		return { error: json({ error: "会话无效，请重新登录" }, { status: 401 }) } as const;
 	}
 	// 等级轴：必须能进集控面板。
-	if (!can(u.role, "viewConsole")) {
+	if (!userCan(u, "viewConsole")) {
 		return { error: json({ error: "无权限" }, { status: 403 }) } as const;
 	}
 	// 第二道门按 need 的归属走对应轴：设备档位查 canDevice，内容动作查 can。
 	const ok = DEVICE_TIERS.includes(need as DeviceTier)
 		? canDevice(u.role, need as DeviceTier)
-		: can(u.role, need as Action);
+		: userCan(u, need as Action);
 	if (!ok) {
 		return { error: json({ error: "无权限" }, { status: 403 }) } as const;
 	}
@@ -159,7 +147,8 @@ export async function GET(event: RequestEvent) {
 			// 「权限与分级」页的唯一数据源：等级轴 + 设备轴 + 管理分级轴 + 广播范围轴，
 			// 以及**当前账号**的已解算快照（me）。服务端算、前端只渲染 ——
 			// 前端自行推导权限是最容易出现"界面显示能点、服务端 403"的地方。
-			return json(permissionMatrix(u.role));
+			// 传完整用户对象（含 user_titles 显式称号），me 快照与 userCan() 门控同源。
+			return json(permissionMatrix(u));
 		case "friends": {
 			// ?q= 有值时走「找人」，否则列我的好友关系（含待处理请求）。
 			const kw = q.get("q");

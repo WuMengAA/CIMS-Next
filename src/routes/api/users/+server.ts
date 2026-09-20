@@ -3,7 +3,7 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, getUser, adminUpdateUser, deleteUser, revokeSessions } from "$lib/server/auth.js";
 import { listUsersOverview, listActivities, onlineUsers, recordActivity } from "$lib/server/activity.js";
 import { syncUserUpdateToCims } from "$lib/server/cims-account.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 import type { Role } from "$lib/permissions.js";
 
 /**
@@ -20,7 +20,7 @@ export function GET(event: RequestEvent) {
 	const { url, cookies } = event;
 	const me = verifyToken(cookies.get("admin_token"));
 	if (!me) return json({ error: "未登录" }, { status: 401 });
-	if (!can(me.role, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
+	if (!userCan(me, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
 
 	const username = url.searchParams.get("username");
 	if (username) {
@@ -61,7 +61,7 @@ export async function POST(event: RequestEvent) {
 	const action = body.action;
 
 	if (action === "update") {
-		if (!can(me.role, "manageUsers")) return json({ error: "无权限" }, { status: 403 });
+		if (!userCan(me, "manageUsers")) return json({ error: "无权限" }, { status: 403 });
 		const r = adminUpdateUser(body.username, {
 			displayName: body.displayName,
 			email: body.email,
@@ -93,7 +93,7 @@ export async function POST(event: RequestEvent) {
 	}
 
 	if (action === "delete") {
-		if (!can(me.role, "manageUsers")) return json({ error: "无权限" }, { status: 403 });
+		if (!userCan(me, "manageUsers")) return json({ error: "无权限" }, { status: 403 });
 		// 先留一份邮箱/用户名用于同步，删除后本地就查不到了
 		const before = getUser(body.username);
 		const r = deleteUser(body.username);
@@ -110,7 +110,7 @@ export async function POST(event: RequestEvent) {
 	}
 
 	if (action === "revoke_sessions") {
-		if (!can(me.role, "manageUsers") && body.username !== me.username) {
+		if (!userCan(me, "manageUsers") && body.username !== me.username) {
 			return json({ error: "无权限" }, { status: 403 });
 		}
 		const n = revokeSessions(body.username || me.username);

@@ -15,7 +15,7 @@
 		RefreshCw, BookOpen, Rocket, BookMarked, Image, MessageSquare, Megaphone,
 		Flag, FileText, Eye, Plus, Upload, FolderOpen, LayoutTemplate, ScanEye
 	} from "@lucide/svelte";
-	import { can, roleLevelLabel, type Role, type Action } from "$lib/permissions.js";
+	import { can, userCan, roleLevelLabel, type Role, type Action } from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -35,9 +35,9 @@
 
 	// 权限：仪表盘上每个入口都按能力显隐，避免"看得见、点进去 403"
 	const role = $derived(((data as any)?.user?.role ?? null) as Role | null);
-	const canContent = $derived(can(role, "manageContent"));
-	const canPages = $derived(can(role, "managePages"));
-	const canModerate = $derived(can(role, "moderate"));
+	const canContent = $derived(userCan(data.user as any, "manageContent"));
+	const canPages = $derived(userCan(data.user as any, "managePages"));
+	const canModerate = $derived(userCan(data.user as any, "moderate"));
 	const levelLabel = $derived(roleLevelLabel(role));
 
 	async function loadStats() {
@@ -92,7 +92,7 @@
 	];
 
 	const groups = $derived.by(() => {
-		const allowed = CARDS.filter((c) => can(role, c.need));
+		const allowed = CARDS.filter((c) => userCan(data.user as any, c.need));
 		return ["内容", "互动"]
 			.map((g) => ({ group: g, items: allowed.filter((c) => c.group === g) }))
 			.filter((g) => g.items.length > 0);

@@ -2,7 +2,7 @@ import { json } from "@sveltejs/kit";
 import type { RequestHandler } from "./$types";
 import { recordView, getStatsSummary } from "$lib/server/content-store.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can } from "$lib/permissions.js";
+import { can, userCan } from "$lib/permissions.js";
 
 export const POST: RequestHandler = async ({ request }) => {
 	let body: { target?: string } = {};
@@ -15,7 +15,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 export const GET: RequestHandler = async ({ cookies, url }) => {
 	const u = verifyToken(cookies.get("admin_token"));
-	if (!u || !can(u.role, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
+	if (!u || !userCan(u, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
 	const days = Math.min(30, Math.max(1, parseInt(url.searchParams.get("days") || "7", 10) || 7));
 	return json(getStatsSummary(days));
 };
