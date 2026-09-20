@@ -63,9 +63,32 @@ c("LEVEL_LABELS 共 6 级", Object.keys(P.LEVEL_LABELS).length === 6);
 c("LEVEL_SAMPLE_ROLE 共 6 级", Object.keys(P.LEVEL_SAMPLE_ROLE).length === 6);
 c("可分配角色都有中文标签", P.ASSIGNABLE_ROLES.every((r) => !!P.ROLE_LABELS[r]));
 c("可分配角色都有等级", P.ASSIGNABLE_ROLES.every((r) => P.roleToLevel(r) !== null));
-c("可分配角色都有广播范围定义", P.ASSIGNABLE_ROLES.every((r) => r in { viewer: 1 }) === false);
+// （修正原先写坏的这一条：`r in { viewer: 1 } === false` 恒为 true，等于没测。）
+// 真意是「每个可分配角色都有广播范围定义」——允许值为 null（viewer 不可广播），
+// 但键必须存在，否则 spread/查表会静默拿到 undefined。
+c("可分配角色都有广播范围定义（键存在，允许 null）",
+	P.ASSIGNABLE_ROLES.every((r) => P.broadcastScope(r) === null || !!P.BROADCAST_SCOPE_LABELS[P.broadcastScope(r)]));
+c("可分配角色都有设备档定义", P.ASSIGNABLE_ROLES.every((r) => Array.isArray(P.roleDeviceTiers(r))));
 c("每级都有示例角色且等级自洽",
 	Object.entries(P.LEVEL_SAMPLE_ROLE).every(([lv, r]) => P.roleToLevel(r) === Number(lv)));
+
+// ---- 8. 权限矩阵覆盖全部等级（防「六等扩级漏一行 L6」复发）----
+// 该 bug 真实发生过：capabilitiesByLevel() 写死 [1,2,3,4,5]，矩阵页永远少 L6 那行。
+{
+	const rows = P.capabilitiesByLevel();
+	const maxLevel = Math.max(...P.ASSIGNABLE_ROLES.map((r) => P.roleToLevel(r) ?? 0));
+	c("矩阵行数 == 最高等级", rows.length === maxLevel);
+	c("矩阵逐级连续无缺口", rows.every((r, i) => r.level === i + 1));
+	c("矩阵含最高等级 L6 行", rows.some((r) => r.level === maxLevel));
+	const l6 = rows.find((r) => r.level === maxLevel);
+	c("L6 行确实有动作（不是空壳行）", !!l6 && l6.actions.length > 0);
+	c("L6 行含 manageUsers/manageSettings", !!l6
+		&& l6.actions.includes("manageUsers") && l6.actions.includes("manageSettings"));
+	// 反向：每个动作都必须被某一等级收纳，否则它永远不会出现在矩阵里。
+	const covered = new Set(rows.flatMap((r) => r.actions));
+	const all = Object.keys(P.ACTION_LABELS);
+	c("所有动作都被矩阵收录", all.every((a) => covered.has(a)));
+}
 
 const fail = checks.filter(([, ok]) => !ok);
 for (const [n, ok] of checks) console.log(`${ok ? "✅" : "❌"} ${n}`);

@@ -5,9 +5,9 @@
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
-	import { ROLE_LABELS, type Role } from "$lib/permissions.js";
+	import { ROLE_LABELS, roleToLevel, LEVEL_LABELS, LEVEL_DESCRIPTIONS, type Role, type Level } from "$lib/permissions.js";
 	import { toast } from "svelte-sonner";
-	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays, UserCog, Save } from "@lucide/svelte";
+	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays, UserCog, Save, ShieldPlus, ArrowRight } from "@lucide/svelte";
 
 	interface Me {
 		username: string; displayName: string; email: string; bio: string; avatar: string;
@@ -166,6 +166,34 @@
 		</div>
 		<div><Button onclick={saveProfile} disabled={saving}><Save class="h-4 w-4 mr-2" />{saving ? "保存中..." : "保存资料"}</Button></div>
 	</div>
+
+	<!-- 权限等级（#181 晋升入口）-->
+	{#if me}
+		{@const lv = roleToLevel(me.role as Role)}
+		<div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-6">
+			<h2 class="flex items-center gap-2 font-heading text-lg font-medium">
+				<ShieldPlus class="size-4 text-primary" /> 权限等级
+			</h2>
+			<div class="flex flex-wrap items-center gap-2">
+				<Badge variant="outline">{lv === null ? "未识别" : LEVEL_LABELS[lv as Level]}</Badge>
+				<span class="text-sm text-muted-foreground">{ROLE_LABELS[me.role as Role] || me.role}</span>
+			</div>
+			<p class="text-xs text-muted-foreground">{lv === null ? "" : LEVEL_DESCRIPTIONS[lv as Level]}</p>
+			{#if lv !== null && lv >= 6}
+				<p class="text-xs text-muted-foreground">你已是最高等级，无需申请晋升。</p>
+			{:else}
+				<p class="text-xs text-muted-foreground">
+					等级只能<strong>逐级晋升</strong>，需提交能力证明并由更高等级管理员审核。
+				</p>
+				<div>
+					<a href="/apply/role"
+						class="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+						申请权限晋升 <ArrowRight class="size-3.5" />
+					</a>
+				</div>
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Change password -->
 	<div class="flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6">

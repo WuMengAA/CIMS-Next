@@ -342,6 +342,28 @@ export function roleLevelLabel(role: Role | null | undefined): string {
 	return lv === null ? "未登录" : LEVEL_LABELS[lv];
 }
 
+// ── 权限晋升申请的「能力证明」目录（#181）──────────────────────────────────
+//
+// 放在 permissions.ts（纯模块，前后端都能 import）而不是 `$lib/server/role-requests.ts`：
+// 申请页与后台审核页都要渲染这份清单，而 `$lib/server/*` 一旦被客户端组件 import
+// 就会把服务端依赖（SQLite / fs）拖进浏览器包，构建期直接失败。
+// 服务端校验也复用这份清单，保证「下拉里能选的」与「服务端认的」永远一致。
+export const PROOF_TYPES: { key: string; label: string; hint: string }[] = [
+	{ key: "teacher_id", label: "教师工号 / 教工证", hint: "填写工号或证件编号，审核时会与学校名单核对" },
+	{ key: "class_device", label: "班级设备编号", hint: "教室一体机 / ClassIsland 设备码（如 lab-pc-001）" },
+	{ key: "school_email", label: "学校邮箱", hint: "以学校域名结尾的邮箱地址（如 @xxx.edu.cn）" },
+	{ key: "work_order", label: "集控工单记录", hint: "你在集控里处理过的故障工单编号或时间" },
+	{ key: "vouch", label: "现任管理员推荐", hint: "推荐人的用户名，审核时会向本人确认" }
+];
+
+/** 证明类型的取值集合（服务端白名单校验用）。 */
+export const PROOF_TYPE_KEYS: string[] = PROOF_TYPES.map((p) => p.key);
+
+/** 证明类型 -> 中文标签（列表页直接展示）。 */
+export const PROOF_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+	PROOF_TYPES.map((p) => [p.key, p.label])
+);
+
 // ── 管理分级（组织层：谁管谁）──────────────────────────────────────────────
 //
 // 与「等级轴 / 设备轴 / 广播范围轴」的区别：那三条回答「能做什么」，
@@ -585,7 +607,11 @@ export const ACTION_LABELS: Record<Action, string> = {
 
 /** 按等级归组的能力清单（权限矩阵页按行渲染）。 */
 export function capabilitiesByLevel(): { level: Level; actions: Action[] }[] {
-	const levels: Level[] = [1, 2, 3, 4, 5];
+	// ⚠️ 等级清单必须与 ROLE_LEVEL / LEVEL_LABELS 的**全集**一致。
+	// 历史 bug：六等扩级时这里漏改成 [1..5]，于是矩阵页永远少一行 L6 ——
+	// 「管理·站长」那一行的能力全靠脑补。新增等级时请同步这里与
+	// `_probe/permissions-invariants.mjs` 的「矩阵覆盖全部等级」不变量。
+	const levels: Level[] = [1, 2, 3, 4, 5, 6];
 	return levels.map((level) => ({
 		level,
 		actions: (Object.keys(LEVEL_OF_ACTION) as Action[]).filter((a) => LEVEL_OF_ACTION[a] === level)

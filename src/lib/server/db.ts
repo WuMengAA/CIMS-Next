@@ -150,6 +150,42 @@ CREATE TABLE IF NOT EXISTS console_friends (
 );
 CREATE INDEX IF NOT EXISTS idx_console_friends_addr ON console_friends(addressee_id, status);
 CREATE INDEX IF NOT EXISTS idx_console_friends_req  ON console_friends(requester_id, status);
+
+-- 权限晋升申请（#181 · 2026-09-20）
+-- 等级轴是「逐级晋升」的：L2 学生想进集控（L3 电教委员）必须提交申请 **并附能力证明**，
+-- 由更高等级的人批准。本表是这条链路的落地处。
+--
+-- 为什么放 DB 而不是 content/*.json：批准动作要**改 users.role**，两者必须同源同事务边界；
+-- 分散到文件会出现「申请已批准但角色没改」或反之的中间态。
+--
+-- from_role 冗余存「提交时的角色」：审批时必须拿它比对用户的**当前**角色，
+-- 若中途已被别的管理员升过级，这张申请就是陈旧申请，必须拒绝执行（否则会把人降级）。
+CREATE TABLE IF NOT EXISTS role_requests (
+  id            TEXT    PRIMARY KEY,
+  user_id       INTEGER NOT NULL,
+  username      TEXT    NOT NULL,
+  from_role     TEXT    NOT NULL,
+  from_level    INTEGER NOT NULL DEFAULT 0,
+  target_role   TEXT    NOT NULL,
+  target_level  INTEGER NOT NULL DEFAULT 0,
+  -- ── 能力证明 ──
+  real_name     TEXT    NOT NULL DEFAULT '',
+  contact       TEXT    NOT NULL DEFAULT '',
+  proof_type    TEXT    NOT NULL DEFAULT '',
+  proof_ref     TEXT    NOT NULL DEFAULT '',
+  class_name    TEXT    NOT NULL DEFAULT '',
+  grade_name    TEXT    NOT NULL DEFAULT '',
+  reason        TEXT    NOT NULL DEFAULT '',
+  evidence      TEXT    NOT NULL DEFAULT '',
+  -- ── 审核 ──
+  status        TEXT    NOT NULL DEFAULT 'pending',
+  reviewer      TEXT    NOT NULL DEFAULT '',
+  review_note   TEXT    NOT NULL DEFAULT '',
+  created_at    TEXT    NOT NULL,
+  reviewed_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_role_requests_status ON role_requests(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_role_requests_user   ON role_requests(user_id, status);
 `;
 
 export function nowIso(): string {

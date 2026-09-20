@@ -9,7 +9,7 @@
 	import { can, roleLevelLabel, type Action } from "$lib/permissions.js";
 	import { Avatar, AvatarImage, AvatarFallback } from "$lib/components/ui/avatar/index.js";
 	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
-	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck, Archive, Paperclip } from "@lucide/svelte";
+	import { LayoutDashboard, BookOpen, Rocket, BookMarked, Link, Globe, ExternalLink, Settings, UsersRound, Inbox, LayoutList, MessageSquare, Megaphone, Flag, FileCheck2, GitPullRequestArrow, MessagesSquare, Rss, MonitorSmartphone, Activity, FileText, ShieldCheck, ShieldPlus, Archive, Paperclip } from "@lucide/svelte";
 	import type { LayoutProps } from "./$types";
 
 	const { children, data }: LayoutProps = $props();
@@ -44,6 +44,9 @@
 		{ title: "友链申请", url: "/admin/link-applications", icon: Inbox, need: "manageContent", group: "审核" },
 		{ title: "项目专页申请", url: "/admin/project-applications", icon: GitPullRequestArrow, need: "moderate", group: "审核" },
 		{ title: "文档纠错", url: "/admin/doc-corrections", icon: FileCheck2, need: "moderate", group: "审核" },
+		// 权限申请：门槛用 reviewPermission（L5），与「能否真的批准」同源 ——
+		// 用 moderate 会让「能审 UGC 但不能审权限」的角色看到点了必失败的入口。
+		{ title: "权限申请", url: "/admin/role-requests", icon: ShieldPlus, need: "reviewPermission", group: "审核" },
 
 		// 运营：L4 编辑及以上
 		{ title: "公告管理", url: "/admin/announcements", icon: Megaphone, need: "manageContent", group: "运营" },
