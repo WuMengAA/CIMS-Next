@@ -25,12 +25,12 @@ use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine as _;
-use chrono::Utc;
+use chrono::{Local, TimeZone, Utc};
 use ed25519_dalek::pkcs8::DecodePublicKey;
 use ed25519_dalek::Verifier;
 use ed25519_dalek::{Signature, VerifyingKey};
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -59,6 +59,14 @@ struct Task {
     /// 媒体动作：文件名（删除用；只接受 basename，见 media::safe_media_name）
     #[serde(default)]
     name: Option<String>,
+    /// 定时关机计划（schedule_shutdown 动作承载）。宽松 JSON 对象，取值经
+    /// handle_schedule_shutdown 逐项校验（时间格式 / 周几区间 / 倒计时分钟数）。
+    /// 由插件在教室端**确认后**透传 —— 代理这里不再弹任何 UI，只负责落盘与调度。
+    #[serde(default)]
+    schedule: Option<serde_json::Value>,
+    /// 取消定时关机用：计划 id（cancel_schedule 动作的顶层字段；也兼容 params["schedule_id"]）。
+    #[serde(default)]
+    schedule_id: Option<String>,
     /// 其余参数（码率 / 缩放 / 段长 / 画质 / 保留天数 …）。
     ///
     /// 为什么留一个开放字典而不是逐个加字段：摄像头/媒体这类动作的参数会随面板配置
@@ -114,6 +122,280 @@ fn default_scope() -> String {
     "class".into()
 }
 
+/// 定时关机计划（持久化于 C:/ProgramData/Stelarith/schedules.json）。
+///
+/// 四种模式（面板下发、教室端确认后经插件透传）：
+///  - daily     每天 time 到点关机（如 21:00），同日不重复触发；
+///  - weekly    仅 days 所列周几（1=周一..7=周日）的 time 到点关机；
+///  - once      到 datetime（本地时区 "YYYY-MM-DDTHH:MM"）关机，执行后自动删除；
+///  - countdown 自收到时刻起 minutes 分钟后关机（面板倒计时场景），执行后自动删除。
+///
+/// 触发动作：`shutdown /s /t 60` —— 留 60 秒缓冲，若发错可 `shutdown /a` 取消。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+struct ScheduleEntry {
+    /// 计划 ID（面板生成，用于覆盖/取消：同 id 再次下发 = upsert）。
+    id: String,
+    /// daily | weekly | once | countdown
+    #[serde(default)]
+    mode: String,
+    /// daily/weekly 用：HH:MM
+    #[serde(default)]
+    time: String,
+    /// weekly 用：1..7（1=周一）
+    #[serde(default)]
+    days: Vec<u32>,
+    /// once 用：本地时区 "YYYY-MM-DDTHH:MM"
+    #[serde(default)]
+    datetime: String,
+    /// countdown 用：分钟后关机（夹取 1..720）
+    #[serde(default)]
+    minutes: i64,
+    /// false = 停用（同 id 下发 enabled=false 即取消该计划）
+    #[serde(default = "default_true")]
+    enabled: bool,
+    /// 人类可读备注（面板填写，仅展示用）
+    #[serde(default)]
+    note: String,
+    /// 内部：once/countdown 的绝对触发时刻（unix 秒，本地语义；存 UTC 时间戳便于比较）
+    #[serde(default)]
+    fire_at: i64,
+    /// 内部：daily/weekly 最近一次触发的日期（YYYY-MM-DD，防同一分钟被 30s 双 tick 触发两次）
+    #[serde(default)]
+    last_fired: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+const SCHEDULES_FILE: &str = "C:/ProgramData/Stelarith/schedules.json";
+
+fn load_schedules() -> Vec<ScheduleEntry> {
+    match std::fs::read_to_string(SCHEDULES_FILE) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_schedules(list: &[ScheduleEntry]) -> std::io::Result<()> {
+    let json = serde_json::to_string_pretty(list).unwrap_or_else(|_| "[]".into());
+    if let Some(dir) = std::path::Path::new(SCHEDULES_FILE).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(SCHEDULES_FILE, json)
+}
+
+/// 解析 "HH:MM"（本地 24 小时制）。
+fn parse_hhmm(s: &str) -> Option<(u32, u32)> {
+    let mut it = s.split(':');
+    let h: u32 = it.next()?.trim().parse().ok()?;
+    let m: u32 = it.next()?.trim().parse().ok()?;
+    if h < 24 && m < 60 {
+        Some((h, m))
+    } else {
+        None
+    }
+}
+
+/// 解析本地时区 "YYYY-MM-DDTHH:MM" 为 unix 秒。
+fn parse_local_datetime(s: &str) -> Option<i64> {
+    let nd = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").ok()?;
+    Local.from_local_datetime(&nd).single().map(|dt| dt.timestamp())
+}
+
+/// 处理 schedule_shutdown：校验 → upsert/取消 → 落盘。返回结构化回执。
+fn handle_schedule_shutdown(task: &Task, st: &AgentState) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let raw = task
+        .schedule
+        .clone()
+        .or_else(|| task.params.as_ref().and_then(|m| m.get("schedule")).cloned());
+    let Some(raw) = raw else {
+        out.insert("error".into(), "missing schedule".into());
+        return out;
+    };
+    let mut s: ScheduleEntry = match serde_json::from_value(raw) {
+        Ok(s) => s,
+        Err(e) => {
+            out.insert("error".into(), format!("bad schedule: {e}"));
+            return out;
+        }
+    };
+    if s.id.trim().is_empty() {
+        out.insert("error".into(), "schedule.id required".into());
+        return out;
+    }
+    s.id = s.id.trim().to_string();
+    s.minutes = s.minutes.clamp(1, 720);
+
+    let mut list = st.schedules.lock().unwrap();
+    // 停用：同 id + enabled=false → 删除该计划（幂等：不存在也算成功）
+    if !s.enabled {
+        list.retain(|e| e.id != s.id);
+        let _ = save_schedules(&list);
+        out.insert("result".into(), "schedule_removed".into());
+        out.insert("id".into(), s.id);
+        return out;
+    }
+
+    // 模式校验 + 归一（once/countdown 计算 fire_at）
+    match s.mode.as_str() {
+        "daily" => {
+            if parse_hhmm(&s.time).is_none() {
+                out.insert("error".into(), "bad time (HH:MM)".into());
+                return out;
+            }
+        }
+        "weekly" => {
+            if parse_hhmm(&s.time).is_none() {
+                out.insert("error".into(), "bad time (HH:MM)".into());
+                return out;
+            }
+            if s.days.is_empty() || s.days.iter().any(|d| *d < 1 || *d > 7) {
+                out.insert("error".into(), "bad days (1..7)".into());
+                return out;
+            }
+            s.days.sort_unstable();
+            s.days.dedup();
+        }
+        "once" => match parse_local_datetime(&s.datetime) {
+            Some(ts) => s.fire_at = ts,
+            None => {
+                out.insert("error".into(), "bad datetime (YYYY-MM-DDTHH:MM)".into());
+                return out;
+            }
+        },
+        "countdown" => {
+            s.fire_at = Utc::now().timestamp() + s.minutes * 60;
+        }
+        _ => {
+            out.insert("error".into(), format!("bad mode: {}", s.mode));
+            return out;
+        }
+    }
+
+    // upsert：同 id 覆盖（改时间/改周期 = 再下发一次同一 id）
+    if let Some(ex) = list.iter_mut().find(|e| e.id == s.id) {
+        *ex = s.clone();
+    } else {
+        list.push(s.clone());
+    }
+    let _ = save_schedules(&list);
+    let _ = write_status(&format!(
+        "schedule saved: id={} mode={} time={} days={:?} datetime={} minutes={} fire_at={}",
+        s.id, s.mode, s.time, s.days, s.datetime, s.minutes, s.fire_at
+    ));
+    out.insert("result".into(), "schedule_saved".into());
+    out.insert("id".into(), s.id);
+    out.insert("mode".into(), s.mode);
+    out.insert("fire_at".into(), s.fire_at.to_string());
+    out
+}
+
+/// 列出当前生效计划（面板诊断用；只读，不经教室端确认）。
+fn handle_list_schedules(st: &AgentState) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let list = st.schedules.lock().unwrap().clone();
+    out.insert("result".into(), "ok".into());
+    out.insert("count".into(), list.len().to_string());
+    out.insert(
+        "schedules".into(),
+        serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()),
+    );
+    out
+}
+
+/// 按 id 取消计划（等价于 schedule_shutdown + enabled:false，独立动作便于面板直呼）。
+fn handle_cancel_schedule(task: &Task, st: &AgentState) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    // 顶层 schedule_id 优先，其次 params["schedule_id"]（兼容两种打包位置）
+    let id = task
+        .schedule_id
+        .clone()
+        .or_else(|| task.p_str("schedule_id"))
+        .unwrap_or_default();
+    if id.is_empty() {
+        out.insert("error".into(), "missing schedule_id".into());
+        return out;
+    }
+    let mut list = st.schedules.lock().unwrap();
+    let before = list.len();
+    list.retain(|e| e.id != id);
+    if list.len() == before {
+        out.insert("result".into(), "not_found".into());
+    } else {
+        let _ = save_schedules(&list);
+        out.insert("result".into(), "schedule_removed".into());
+    }
+    out.insert("id".into(), id);
+    out
+}
+
+/// 定时调度主循环：每 30s 检查一次，到点执行 `shutdown /s /t 60`。
+fn spawn_scheduler(st: &std::sync::Arc<AgentState>) {
+    let st2 = st.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        tick.tick().await; // interval 首 tick 立即触发，先吞掉再进循环
+        loop {
+            tick.tick().await;
+            run_schedule_checks(&st2);
+        }
+    });
+}
+
+fn run_schedule_checks(st: &AgentState) {
+    use chrono::Datelike;
+    let now = Local::now();
+    let today = now.format("%Y-%m-%d").to_string();
+    let hhmm = now.format("%H:%M").to_string();
+    let ts = now.timestamp();
+
+    let mut list = st.schedules.lock().unwrap();
+    if list.is_empty() {
+        return;
+    }
+    let mut to_remove: Vec<String> = Vec::new();
+    let mut fired_any = false;
+    for s in list.iter_mut() {
+        if !s.enabled {
+            continue;
+        }
+        let fire = match s.mode.as_str() {
+            "countdown" | "once" => s.fire_at > 0 && ts >= s.fire_at,
+            "daily" => s.time == hhmm && s.last_fired != today,
+            "weekly" => {
+                let wd = (now.weekday().num_days_from_monday() + 1) as u32; // 1..7
+                s.days.contains(&wd) && s.time == hhmm && s.last_fired != today
+            }
+            _ => false,
+        };
+        if !fire {
+            continue;
+        }
+        let _ = write_status(&format!(
+            "scheduled shutdown FIRE: id={} mode={} time={} today={}",
+            s.id, s.mode, s.time, today
+        ));
+        // 留 60 秒缓冲：发错可 `shutdown /a` 取消（教室有人时也能看见关机倒计时）
+        let _ = Command::new("shutdown")
+            .args(["/s", "/t", "60", "/c", "Stelarith scheduled shutdown"])
+            .spawn();
+        if s.mode == "once" || s.mode == "countdown" {
+            to_remove.push(s.id.clone());
+        } else {
+            s.last_fired = today.clone();
+        }
+        fired_any = true;
+    }
+    if !to_remove.is_empty() {
+        list.retain(|s| !to_remove.contains(&s.id));
+    }
+    if fired_any {
+        let _ = save_schedules(&list);
+    }
+}
+
 /// 进程级状态：VNC 子进程 + 摄像头录像进程。
 struct AgentState {
     secret: String,
@@ -123,6 +405,8 @@ struct AgentState {
     /// 是为了让"同一台机器只能有一段录像"这条约束由状态结构本身保证，
     /// 而不是靠调用方自觉。
     recorder: Mutex<Option<media::Recorder>>,
+    /// 定时关机计划（schedule_shutdown 落盘 + 调度线程读取；Mutex 保护跨线程一致性）。
+    schedules: Mutex<Vec<ScheduleEntry>>,
 }
 
 struct VncSession {
@@ -235,6 +519,20 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
             let _ = Command::new("shutdown").args(["/r", "/t", "0"]).spawn();
             out.insert("result".into(), "rebooting".into());
         }
+        // 关机（#196 一键关机贯通）：`shutdown /s /t 0` 立即关机。同样不做提权假设——
+        // 若代理以普通用户身份运行，系统会弹 UAC 或直接拒绝，回执里带 error 让面板可见。
+        "shutdown" => {
+            match Command::new("shutdown").args(["/s", "/t", "0"]).spawn() {
+                Ok(_) => { out.insert("result".into(), "shutting_down".into()); }
+                Err(e) => { out.insert("error".into(), e.to_string()); }
+            }
+        }
+        // ═══ 定时关机（长期计划：每天/每周/一次性/倒计时）═══
+        // 计划来自面板 → CIMS → 插件（教室端 60s 确认窗确认后）→ 本代理。
+        // 代理只做落盘 + 调度；四种模式与防重逻辑见 ScheduleEntry 注释。
+        "schedule_shutdown" => return handle_schedule_shutdown(task, st),
+        "list_schedules" => return handle_list_schedules(st),
+        "cancel_schedule" => return handle_cancel_schedule(task, st),
         "remote_control_start" => {
             let port = 5900 + (Utc::now().timestamp() % 100) as u16; // 随机会话端口
             let conn_token = format!("st-{}-{}", port, Utc::now().timestamp());
@@ -422,7 +720,12 @@ async fn main() {
         vnc_cmd,
         active: Mutex::new(None),
         recorder: Mutex::new(None),
+        // 启动即读回持久化的定时关机计划（代理重启后计划不丢）
+        schedules: Mutex::new(load_schedules()),
     });
+
+    // 定时关机调度线程（每 30s 检查，到点执行 shutdown /s /t 60）
+    spawn_scheduler(&st);
 
     // 仅绑 localhost：外部不可直接访问，符合"占用少 + 默认安全"。
     // （媒体直连服务是**另一个**监听器，由 media 模块在真的发生媒体动作时才按需启动，
