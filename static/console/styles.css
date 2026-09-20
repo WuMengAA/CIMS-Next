@@ -325,6 +325,57 @@ tbody tr:hover { background: var(--panel2); }
 .tag.warn { background: rgba(216,178,92,.15); color: var(--warn); border-color: rgba(216,178,92,.3); }
 .tag.err { background: rgba(247,93,89,.14); color: var(--err); border-color: rgba(247,93,89,.3); }
 
+/* ===== 班级管理：文件夹式分组 + 快捷选择（#182）=====
+   分组不是一个真正可折叠的文件树，而是「按届归拢的一段」——
+   校内的心智模型就是「这一届的各个班」，所以视觉上用「文件夹头 + 卡片网格」
+   而不是给每个班一行表格：一行表格看不出「同届」这个关系。 */
+.cls-folders { display: flex; flex-direction: column; gap: 14px; }
+.cls-folder { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+.cls-folder > header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; background: var(--panel2); border-bottom: 1px solid var(--line);
+}
+.cls-folder > header b { font-size: 13px; font-weight: 600; }
+.cls-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
+  gap: 10px; padding: 12px;
+}
+.cls-card {
+  display: flex; flex-direction: column; gap: 7px; min-width: 0;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px;
+  background: var(--panel2);
+  transition: border-color .25s ease, box-shadow .25s ease;
+}
+/* 当前正在看的班：用主色描边，一眼可辨「我现在的操作对象是哪个班」 */
+.cls-card.current {
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 26%, transparent) inset;
+}
+.cls-card > header { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
+.cls-card > header b { font-size: 13px; font-weight: 600; }
+.cls-meta { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--dim); }
+.cls-meta span { display: flex; gap: 6px; min-width: 0; }
+.cls-meta span > i { flex: 0 0 42px; font-style: normal; color: var(--mutedx); }
+.cls-meta span > em { font-style: normal; min-width: 0; word-break: break-all; }
+.cls-act { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 2px; }
+/* 快捷选择片：小圆角胶囊按钮，和 .chip（纯展示用）区分开 —— 它是**可点的** */
+.chip-btn {
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted-foreground);
+  padding: 4px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  transition: color .2s ease, border-color .2s ease, background-color .2s ease;
+}
+.chip-btn:hover:not(:disabled) { color: var(--foreground); border-color: color-mix(in srgb, var(--primary) 45%, var(--line)); }
+.chip-btn.on {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--foreground);
+  border-color: color-mix(in srgb, var(--primary) 55%, var(--line));
+}
+.chip-btn:disabled { opacity: .45; cursor: not-allowed; }
+.cls-rej {
+  background: var(--panel); border: 1px solid var(--line); color: var(--foreground);
+  border-radius: 7px; padding: 3px 8px; font-size: 12px; width: 148px;
+}
+
 /* 设备表分组表头：把同一班的机器在视觉上圈成一段，但不喧宾夺主 */
 tr.dev-group > td {
   background: var(--panel2);

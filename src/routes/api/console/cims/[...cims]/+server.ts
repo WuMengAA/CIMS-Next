@@ -54,8 +54,23 @@ const ALLOW = [
  * 返回 null 表示这是纯读请求，只校验 viewConsole（等级轴）。
  */
 function requiredTier(rel: string, method: string, body: string | undefined): DeviceTier | null {
+	// ---- 审核队列：是「读」，但读的是全校待审班级（含他人提交的班号与属主）----
+	// 比普通只读敏感，因此**刻意放在下面的 GET→watch 放宽之前**，显式要求 manage。
+	// （后端 list_pending_classes 另有 403 兜底；这里是第二道门。）
+	if (/^\/class\/pending$/.test(rel)) return "manage";
+
 	if (method === "GET" || rel === "/user/auth") return null;
 	if (body && body.includes("stelarith_task")) return "remote";
+	// ---- 班级（#182 文件夹式：建班 / 审核 / 预览 / 切班）----
+	// 建班：电教委员、老师也必须能**登记自己的班**（后端落 pending 待审，不是直接生效）。
+	// 若沿用下面的 manage 兜底，就只有站长建得了班 —— 于是后端精心设计的
+	// 「普通用户建 → 待审」这条路永远走不到，审核队列永远是空的。
+	if (/^\/class\/create$/.test(rel)) return "control";
+	// 批准/驳回一个班 = 给它开「绑设备 + 下发」的口子 → manage。
+	if (/^\/class\/[^/]+\/review$/.test(rel)) return "manage";
+	// 班级预览图是本班自己的门面，随班维护 → control。
+	// （必须排在 activate 之前无差别，只因两者都是 /class/{id}/<动作> 形态。）
+	if (/^\/class\/[^/]+\/preview$/.test(rel)) return "control";
 	// 远程切班：电教委员的日常动作（把本班大屏切到某份课表），control 档即可。
 	// 单独拎出来是因为它落在 /class/ 下，若不特判会被下面的 manage 兜底拦掉。
 	if (/^\/class\/[^/]+\/activate$/.test(rel)) return "control";

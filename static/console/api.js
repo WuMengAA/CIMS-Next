@@ -139,8 +139,19 @@
         },
       });
       if (res.status === 401) { clearAuth(); throw new Error("未授权，请重新登录"); }
-      if (!res.ok) throw new Error("HTTP " + res.status);
       const txt = await res.text();
+      if (!res.ok) {
+        // 把上游的 error/detail 带进异常正文。只报「HTTP 400」会让调用方
+        // 完全无从知道是「班级重名」「无权限」还是「参数缺失」——这些恰恰是
+        // 用户要照着改的东西，而它们全都藏在被丢掉的那个响应体里。
+        let why = "";
+        try {
+          const j = JSON.parse(txt);
+          why = j.error || j.detail || j.message || "";
+        } catch (_) { /* 非 JSON 错误页：保持空，只报状态码 */ }
+        if (why && typeof why === "object") why = JSON.stringify(why);
+        throw new Error("HTTP " + res.status + (why ? "：" + why : ""));
+      }
       return txt ? JSON.parse(txt) : {};
     } finally { clearTimeout(t); }
   }
@@ -175,6 +186,25 @@
     } catch (e) {
       markOffline((e && e.message) ? e.message : String(e));
       return {};
+    }
+  }
+
+  // 变更类调用的严格版：失败**必须抛出**。
+  //
+  // 为什么不能复用 cims()：cims() 把异常吞掉、返回 {}，是为了让「读」路径
+  // 在拿不到数据时能显示空列表 + 离线横幅。但同一行为用在「写」路径上，
+  // 就会把「没建成」显示成「已创建」—— 用户以为班级已经有了，其实什么都没发生。
+  // 集控里这类假成功比报错危险得多，所以写操作一律走这里。
+  async function cimsThrow(path, opts) {
+    if (wantDemo()) return { status: "demo" };
+    if (!canUseBackend()) throw new Error("未连接后端，操作未执行");
+    try {
+      const r = await reqTo(state.mgmtHost, path, opts);
+      markOnline();
+      return r;
+    } catch (e) {
+      markOffline((e && e.message) ? e.message : String(e));
+      throw e;
     }
   }
 
@@ -1254,6 +1284,60 @@
         const r = await cims("/class/device-map", {}, null);
         return r && typeof r === "object" ? r : { devices: {}, classes: [] };
       } catch (_) { return { devices: {}, classes: [] }; }
+    },
+
+    // ---- 文件夹式班级：创建 / 审核 / 详情（#182）----
+    //
+    // 与「课表资源」的关键区别：班级现在是**独立实体**（有自己的主键、编号、
+    // 属主、审核态），不再由课表文件派生。所以「建一个班」不再是「导入一份课表」，
+    // 而是一次 `POST /class/create`：
+    //   · 结构化入参 = `graduation_year` + `class_number`
+    //     → 主键 `class_2025_3`、编号 `2025届3班`（确定性、人可读、租户内唯一）；
+    //   · 审核人（管理员/所有者）建 → 直接 `approved`；
+    //     普通用户建 → `pending`，**过审前不能绑设备/下发**。
+    createClass: async ({ graduationYear, classNumber, name } = {}) => {
+      const qs = new URLSearchParams();
+      if (graduationYear !== undefined && graduationYear !== null && graduationYear !== "")
+        qs.set("graduation_year", String(graduationYear));
+      if (classNumber !== undefined && classNumber !== null && classNumber !== "")
+        qs.set("class_number", String(classNumber));
+      if (name) qs.set("name", String(name));
+      return cimsThrow(`/class/create?${qs.toString()}`, { method: "POST", body: "{}" });
+    },
+
+    /**
+     * 待审核班级队列（仅审核人可见；越权时后端返 403）。
+     *
+     * 返回 `{count, classes:[…]}`。失败时返回空队列而**不抛错** ——
+     * 这是「读」路径：没有队列与拿不到队列在界面上的表现都是「暂时没有待审」，
+     * 但 offline 横幅会同时亮起，用户不会误以为真的没人申请。
+     */
+    listPendingClasses: async () => {
+      if (wantDemo()) return { count: 0, classes: [] };
+      if (!canUseBackend()) return { count: 0, classes: [] };
+      try {
+        const r = await reqTo(state.mgmtHost, "/class/pending");
+        markOnline();
+        return (r && Array.isArray(r.classes)) ? r : { count: 0, classes: [] };
+      } catch (_) { return { count: 0, classes: [] }; }
+    },
+
+    /** 审核班级：`action` = `approve` | `reject`，`reason` 仅驳回时有意义。 */
+    reviewClass: async (classId, action, reason) =>
+      cimsThrow(`/class/${encodeURIComponent(classId)}/review`, {
+        method: "POST",
+        body: JSON.stringify({ action, reason: reason || "" }),
+      }),
+
+    /** 单个班级详情（含审核信息与设备归属），失败返 null。 */
+    classDetail: async (classId) => {
+      if (wantDemo()) return null;
+      if (!canUseBackend()) return null;
+      try {
+        const r = await reqTo(state.mgmtHost, `/class/${encodeURIComponent(classId)}`);
+        markOnline();
+        return r && typeof r === "object" ? r : null;
+      } catch (_) { return null; }
     },
 
     // ---- 设备 ↔ 班级 绑定（一键指派下拉的真实落点）----

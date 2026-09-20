@@ -102,6 +102,9 @@
   /** 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。 */
   const VIEW_NEED = {
     schedule: "control", config: "control", plugins: "manage",
+    // 班级管理：看+登记班级是电教委员/老师的日常（control）；
+    // 页内的「审核」按钮另加 data-need="manage" 二次门控，不把整页锁死。
+    classes: "control",
     devices: "control", remote: "remote", notify: "control",
     report: "issue", bug: "issue",
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
@@ -782,6 +785,203 @@
           </div>
         </div>
       </div>`;
+  };
+
+  // ============ 班级管理：文件夹式 + 快捷选择（#182）============
+  //
+  // 为什么要有这一页：班级在 #177 之后是**独立实体**（主键/编号/属主/审核态），
+  // 不再由课表文件派生。但面板此前只有顶栏一个下拉 —— 于是「建一个班」
+  // 「看哪些班待我审」「这个班到底绑了几台设备」在界面上完全没有落点，
+  // 只能靠直接打后端接口。这一页把这些补齐。
+  //
+  // 数据来源刻意用 `/class/list` 的**原始记录**（listClassEntities），而不是
+  // 已经为下拉裁剪过的 listClasses：审核态、属主、届/班号都在原始记录里，
+  // 下拉那份为了显示人话把不少字段丢了。
+  let classAdminCache = [];
+
+  /** 审核态 → 徽标（后端值见 class_model.REVIEW_*：pending/approved/rejected）。 */
+  const REVIEW_BADGE = {
+    approved: { text: "已审核", cls: "ok" },
+    pending: { text: "待审核", cls: "warn" },
+    rejected: { text: "已驳回", cls: "err" },
+  };
+
+  /**
+   * 该班能否被「设为当前班级」。
+   * 两个条件缺一不可：过审（未过审的班不该被下发）+ 有课表资源
+   * （没有资源时选中它 = 课表页打开是空白，而标题显示一个与班级无关的资源名）。
+   */
+  function classSelectable(c) {
+    return !!c && c.review_status === "approved" && !!c.class_plan && !/^default_/i.test(c.class_plan);
+  }
+
+  /** 设为当前班级（快捷选择与卡片按钮共用；手动选过就不再被自动校准覆盖）。 */
+  function pickClass(classId) {
+    const rec = classAdminCache.find((c) => c.class_id === classId);
+    if (!rec) { toast("找不到该班级，请刷新后重试"); return false; }
+    if (!classSelectable(rec)) {
+      toast(rec.review_status !== "approved" ? "该班尚未通过审核，不能作为当前班级" : "该班还没有课表资源，无法切换");
+      return false;
+    }
+    API.setClass(rec.class_plan);
+    classAutoChosen = false;   // 用户明确选过：后续 syncClassSelection 不再覆盖
+    const sel = $("#class-select");
+    if (sel) sel.value = API.state.classId;
+    toast(`已切换到 ${rec.code || rec.name || rec.class_id}`);
+    return true;
+  }
+
+  views.classes = async () => {
+    const canReview = allow("manage");
+    const [raw, pending] = await Promise.all([
+      API.listClassEntities(),
+      // 审核队列要求 manage 档：没有权限就**不发**这个请求 ——
+      // 每次开页都打一次 403，会被 CCProtectMiddleware 累计成同 IP 封禁，
+      // 而封禁期间**连命令轮询都会被拒**（面板整体假死）。
+      canReview ? API.listPendingClasses() : Promise.resolve({ count: 0, classes: [] }),
+    ]);
+    classAdminCache = Array.isArray(raw) ? raw : [];
+    const list = classAdminCache;
+
+    // 文件夹式分组：按「届」归拢；无届的历史班单独一个文件夹（不静默丢掉）。
+    const groups = new Map();
+    for (const c of list) {
+      const k = c.graduation_year ? String(c.graduation_year) : "";
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(c);
+    }
+    // 高届在前（新班在上）；「未分届」永远排最后（它是历史遗留，不是待办重点）。
+    const keys = [...groups.keys()].sort((a, b) => {
+      if (!a) return 1;
+      if (!b) return -1;
+      return Number(b) - Number(a);
+    });
+
+    const cur = API.state.classId;
+    const selectable = list.filter(classSelectable);
+    const defYear = new Date().getFullYear();
+
+    const folderHtml = keys.length
+      ? keys
+          .map((k) => {
+            const items = groups.get(k).slice().sort(
+              (a, b) =>
+                (a.class_number || 0) - (b.class_number || 0) ||
+                String(a.code || a.name || "").localeCompare(String(b.code || b.name || ""), "zh-Hans-CN")
+            );
+            const devTotal = items.reduce((n, c) => n + (c.device_count || 0), 0);
+            const cards = items
+              .map((c) => {
+                const badge = REVIEW_BADGE[c.review_status] || { text: c.review_status || "未知", cls: "" };
+                const isCur = !!c.class_plan && c.class_plan === cur;
+                const canPick = classSelectable(c);
+                const whyNot = c.review_status !== "approved"
+                  ? "尚未通过审核，不能作为当前班级"
+                  : (!c.class_plan ? "该班还没有课表资源" : "该班课表资源是全校共享的默认资源，需先导入自己的课表");
+                return `
+                  <article class="cls-card ${isCur ? "current" : ""}">
+                    <header>
+                      <b>${esc(c.code || c.name || c.class_id)}</b>
+                      <span class="tag ${badge.cls}">${esc(badge.text)}</span>
+                    </header>
+                    <div class="cls-meta">
+                      <span><i>主键</i><em>${esc(c.class_id || "—")}</em></span>
+                      <span><i>课表</i><em>${esc(c.class_plan || "（尚未生成）")}</em></span>
+                      <span><i>设备</i><em>${c.device_count || 0} 台</em></span>
+                      <span><i>属主</i><em>${esc(c.owner_user_id || "系统 / 无属主")}</em></span>
+                    </div>
+                    ${c.review_status === "rejected" && c.reject_reason
+                      ? `<div class="muted" style="font-size:12px;color:var(--err)">驳回原因：${esc(c.reject_reason)}</div>`
+                      : ""}
+                    <div class="cls-act">
+                      <button class="chip-btn ${isCur ? "on" : ""}" data-act="cls-pick" data-id="${esc(c.class_id)}"
+                        ${canPick ? "" : `disabled title="${esc(whyNot)}"`}>
+                        ${isCur ? "当前班级" : "设为此班"}
+                      </button>
+                      <button class="chip-btn" data-act="cls-devices" data-id="${esc(c.class_id)}"
+                        title="到「设备控制」页按该班筛选">看设备</button>
+                    </div>
+                  </article>`;
+              })
+              .join("");
+            return `
+              <section class="cls-folder">
+                <header>
+                  <b>${esc(k ? k + " 届" : "未分届（历史班级）")}</b>
+                  <span class="muted">${items.length} 个班 · ${devTotal} 台设备</span>
+                </header>
+                <div class="cls-cards">${cards}</div>
+              </section>`;
+          })
+          .join("")
+      : `<div class="card"><p class="muted">该账户下还没有班级。用上面的表单登记一个；若是首次接入，可直接从「ClassIsland 专页」导入官方档案一次切出全部班级。</p></div>`;
+
+    // 快捷选择条：只列**可选**的班，是「今天要看哪个班」的最短路径。
+    const quickHtml = selectable.length
+      ? selectable
+          .map((c) => {
+            const on = c.class_plan === cur;
+            return `<button class="chip-btn ${on ? "on" : ""}" data-act="cls-pick" data-id="${esc(c.class_id)}"
+              title="课表资源：${esc(c.class_plan)}">${esc(c.code || c.name || c.class_id)}</button>`;
+          })
+          .join(" ")
+      : `<span class="muted">暂无可切换的班级（需「已审核」且已生成自己的课表资源）</span>`;
+
+    // 待审队列（manage 档可见）。驳回原因走行内输入框而非 prompt()：
+    // prompt 在部分 webview 里被禁用，而「驳回」恰恰需要留下理由给申请人看。
+    const pendingHtml = !canReview
+      ? ""
+      : `
+      <div class="card"><h3>待审核班级 <span class="tag ${pending.count ? "warn" : ""}">${pending.count || 0}</span></h3>
+        ${
+          (pending.classes || []).length
+            ? `<table><thead><tr><th>班级</th><th>届 / 班号</th><th>提交人</th><th>驳回原因</th><th>操作</th></tr></thead><tbody>
+          ${(pending.classes || [])
+            .map(
+              (p) => `<tr>
+            <td><b>${esc(p.code || p.name || p.class_id)}</b><br><span class="muted" style="font-size:12px">${esc(p.class_id)}</span></td>
+            <td>${esc(String(p.graduation_year ?? "—"))} / ${esc(String(p.class_number ?? "—"))}</td>
+            <td class="muted">${esc(p.owner_user_id || "—")}</td>
+            <td><input class="cls-rej" data-rej="${esc(p.class_id)}" placeholder="（可选）" aria-label="驳回原因" /></td>
+            <td class="row">
+              <button class="chip-btn" data-act="cls-approve" data-id="${esc(p.class_id)}">通过</button>
+              <button class="chip-btn" data-act="cls-reject" data-id="${esc(p.class_id)}">驳回</button>
+            </td>
+          </tr>`
+            )
+            .join("")}
+          </tbody></table>
+          <p class="muted" style="margin-top:8px">通过后该班才可被绑定设备、下发课表与广播。驳回请尽量写明原因 —— 它是申请人唯一能看到的反馈。</p>`
+            : `<p class="muted">暂无待审班级。</p>`
+        }
+      </div>`;
+
+    return `
+      <div class="card"><h3>快捷选择</h3>
+        <p class="muted">点一个班即把它设为<b>当前班级</b>——课表、配置下发、广播定向都以它为准（等价于顶栏下拉，但不用先滚回顶部）。</p>
+        <div class="row wrap" style="margin-top:8px">${quickHtml}</div>
+      </div>
+
+      <div class="card"><h3>登记新班级</h3>
+        <div class="row" style="margin-top:4px">
+          <label class="muted">届 <input id="cls-year" type="number" min="2000" max="2100" value="${defYear}" style="width:88px" aria-label="届" /></label>
+          <label class="muted">班号 <input id="cls-num" type="number" min="1" max="99" style="width:74px" aria-label="班号" /></label>
+          <label class="muted">名称（可选） <input id="cls-name" type="text" placeholder="留空则用「届+班号」" style="width:170px" aria-label="班级名称" /></label>
+          <button class="chip-btn" data-act="cls-create" data-need="control">创建班级</button>
+        </div>
+        <p class="muted" style="margin-top:8px">
+          主键与编号由「届 + 班号」确定性生成（<code>2025</code> + <code>3</code> → <code>class_2025_3</code> / <code>2025届3班</code>），
+          因此重名会直接报冲突，不会悄悄建出两个「3班」。
+          ${canReview ? "你具备审核权，创建后<b>直接生效</b>。" : "创建后进入<b>待审核</b>状态，通过审核前不能绑定设备。"}
+        </p>
+      </div>
+
+      ${pendingHtml}
+
+      <div class="card"><h3>班级（按届归拢）</h3>
+        <p class="muted">共 ${list.length} 个班级，其中 ${selectable.length} 个可用于切换。同一届的班放在同一个文件夹里，便于「这一届还有哪些班没接入」一眼看出来。</p>
+      </div>
+      <div class="cls-folders">${folderHtml}</div>`;
   };
 
   views.voicehub = async () => {
@@ -1931,6 +2131,57 @@
       if (act === "reload") return go(current);
       // 通用跳转：任意按钮都能把用户送到另一个视图（免得为了"去某页"写一个专用 action）
       if (act === "go") return go(el.dataset.v);
+      // ---- 班级管理（#182 文件夹式 + 快捷选择）----
+      if (act === "cls-pick") {
+        if (!allow("control")) return toast("无权限：设备控制");
+        if (pickClass(el.dataset.id)) return go(current);
+        return;
+      }
+      if (act === "cls-devices") {
+        // 不做二次请求：设备页自己带按班级分组 + 搜索，把搜索词预置好跳过去即可。
+        const rec = classAdminCache.find((c) => c.class_id === el.dataset.id);
+        devQuery = rec ? (rec.code || rec.name || "") : "";
+        return go("devices");
+      }
+      if (act === "cls-create") {
+        if (!allow("control")) return toast("无权限：设备控制");
+        const y = Number(($("#cls-year") || {}).value || 0);
+        const n = Number(($("#cls-num") || {}).value || 0);
+        const nm = (($("#cls-name") || {}).value || "").trim();
+        if (!y || !n) return toast("请填写「届」与「班号」");
+        el.disabled = true;
+        try {
+          const r = await API.createClass({ graduationYear: y, classNumber: n, name: nm });
+          toast((r && r.message) || "班级已创建");
+          await loadClasses();
+          go("classes");
+        } catch (err) {
+          // 建班是**写**操作：重名 / 无权限 / 未连后端都必须说出来。
+          // 静默失败在这里代价最大 —— 用户会以为班已经建好了，转头去绑设备。
+          toast("创建失败：" + ((err && err.message) || err));
+        } finally { el.disabled = false; }
+        return;
+      }
+      if (act === "cls-approve" || act === "cls-reject") {
+        if (!allow("manage")) return toast("无权限：设备管理");
+        const id = el.dataset.id || "";
+        const action = act === "cls-approve" ? "approve" : "reject";
+        let reason = "";
+        if (action === "reject") {
+          const inp = document.querySelector('[data-rej="' + id + '"]');
+          reason = ((inp && inp.value) || "").trim();
+        }
+        el.disabled = true;
+        try {
+          const r = await API.reviewClass(id, action, reason);
+          toast((r && r.message) || (action === "approve" ? "已通过审核" : "已驳回"));
+          await loadClasses();
+          go("classes");
+        } catch (err) {
+          toast("审核失败：" + ((err && err.message) || err));
+        } finally { el.disabled = false; }
+        return;
+      }
       // 设备表：分组 ↔ 平铺。顺序变了必须重渲染，但重渲染后要立刻把筛选套回去，
       // 否则用户输入的关键词会看起来"失效了一次"。
       if (act === "dev-group") {
