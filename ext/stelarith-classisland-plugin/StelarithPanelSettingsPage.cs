@@ -62,6 +62,10 @@ public class StelarithPanelSettingsPage : SettingsPageBase
     // OOBE 引导横幅：本机尚未绑定班级时渲染，把"去面板绑定"显式告诉电教委员。
     private Border _oobEBorder = null!;
     private TextBlock _oobEText = null!;
+    // OOBE 自助绑定（#183 收口）：班级下拉 + 绑定/解绑按钮
+    private ComboBox _oobEClassBox = null!;
+    private StackPanel _oobEButtons = null!;
+    private readonly List<StelarithOobE.ClassSuggestion> _oobEClassCache = new();
 
     private DispatcherTimer? _timer;
 
@@ -113,13 +117,29 @@ public class StelarithPanelSettingsPage : SettingsPageBase
         root.Children.Add(SectionHeader("设备运行状态"));
         // OOBE 引导横幅（默认隐藏，未绑定班级时由 RefreshStatus 显示）
         _oobEText = Body("", 1.0, 14, wrap: true);
+        _oobEClassBox = new ComboBox
+        {
+            FontSize = 13,
+            MinWidth = 220,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            IsVisible = false,
+        };
+        _oobEButtons = new StackPanel { Spacing = 6, Orientation = Orientation.Horizontal, IsVisible = false };
+        var bindBtn = Btn("绑定班级", () => OobEBind());
+        var unbindBtn = Btn("解绑班级", () => OobEUnbind());
+        _oobEButtons.Children.Add(bindBtn);
+        _oobEButtons.Children.Add(unbindBtn);
+        var oobECard = new StackPanel { Spacing = 8 };
+        oobECard.Children.Add(_oobEText);
+        oobECard.Children.Add(_oobEClassBox);
+        oobECard.Children.Add(_oobEButtons);
         _oobEBorder = new Border
         {
             BorderThickness = new Avalonia.Thickness(3, 0, 0, 0),
             Padding = new Avalonia.Thickness(10, 8),
             BorderBrush = StelarithTheme.ForState(false),
             Background = StelarithTheme.CardBackground,
-            Child = _oobEText,
+            Child = oobECard,
             IsVisible = false,
         };
         root.Children.Add(_oobEBorder);
@@ -365,12 +385,16 @@ public class StelarithPanelSettingsPage : SettingsPageBase
             if (StelarithOobE.Unbound)
             {
                 _oobEBorder.IsVisible = true;
-                _oobEText.Text = "⚠ 本机尚未绑定班级：请打开集控面板 → 设备控制 → 本设备 → 选择班级完成绑定。"
-                    + "绑定前将停留在默认档案，收不到本班课表与定向广播。";
+                _oobEText.Text = "⚠ 本机尚未绑定班级：选择下方班级并点「绑定班级」，"
+                    + "即可完成自助注册（仅可选已审核的班级）。绑定前将停留在默认档案，"
+                    + "收不到本班课表与定向广播。";
+                RefreshOobEClassBox();
             }
             else
             {
                 _oobEBorder.IsVisible = false;
+                _oobEClassBox.IsVisible = false;
+                _oobEButtons.IsVisible = false;
             }
 
             // ④ 下发同步
@@ -405,6 +429,99 @@ public class StelarithPanelSettingsPage : SettingsPageBase
     }
 
     private static string OnOff(string moduleId) => StelarithModules.IsEnabled(moduleId) ? "已启用" : "已停用";
+
+    /// <summary>
+    /// 把服务端回读的可选班级（<see cref="StelarithOobE.Suggestions"/>）刷进下拉。
+    /// 增量刷新：缓存里已有同 id 就复用原项，避免每次重建 ComboBoxItem 造成选择态丢失。
+    /// </summary>
+    private void RefreshOobEClassBox()
+    {
+        try
+        {
+            var list = StelarithOobE.Suggestions ?? new List<StelarithOobE.ClassSuggestion>();
+            // 与缓存对比，仅在新清单出现变化时重建
+            var keyChanged = list.Count != _oobEClassCache.Count
+                || list.Any(s => !_oobEClassCache.Any(c => c.ClassId == s.ClassId && c.Name == s.Name));
+            if (!keyChanged) return;
+
+            _oobEClassCache.Clear();
+            _oobEClassCache.AddRange(list);
+            _oobEClassBox.Items.Clear();
+            foreach (var s in list)
+            {
+                var label = string.IsNullOrWhiteSpace(s.Code)
+                    ? s.Name
+                    : $"{s.Code} · {s.Name}";
+                _oobEClassBox.Items.Add(new ComboBoxItem
+                {
+                    Content = label,
+                    Tag = s.ClassId,
+                    IsEnabled = s.Selectable,
+                });
+            }
+            _oobEClassBox.IsVisible = list.Count > 0;
+            _oobEButtons.IsVisible = true;
+            if (list.Count > 0) _oobEClassBox.SelectedIndex = 0;
+        }
+        catch (Exception ex)
+        {
+            Toast("刷新可选班级失败：" + ex.Message);
+        }
+    }
+
+    /// <summary>OOBE 自助绑定：把下拉选中的班级注册到 CIMS（一班一号，服务端校验审核态）。</summary>
+    private void OobEBind()
+    {
+        var selected = _oobEClassBox.SelectedItem as ComboBoxItem;
+        var classId = selected?.Tag as string;
+        if (string.IsNullOrWhiteSpace(classId))
+        {
+            Toast("请先在下方选择一个班级。");
+            return;
+        }
+        var label = selected?.Content?.ToString() ?? classId;
+        _ = Task.Run(() =>
+        {
+            var (ok, err) = StelarithStatusReporter.RegisterClass(classId);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (ok)
+                {
+                    Toast($"已绑定 {label}；正在拉取本班课表…");
+                    StelarithSyncState.RequestRefresh();
+                    StelarithStatusBridge.RequestImmediateReport();
+                    RefreshStatus();
+                }
+                else
+                {
+                    Toast($"绑定失败：{err}");
+                }
+            });
+        });
+    }
+
+    /// <summary>OOBE 解绑：解除本机与当前班级的绑定（之后回读 bound=false，引导重新弹出）。</summary>
+    private void OobEUnbind()
+    {
+        _ = Task.Run(() =>
+        {
+            var (ok, err) = StelarithStatusReporter.UnregisterClass();
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (ok)
+                {
+                    Toast("已解绑班级；可重新选择并绑定。");
+                    StelarithSyncState.RequestRefresh();
+                    StelarithStatusBridge.RequestImmediateReport();
+                    RefreshStatus();
+                }
+                else
+                {
+                    Toast($"解绑失败：{err}");
+                }
+            });
+        });
+    }
 
     private static string Humanize(TimeSpan span)
     {

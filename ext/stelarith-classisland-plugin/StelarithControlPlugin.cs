@@ -196,6 +196,39 @@ public class StelarithTask
     [System.Text.Json.Serialization.JsonPropertyName("modules")]
     public System.Collections.Generic.Dictionary<string, bool>? Modules { get; set; }
 
+    // ---- 互动广播（interactive_notice 动作）----
+    // 面板下发互动通知时，把「标题/正文/回执 id/快捷回复预设/是否必须确认」随任务一并打包，
+    // 插件侧开一个带按钮的弹窗（确认 / 回复），回复一键或手输后 POST 回执给 CIMS。
+    // 字段都显式标注 snake_case：集控侧打包用下划线，大小写不敏感解决不了结构差异（同 GroupId 教训）。
+
+    /// <summary>互动通知 id：回执上报时原样带回，管理端据此归组显示。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("notice_id")]
+    public string? NoticeId { get; set; }
+
+    /// <summary>弹窗标题（不填则用广播标题）。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("title")]
+    public string? Title { get; set; }
+
+    /// <summary>弹窗正文（不填则用广播正文）。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("body")]
+    public string? Body { get; set; }
+
+    /// <summary>快捷回复预设文案（一键发送），如 ["收到", "马上处理", "稍后再说"]。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("presets")]
+    public System.Collections.Generic.List<string>? Presets { get; set; }
+
+    /// <summary>是否必须确认：true 时「确认」按钮会上报一条固定回执「已确认」。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("require_ack")]
+    public bool RequireAck { get; set; }
+
+    /// <summary>
+    /// 定时关机计划（schedule_shutdown 动作承载；见 <see cref="StelarithScheduleSpec"/>）。
+    /// 面板下发 → 插件弹「60s 确认窗」→ 教室端确认后原样透传给本地代理落盘+调度。
+    /// 显式标注 snake_case（集控侧打包用下划线，大小写不敏感解决不了结构差异）。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("schedule")]
+    public StelarithScheduleSpec? Schedule { get; set; }
+
     // ---- 未知字段透传（摄像头 / 媒体动作的参数走这里）----
     //
     // 为什么需要它：摄像头抓拍/录像/媒体调取这类动作的参数是**开放集合**
@@ -326,11 +359,26 @@ public static class StelarithDispatch
     }
 
     /// <summary>执行一条指令：本地轻动作或转发本地代理。</summary>
-    public static async Task RunAsync(StelarithTask? task)
+    /// <param name="fallbackTitle">互动通知兜底标题（任务自身未带 title 时用广播标题）。</param>
+    /// <param name="fallbackBody">互动通知兜底正文（任务自身未带 body 时用广播正文）。</param>
+    public static async Task RunAsync(StelarithTask? task, string? fallbackTitle = null, string? fallbackBody = null)
     {
         if (task is null) return;
         switch (task.Action)
         {
+            // 互动广播：弹「确认 / 回复」交互窗，回复（快捷一键 / 手动输入）回执上报 CIMS。
+            // 这是广播语义的增强形态 —— 归「集控播报」模块门控。
+            case "interactive_notice":
+                if (!RequireModule(StelarithModules.Notification, "互动通知")) break;
+                StelarithInteractiveNotice.Show(task, fallbackTitle, fallbackBody);
+                break;
+            // 定时关机（长期计划：每天/每周/一次性/倒计时）：弹「60s 确认窗」，
+            // 教室端确认后才透传给本地代理落盘+调度；拒绝/超时则回执上报并不生效。
+            // 关机类动作统一归「远程控制」模块门控（与一键关机同模块，可一键全关）。
+            case "schedule_shutdown":
+                if (!RequireModule(StelarithModules.RemoteControl, "定时关机")) break;
+                StelarithShutdownScheduler.Show(task);
+                break;
             // 锁屏 / 截屏：本机 OS 级动作，**改由桌面客户端（本地代理）执行**。
             // 插件不再内联调用 OS API —— 减少插件面、避免在宿主进程里做高危动作。
             case "lock":
@@ -388,6 +436,7 @@ public static class StelarithDispatch
                 break;
             case "shell":
             case "reboot":
+            case "shutdown":
                 if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
                 await ForwardToAgentAsync(task, "系统");
                 break;

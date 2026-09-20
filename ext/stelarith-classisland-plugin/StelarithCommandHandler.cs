@@ -180,7 +180,8 @@ public sealed class StelarithCommandHandler
         {
             _logger.LogInformation("Stelarith cmd: SendNotification 含 stelarith_task.action={action}，执行",
                 task.Action);
-            await StelarithDispatch.RunAsync(task);
+            // 互动通知的标题/正文兜底：任务自身没带 title/body 时，用广播的标题与正文
+            await StelarithDispatch.RunAsync(task, title, textContent);
         }
 
         if (!string.IsNullOrWhiteSpace(textContent) && !LooksLikeTaskJson(textContent))

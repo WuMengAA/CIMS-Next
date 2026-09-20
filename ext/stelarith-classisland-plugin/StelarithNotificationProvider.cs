@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Services.NotificationProviders;
 using ClassIsland.Core.Attributes;
@@ -9,7 +12,8 @@ namespace StelarithControlPlugin;
 
 /// <summary>
 /// 星璃·集控「提醒提供方」——把 CIMS 下发的播报/通知落到 ClassIsland 官方提醒系统，
-/// 由宿主在大屏上播放「遮罩 + 正文」，与官方集控 <c>SendNotification</c> 命令语义对齐。
+/// 由宿主在大屏上播放「单行大字播报」（标题+正文一行，字号加大；见 <see cref="Push"/>），
+/// 与官方集控 <c>SendNotification</c> 命令语义对齐。
 ///
 /// 为什么必须继承 <see cref="NotificationProviderBase"/>：
 ///   · 宿主只公开 <c>NotificationProviderBase.ShowNotification(NotificationRequest)</c> 这一个
@@ -72,19 +76,25 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
     }
 
     /// <summary>
-    /// 推一条播报：**遮罩只显示标题（且不设时长）**，正文以「滚动文本浮层」显示并由它携带时长。
-    /// 带同内容去重 + 短时限频。
+    /// 推一条播报：**标题和正文合并为一行大字**，由自绘 <c>TextBlock</c> 直接呈现（不再走
+    /// 官方「遮罩=标题 + 滚动浮层=正文」的两段式）。显示时长挂在遮罩内容自身的
+    /// <c>Duration</c> 上（官方语义中遮罩不设时长、由正文浮层携带；当无正文浮层时，
+    /// 由 <c>NotificationWorkerService</c> 在遮罩时长耗尽后完结整个提醒请求——
+    /// 见其 <c>ProcessNotificationSessionCore</c>：<c>OverlayContent == null</c> 时遮罩结束即
+    /// 请求完成）。
     ///
-    /// <para><b>时长挂在谁身上 —— 曾搞错过，务必看清：</b>
-    /// 官方 <c>ClassIsland/Services/NotificationProviders/ManagementNotificationProvider.cs</c> 的做法是：
-    /// <code>
-    /// MaskContent    = NotificationContent.CreateTwoIconsMask(maskText, rightIcon: "\uE7E7")   // ← 不设 Duration
-    /// OverlayContent = NotificationContent.CreateRollingTextContent(content, seconds * repeatCounts, repeatCounts)
-    /// RequestNotificationSettings = { IsSettingsEnabled = true, IsSpeechEnabled, IsNotificationEffectEnabled,
-    ///                                 IsNotificationSoundEnabled, IsNotificationTopmostEnabled }
-    /// </code>
-    /// 即：**时长属于正文浮层**，遮罩用默认值。旧实现把同一个 Duration 同时写到 MaskContent 与
-    /// OverlayContent 上，等于让遮罩替正文决定显示时间 —— 这正是「不应该是遮罩的时长」所指。</para>
+    /// <para><b>为什么自绘 TextBlock：</b>官方双图标遮罩模板的字号取宿主动态资源
+    /// <c>MainWindowEmphasizedFontSize</c>（偏小，且被宿主设置控制），无法满足「广播字体调大」；
+    /// 而 <c>NotificationContent.Content</c> 是 <c>object</c>，Avalonia 的 <c>ContentPresenter</c>
+    /// 遇到「内容本身就是控件」时直接呈现该控件、不套任何 DataTemplate（官方
+    /// <c>RollingTextTemplate</c> 即以此方式工作）— 因此这里直接构造一个
+    /// <c>TextBlock</c>，字号、单行、省略号全部自控。</para>
+    ///
+    /// <para><b>字号自适应：</b>「标题：正文」合并后的长度决定字号（越长越小），保证
+    /// 短广播以特大字号单行呈现、长广播也能在单行内尽量完整显示；<c>NoWrap</c> +
+    /// 字符省略号兜底，绝不换行撑破大屏。</para>
+    ///
+    /// <para>带同内容去重 + 短时限频。</para>
     ///
     /// <para><paramref name="seconds"/> ≤ 0：取官方默认 5 秒，并在正文较长时按字数**抬高下限**
     /// （只增不减，避免长广播被 5 秒掐断）。&gt; 0：严格照用集控端给的 <c>DurationSeconds</c>。</para>
@@ -121,16 +131,15 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
 
             // 3) 时长策略（官方语义为准）：
             //    · 集控端显式给了 DurationSeconds（>0）→ 严格照用（上限 1 小时，与 CIMS 字段约束一致）；
-            //    · 未指定（≤0）→ 官方默认 5 秒，并**只在正文较长时抬高下限**（只增不减），
-            //      这样长广播不会被 5 秒掐断，短提示也不会长时间占屏。
+            //    · 未指定（≤0）→ 官方默认 5 秒，并**只在内容较长时抬高下限**（只增不减），
+            //      这样长播报不会被 5 秒掐断，短提示也不会长时间占屏。
             var repeat = Math.Max(1, repeatCounts);
             double effective;
             if (seconds > 0) effective = Math.Min(seconds, 3600.0);
             else effective = Math.Max(5.0, 2.5 + (content?.Length ?? 0) * 0.12);
 
-            // 构造 NotificationContent / LucideIconSource 等 Avalonia 控件必须在 UI 线程进行，
-            // 而本方法由后台轮询线程（守护线程/ThreadPool）调用，直接构造会抛 "Call from invalid thread"。
-            // 因此整体 marshal 到 Dispatcher.UIThread 执行。
+            // 构造 Avalonia 控件必须在 UI 线程进行，而本方法由后台轮询线程（守护线程/ThreadPool）
+            // 调用，直接构造会抛 "Call from invalid thread"。整体 marshal 到 Dispatcher.UIThread。
             var effTitle = safeTitle;
             var effContent = content;
             var effDuration = effective;
@@ -140,21 +149,24 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
             {
                 try
                 {
-                    // 遮罩：**不设 Duration**（官方语义）—— 整体显示时间由正文浮层的时长决定。
-                    var mask = NotificationContent.CreateTwoIconsMask(effTitle);
+                    // 「标题：正文」合并为一行（无正文时仅标题）。
+                    var combined = string.IsNullOrWhiteSpace(effContent)
+                        ? effTitle
+                        : effTitle + "：" + effContent;
 
-                    // 正文：滚动文本浮层，时长挂在它身上（duration × repeatCounts，与官方一致）。
-                    NotificationContent? overlay = null;
-                    if (!string.IsNullOrWhiteSpace(effContent))
+                    // 遮罩内容：自绘单行大字 TextBlock（Content=控件 → ContentPresenter 直接呈现，
+                    // 不套官方模板，字号完全自控）。时长挂在遮罩自身（无正文浮层时遮罩结束即请求完成）。
+                    var total = TimeSpan.FromSeconds(effDuration) * effRepeat;
+                    var mask = new NotificationContent(BuildSingleLineTextBlock(combined))
                     {
-                        var total = TimeSpan.FromSeconds(effDuration) * effRepeat;
-                        overlay = NotificationContent.CreateRollingTextContent(effContent!, total, effRepeat);
-                    }
+                        SpeechContent = combined,
+                        Duration = total,
+                    };
 
                     var req = new NotificationRequest
                     {
                         MaskContent = mask,
-                        OverlayContent = overlay,
+                        OverlayContent = null,   // 无滚动浮层：全部内容就在那一行大字里
                     };
 
                     // 只有这些开关来自集控载荷时才写请求级提醒设置（与官方一致）；
@@ -171,8 +183,8 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
 
                     ShowNotification(req);
 
-                    Diag($"Push ok: title={effTitle} contentLen={effContent?.Length ?? 0} " +
-                         $"overlayDuration={effDuration:N1}s×{effRepeat} flags={(effFlags is null ? "宿主默认" : "集控载荷")}");
+                    Diag($"Push ok: oneLine={combined.Length}ch font={BuildSingleLineFontSize(combined.Length)} " +
+                         $"maskDuration={total.TotalSeconds:N1}s flags={(effFlags is null ? "宿主默认" : "集控载荷")}");
                 }
                 catch (Exception ex)
                 {
@@ -184,6 +196,41 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
         {
             Diag("Push dispatch failed: " + ex);
         }
+    }
+
+    /// <summary>
+    /// 构造「一行大字」遮罩文本块：特大字号（随长度自适应）、加粗、单行不换行、超长省略，
+    /// 横纵居中。标题与正文已由调用方合并成 <paramref name="text"/>。
+    /// </summary>
+    private static TextBlock BuildSingleLineTextBlock(string text)
+    {
+        return new TextBlock
+        {
+            Text = text,
+            FontSize = BuildSingleLineFontSize(text.Length),
+            FontWeight = FontWeight.Bold,
+            TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MaxWidth = 1600,
+        };
+    }
+
+    /// <summary>
+    /// 单行大字的字号策略：越短越大（短广播 96 号字震撼呈现），随长度逐档降级，
+    /// 最低 40 号，保证长广播的单行仍可读。相比官方模板的宿主动态资源字号（约
+    /// 32~48）整体抬高一个量级，满足「广播字体调大」。
+    /// </summary>
+    private static double BuildSingleLineFontSize(int textLength)
+    {
+        if (textLength <= 10) return 96;
+        if (textLength <= 20) return 84;
+        if (textLength <= 32) return 72;
+        if (textLength <= 48) return 60;
+        if (textLength <= 72) return 52;
+        if (textLength <= 110) return 46;
+        return 40;
     }
 
     /// <summary>文件诊断：写官方 PluginConfigFolder/logs/ste-notify-diag.log，不依赖宿主 logger。</summary>
