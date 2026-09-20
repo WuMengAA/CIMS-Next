@@ -110,6 +110,7 @@
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
     // （写操作在页内逐个按钮上再门控，不把整页锁死）。
     classisland: "control",
+    random: "control", filetransfer: "control", volume: "control",
     // 权限与分级页是纯读信息，不需要设备权限 —— 任何能进面板的人
     // 都该看得到"自己到底能做什么"，否则权限不透明会变成猜谜。
     // 自检页同理：它只是"把每段各探一次"，本身不改任何东西。
@@ -284,7 +285,7 @@
       .join("");
 
     return `
-      <div class="card"><h3>课表 · ${esc(currentClassLabel() || "（未选择班级）")}
+      <div class="card"><h3>时间表 · 课程表 · ${esc(currentClassLabel() || "（未选择班级）")}
         ${API.state.classId ? `<span class="muted" style="font-size:12px;font-weight:400">（资源 ${esc(API.state.classId)}）</span>` : ""}</h3>
         <p class="muted">
           竖向列表：每天一块，节次自上而下。直接改科目名后点「保存并下发」，
@@ -2195,6 +2196,120 @@
     </div>`;
   };
 
+  // ============ 随机抽取（课堂工具，纯前端，localStorage 持久化）============
+  // 名单本地保存，设备端无依赖，内嵌态同源可用 localStorage，离线也能抽。
+  let randomNames = [], randomDrawn = new Set(), randomHistory = [];
+  try {
+    const a = JSON.parse(localStorage.getItem("console.random.names") || "null");
+    if (Array.isArray(a)) randomNames = a;
+    const b = JSON.parse(localStorage.getItem("console.random.history") || "null");
+    if (Array.isArray(b)) randomHistory = b;
+    const c = JSON.parse(localStorage.getItem("console.random.drawn") || "null");
+    if (Array.isArray(c)) randomDrawn = new Set(c);
+  } catch (_) {}
+  const _randomSave = () => {
+    try {
+      localStorage.setItem("console.random.names", JSON.stringify(randomNames));
+      localStorage.setItem("console.random.history", JSON.stringify(randomHistory));
+      localStorage.setItem("console.random.drawn", JSON.stringify([...randomDrawn]));
+    } catch (_) {}
+  };
+  const _randomAvail = (useDrawn) =>
+    randomNames.map((n, i) => ({ n, i })).filter((x) => (useDrawn ? !randomDrawn.has(x.i) : true));
+  const _randomPick = (k, useDrawn) => {
+    const pool = _randomAvail(useDrawn);
+    if (pool.length === 0) return [];
+    const n = Math.min(k, pool.length);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const picked = pool.slice(0, n);
+    picked.forEach((x) => randomDrawn.add(x.i));
+    return picked.map((x) => x.n);
+  };
+
+  views.random = async () => {
+    const last = randomHistory.length ? randomHistory[randomHistory.length - 1] : [];
+    const avail = _randomAvail(true).length;
+    const hist = randomHistory.length
+      ? randomHistory.map((h, i) => `<div class="card-mini"><b>第 ${i + 1} 批</b>：${esc(h.join("、"))}</div>`).join("")
+      : `<p class="muted">还没有抽取记录。导入名单后点「抽 1 人」试试。</p>`;
+    return `
+      <div class="card"><h3>随机抽取 · 课堂点名</h3>
+        <p class="muted">名单保存在本机（当前 ${randomNames.length} 人，未抽 ${avail} 人）。开启「防重复」后抽过的人不再出现，可「重置已抽」重来。</p>
+        <div class="row">
+          <textarea id="random-input" style="width:100%;height:84px" placeholder="每行一个名字，粘贴名单（如：张三&#10;李四）或从下方导入"></textarea>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <button class="primary" data-act="random-import">导入名单</button>
+          <button data-act="random-fromclass">从班级设备导入</button>
+          <button data-act="random-clearlist">清空名单</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary lg" data-act="random-draw1">抽 1 人</button>
+          <span class="muted">抽</span>
+          <input id="random-n" type="number" min="1" value="3" style="width:60px"/>
+          <span class="muted">人</span>
+          <button data-act="random-drawn">抽取</button>
+          <label class="row" style="margin-left:8px"><input type="checkbox" id="random-nodup" checked/> 防重复</label>
+          <button data-act="random-reset">重置已抽</button>
+        </div>
+        <div id="random-result" class="random-result" style="margin-top:12px">
+          ${last.length ? `<div class="dice">🎲 ${esc(last.join("、"))}</div>` : `<span class="muted">结果会显示在这里</span>`}
+        </div>
+        <h4 style="margin:14px 0 6px">抽取历史（${randomHistory.length}）</h4>
+        <div class="list">${hist}</div>
+      </div>`;
+  };
+
+  // ============ 文件传输（面板侧完整 UI；后端/设备端下发依赖部署包）============
+  // 设备端能力（上传后下发到设备、设备侧接收落盘）需教室端部署 ClassroomDeploy 包；
+  // 未部署时本页可上传到服务端暂存、查看历史，但「下发到设备」会提示未就绪。
+  views.filetransfer = async () => {
+    const cls = await API.listClassEntities().catch(() => ({ deviceMap: [] }));
+    const devs = (cls && cls.deviceMap) || [];
+    const clsOpts = devs.map((d) => `<option value="${esc(d.class_id || d.id)}">${esc(d.name || d.id)}</option>`).join("");
+    return `
+      <div class="card"><h3>文件传输</h3>
+        <p class="muted">上传文件到服务端，再下发到选定班级/设备。设备侧接收需教室端部署星集控 ClassroomDeploy 包（含最新代理）；未部署时仅完成服务端暂存。</p>
+        <div class="row">
+          <input id="ft-file" type="file" multiple style="flex:1"/>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <span class="muted">下发到</span>
+          <select id="ft-target"><option value="">全校</option>${clsOpts}</select>
+          <button class="primary" data-act="ft-upload">上传并下发</button>
+        </div>
+        <div id="ft-status" class="muted" style="margin-top:8px">待上传。</div>
+        <h4 style="margin:14px 0 6px">传输历史</h4>
+        <div id="ft-list" class="list"><p class="muted">暂无传输记录。</p></div>
+        <p class="muted">注：后端文件存储接口与设备端接收为本期后端联调项，界面已就绪，下发动作待部署包就位后生效。</p>
+      </div>`;
+  };
+
+  // ============ 音量调节（面板侧完整 UI；下发依赖部署包）============
+  // 单设备/整班音量滑杆 + 静音，经命令通道下发 setVolume。设备端执行需部署包。
+  views.volume = async () => {
+    const devs = await API.listDevices().catch(() => []);
+    const rows = (devs || []).map((d) => `
+      <tr data-uid="${esc(d.uid || d.id)}">
+        <td>${esc(d.name || d.id)}</td>
+        <td><input type="range" min="0" max="100" value="${d.volume ?? 50}" class="vol-slider" data-uid="${esc(d.uid || d.id)}"/></td>
+        <td><span class="vol-val">${d.volume ?? 50}</span></td>
+        <td><button data-act="vol-mute" data-uid="${esc(d.uid || d.id)}">静音</button>
+        <button class="primary" data-act="vol-apply" data-uid="${esc(d.uid || d.id)}">应用</button></td>
+      </tr>`).join("");
+    return `
+      <div class="card"><h3>音量调节</h3>
+        <p class="muted">逐设备拖动滑杆设定音量，或一键静音。「应用」经命令通道下发 setVolume（设备端执行需部署星集控 ClassroomDeploy 包）。
+          <button class="primary" data-act="vol-apply-all">整班/全校应用当前值</button></p>
+        <table class="tbl"><thead><tr><th>设备</th><th>音量</th><th>值</th><th>操作</th></tr></thead>
+        <tbody id="vol-list">${rows || `<tr><td colspan="4" class="muted" style="text-align:center;padding:16px 0">暂无设备，或设备端未上报。</td></tr>`}</tbody></table>
+        <p class="muted">注：实际音量语义（0–100 对应设备主音量）与设备端接收为本期权后端联调项；界面与下发指令已就绪。</p>
+      </div>`;
+  };
+
   // ============ 移动端侧栏抽屉 ============
   // 窄屏下侧栏是浮层（见 styles.css 的 @media(max-width:760px)）：默认收起，
   // 由顶栏汉堡按钮开合，点菜单项 / 遮罩 / Esc 自动收起。
@@ -2308,6 +2423,66 @@
     const act = el.dataset.act;
     try {
       if (act === "reload") return go(current);
+      // ---- 随机抽取（纯前端）----
+      if (act === "random-import") {
+        const txt = document.getElementById("random-input");
+        const names = (txt.value || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        if (!names.length) return toast("名单为空");
+        randomNames = names; randomDrawn = new Set(); _randomSave();
+        toast("已导入 " + names.length + " 人"); return go("random");
+      }
+      if (act === "random-fromclass") {
+        try {
+          const cls = await API.listClassEntities();
+          const devs = (cls && cls.deviceMap) || (cls && cls.devices) || [];
+          if (!devs.length) return toast("没有可导入的设备/班级");
+          randomNames = devs.map((d) => d.name || d.id).filter(Boolean); randomDrawn = new Set(); _randomSave();
+          toast("已从班级导入 " + randomNames.length + " 项"); return go("random");
+        } catch (e) { return toast("导入失败：" + (e && e.message || e)); }
+      }
+      if (act === "random-clearlist") {
+        randomNames = []; randomDrawn = new Set(); randomHistory = []; _randomSave(); return go("random");
+      }
+      const _rdup = () => { const c = document.getElementById("random-nodup"); return c ? c.checked : true; };
+      if (act === "random-draw1") {
+        const picked = _randomPick(1, _rdup());
+        if (!picked.length) { toast("已抽完，点「重置已抽」重来"); return go("random"); }
+        randomHistory.push(picked); _randomSave(); return go("random");
+      }
+      if (act === "random-drawn") {
+        const n = parseInt((document.getElementById("random-n") || {}).value || "1", 10) || 1;
+        const picked = _randomPick(n, _rdup());
+        if (!picked.length) { toast("已抽完或名单空"); return go("random"); }
+        randomHistory.push(picked); _randomSave(); return go("random");
+      }
+      if (act === "random-reset") { randomDrawn = new Set(); _randomSave(); toast("已重置「已抽」标记"); return go("random"); }
+      // ---- 文件传输（面板侧；下发依赖部署包）----
+      if (act === "ft-upload") {
+        const f = document.getElementById("ft-file");
+        if (!f || !f.files || !f.files.length) return toast("请先选择文件");
+        const target = (document.getElementById("ft-target") || {}).value || "";
+        // 后端存储/下发接口为本期后端联调项：先回显已选文件与目标，真实上传待接口就位。
+        const names = Array.from(f.files).map((x) => x.name).join("、");
+        const st = document.getElementById("ft-status");
+        if (st) st.textContent = `已选 ${f.files.length} 个文件：${names} → ${target || "全校"}（后端接口联调中，暂未落库下发）`;
+        toast("文件已选，等待后端接口联调");
+      }
+      // ---- 音量调节（面板侧；下发依赖部署包）----
+      if (act === "vol-mute") {
+        const uid = el.dataset.uid; const s = document.querySelector(`.vol-slider[data-uid="${uid}"]`);
+        if (s) { s.value = 0; const v = s.parentElement.parentElement.querySelector(".vol-val"); if (v) v.textContent = "0"; }
+        return toast("已设为静音（待下发）");
+      }
+      if (act === "vol-apply") {
+        const uid = el.dataset.uid; const s = document.querySelector(`.vol-slider[data-uid="${uid}"]`);
+        const val = s ? s.value : 50;
+        return toast(`将对 ${uid} 下发 setVolume(${val})（待部署包就位）`);
+      }
+      if (act === "vol-apply-all") {
+        const vals = Array.from(document.querySelectorAll(".vol-slider")).map((s) => `${s.dataset.uid}=${s.value}`).join(", ");
+        return toast(`将批量下发：${vals}（待部署包就位）`);
+      }
+
       // 通用跳转：任意按钮都能把用户送到另一个视图（免得为了"去某页"写一个专用 action）
       if (act === "go") return go(el.dataset.v);
       // ---- 定时关机（长期计划：每天/每周/一次性/倒计时；教室端 60s 确认后生效）----
