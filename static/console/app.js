@@ -281,7 +281,8 @@
       .join("");
 
     return `
-      <div class="card"><h3>课表 · ${esc(API.state.classId || "（未选择班级）")}</h3>
+      <div class="card"><h3>课表 · ${esc(currentClassLabel() || "（未选择班级）")}
+        ${API.state.classId ? `<span class="muted" style="font-size:12px;font-weight:400">（资源 ${esc(API.state.classId)}）</span>` : ""}</h3>
         <p class="muted">
           竖向列表：每天一块，节次自上而下。直接改科目名后点「保存并下发」，
           配置将推送到本班所有设备。科目名需与全校科目表一致（见「配置下发」），
@@ -381,6 +382,16 @@
   /** 设备状态标签：未接入 / 在线 / 离线，三态而不是两态。 */
   const stateTag = (d) => `<span class="tag ${d.stateKind}">${esc(d.stateLabel)}</span>`;
 
+  /**
+   * 「设备」单元格：主机名 + 设备号。
+   *
+   * 主机名走心跳上报，从未上报过的设备没有它 —— 这时**明确写"尚未上报主机名"**，
+   * 而不是把设备号再打印一遍（同一串上下两行，用户会以为名字丢了/是"无"）。
+   */
+  const devCell = (d) =>
+    `<td>${d.hostKnown ? esc(d.host) : `<span class="muted">（尚未上报主机名）</span>`}` +
+    `<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>`;
+
   // 设备表的交互状态**外提**到模块作用域：`go()` 是整块替换 `view.innerHTML`，
   // 状态若留在闭包里，用户输好搜索词点一次「刷新」就白输了 —— 60 班时这很烦。
   let devQuery = "";
@@ -430,7 +441,7 @@
         .join("");
 
     const devRow = ({ d, bound, cls, q }) => `<tr class="dev-row" data-dev-q="${esc(q)}">
-          <td>${esc(d.name)}<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>
+          ${devCell(d)}
           <td><span class="tag ${bound ? "ok" : "warn"}">${esc(cls)}</span></td>
           <td>${esc(d.ip || "—")}</td><td>${esc(d.ver)}</td><td>${esc(d.last)}</td>
           <td>${stateTag(d)}</td>
@@ -533,7 +544,7 @@
             ? ds
                 .map((d) => {
                   const c = classCell(d, map);
-                  return `<tr><td>${esc(d.name)}<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>
+                  return `<tr>${devCell(d)}
           <td><span class="tag ${c.bound ? "ok" : "warn"}">${esc(c.label)}</span></td>
           <td>${esc(d.last)}</td>
           <td>${stateTag(d)}</td>
@@ -598,7 +609,7 @@
         <div class="row" style="align-items:center;gap:8px;margin-bottom:10px">
           <span class="muted">选择设备</span>
           <select id="ci-device" style="min-width:260px">
-            ${ds.map((d) => `<option value="${esc(d.id)}" ${d.id === cur.id ? "selected" : ""}>${esc(d.name)} · ${esc(classCell(d, map).label)} · ${esc(d.stateLabel)}</option>`).join("")}
+            ${ds.map((d) => `<option value="${esc(d.id)}" ${d.id === cur.id ? "selected" : ""}>${esc(d.hostKnown ? d.host : d.id + "（尚未上报主机名）")} · ${esc(classCell(d, map).label)} · ${esc(d.stateLabel)}</option>`).join("")}
           </select>
           <button data-act="ci-reload">刷新状态</button>
         </div>
@@ -2754,15 +2765,82 @@
     await loadClasses(); go("dashboard");
   }
 
+  // ---- 班级选择器 ----
+  //
+  // 这一段是"面板打开时默认在看哪个班"的唯一决策点，历史上错过一次：
+  // 下拉取自 ClassPlan **资源名**且默认取首个 → 打开就是 `default_classplan`
+  // （空信封），用户看到的是「课表有误 / 不是我这个班」。
+  // 现在的规则（按优先级，命中即停）：
+  //   ① 用户已经手动选过（classAutoChosen=false）→ 尊重选择，绝不覆盖；
+  //   ② 账号绑定的班级（PERM.className，如「8班」）能对上 → 用它；
+  //   ③ 有设备的班级（避免默认落在一个空班）；
+  //   ④ 兜底列表首项。
+  let classList = [];        // 最近一次 loadClasses 的结果（渲染标题用）
+  let classAutoChosen = true; // 当前选择是否由系统自动挑的（手动选过就转 false）
+
+  /**
+   * 「账号绑定的班级名」→ 列表中的班级项。
+   * 只做**能确定**的匹配：完全相同 → 去除非数字字符后相同（`8班` == `高一(8)班`）。
+   * 对不上就返回 null，绝不猜 —— 猜错等于把一个班的课表当成另一个班的给人看。
+   */
+  function matchOwnClass(own) {
+    const key = String(own || "").trim();
+    if (!key || !classList.length) return null;
+    // 数字取「去掉前导零」的形式：账号写「8班」、资源名叫 `cp_class08` 时必须能对上，
+    // 否则会退化成"没匹配到"→默认落到别的班。
+    const digits = (s) =>
+      (String(s || "").match(/\d+/g) || []).map((d) => String(Number(d))).join("");
+    const kd = digits(key);
+    return (
+      classList.find((c) => c.name === key) ||
+      classList.find((c) => c.code && c.code === key) ||
+      (kd ? classList.find((c) => digits(c.name) && digits(c.name) === kd) : null) ||
+      (kd ? classList.find((c) => digits(c.id) && digits(c.id) === kd) : null) ||
+      null
+    );
+  }
+
+  /** 当前所选班级的**人话**名称（找不到就退回资源名/空）。 */
+  function currentClassLabel() {
+    const cur = classList.find((c) => c.id === API.state.classId);
+    return cur ? cur.name || cur.id : API.state.classId || "";
+  }
+
   async function loadClasses() {
     const cs = await API.listClasses();
+    classList = cs;
     const sel = $("#class-select");
-    sel.innerHTML = cs.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
-    if (!API.state.classId && cs[0]) API.setClass(cs[0].id);
-    sel.value = API.state.classId || (cs[0] && cs[0].id);
+    sel.innerHTML = cs.length
+      ? cs
+          .map((c) => `<option value="${esc(c.id)}" title="课表资源：${esc(c.id)}">${esc(c.name || c.id)}</option>`)
+          .join("")
+      : `<option value="">（该账户下暂无班级）</option>`;
+
+    // 自动挑选态（用户没手动选过）→ 每次都按账号班级重算一遍：账号班级可能是
+    // 登录后才由 /api/me 补上的，只算一次会永远停在上一次的兜底结果上。
+    // 用户手动选过（classAutoChosen=false）则完全不动，尊重其选择。
+    const stillValid = cs.some((c) => c.id === API.state.classId);
+    if (classAutoChosen || !stillValid) {
+      // `default_classplan` 这类**兜底资源**绝不能作为默认视图：它是一张空信封，
+      // 选中它 = 打开课表页看到空白，且标题显示一个跟班级无关的资源名。
+      // 老后端没给 class_plan 时 listClasses 会退回资源名清单，这里再兜一层。
+      const pickable = cs.filter((c) => c.id && !/^default_/i.test(c.id));
+      const own =
+        matchOwnClass(PERM.className) ||
+        pickable.find((c) => (c.deviceCount || 0) > 0) ||
+        pickable[0] ||
+        null;
+      if (own) { API.setClass(own.id); classAutoChosen = true; }
+      else API.setClass("");
+    }
+    sel.value = API.state.classId || "";
     $("#user-chip").textContent = API.state.demo ? "演示用户" : "已登录";
   }
-  $("#class-select").addEventListener("change", (e) => { API.setClass(e.target.value); go(current); });
+  $("#class-select").addEventListener("change", (e) => {
+    classAutoChosen = false; // 用户明确选过：后续校准不再覆盖
+    API.setClass(e.target.value);
+    go(current);
+  });
   $("#btn-login").addEventListener("click", doLogin);
   $("#btn-demo").addEventListener("click", enterDemo);
 
@@ -2802,10 +2880,32 @@
       if (me.gradeName) PERM.gradeName = me.gradeName;
       if (me.bio) PERM.bio = me.bio;
       renderTopbarIdentity();
+      // 账号班级可能是**登录后**才知道的（宿主没经 query 注入 className 时尤其如此）。
+      // 若当前选择仍是系统自动挑的，就按刚拿到的账号班级校准一次 —— 否则面板会一直
+      // 停在"兜底首个班"，用户看到的就是"课表不是我班的"。
+      await syncClassSelection();
       // 账号资料从「无班级」变为「已绑定」（例如刚在引导卡里保存过），刷新总览去掉引导卡
       if (prevClassEmpty && getClassBound() && current === "dashboard") go("dashboard");
       else if (current === "dashboard") showDashboardOnboard();
     } catch (_) { /* 拉不到就算了，不打断主流程 */ }
+  }
+
+  /**
+   * 用「账号绑定的班级」校准当前选择（**仅自动挑选态**，手动选过一律不动）。
+   *
+   * 为什么单独抽出来：`PERM.className` 有三个来源 —— iframe query 注入、/api/me 回填、
+   * 以及用户在引导卡里刚保存的。三处都要生效，写在一处才不会漏。
+   */
+  async function syncClassSelection() {
+    if (!classAutoChosen) return;
+    if (!classList.length) return;
+    const own = matchOwnClass(PERM.className);
+    if (!own || own.id === API.state.classId) return;
+    API.setClass(own.id);
+    const sel = $("#class-select");
+    if (sel) sel.value = own.id;
+    toast(`已切换到本班课表：${own.name}`);
+    if (current === "schedule" || current === "dashboard") go(current);
   }
   async function showDashboardOnboard() {
     if (getClassBound()) return; // 已有班级绑定，不打扰
@@ -2841,7 +2941,12 @@
         if (card) card.remove();
         renderTopbarIdentity();
         toast("班级信息已保存");
-        if (c) API.setClass("classplan_" + c.replace(/[^0-9]/g, "")); // 联想班级课表名
+        // 绑定完班级 → 让面板同步切到这个班的课表。
+        // 不能靠拼名字（早先这里拼的是 `classplan_8`，而真实资源名是 `cp_class08`，
+        // 拼出来必然取不到 → 课表空白）。做法是：标记为「自动选择」后重新装载班级列表，
+        // 由 matchOwnClass 用**真实班级实体**去对。
+        classAutoChosen = true;
+        await loadClasses();
         go("dashboard");
       } catch (e) {
         err.textContent = "保存失败：" + (e.message || "请稍后重试");

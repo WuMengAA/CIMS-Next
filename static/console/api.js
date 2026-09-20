@@ -507,7 +507,11 @@
     return {
       id: d.client_id,
       name: d.host || d.client_id,
+      // 主机名是**心跳**带回来的：从未上报过的设备（只剩一条 client_profiles 归属记录）
+      // 根本没有 host。此时若拿 client_id 顶上，表格里"设备"列上下两行就是同一个串，
+      // 看起来像"设备名丢了"。所以单列一个 hostKnown 交给渲染层明说。
       host: d.host || "",
+      hostKnown: !!d.host,
       online,
       reported,
       ageSec: typeof d.age_seconds === "number" ? d.age_seconds : null,
@@ -531,7 +535,7 @@
   /** 演示设备补齐新字段（无后端时面板结构仍完整，不报 undefined）。 */
   function demoDevice(d) {
     return Object.assign({
-      host: d.name, reported: true, ageSec: 12, reportedAt: "", classId: "", className: "",
+      host: d.name, hostKnown: true, reported: true, ageSec: 12, reportedAt: "", classId: "", className: "",
       activeGroup: "", modules: {}, plugins: [], extra: {}, stateLabel: d.online ? "在线" : "离线",
       stateKind: d.online ? "ok" : "err",
     }, d, { online: !!d.online });
@@ -674,7 +678,7 @@
           // 空格子 → 保留一个「禁用」占位记录，而不是直接跳过。
           // 直接跳过会让后面的节次整体前移（第 3 节变成第 2 节），
           // 课表的节次位置是有意义的，不能因为某个格子没填就塌缩。
-          classes.push({ SubjectId: "", IsEnabled: false });
+          classes.push({ ...prev, SubjectId: "", IsEnabled: false });
           return;
         }
         let sid = subjectIds[label];
@@ -685,13 +689,20 @@
         }
         if (!sid) {
           dropped.push(`${d.name || d.day} 第${i + 1}节「${label}」`);
-          classes.push({ SubjectId: "", IsEnabled: false });
+          classes.push({ ...prev, SubjectId: "", IsEnabled: false });
           return;
         }
+        // ⚠️ 必须 `...prev` 打底：面板只编辑「科目名」这一个维度，其余字段
+        // （IsChangedClass / IsActive / AttachedObjects …）属于客户端与官方模型，
+        // 面板既不理解也不该丢。曾经这里只显式重建 SubjectId/IsEnabled，
+        // 结果是**每次在面板点一次「保存并下发」都会把所有节次的
+        // IsChangedClass / IsActive 洗掉** —— 本地看不出异常（面板只读科目名），
+        // 但教室端拿到的是被削过的课表。这类「只丢字段、不改节数」的损坏最难发现，
+        // 所以写入方向一律「原样继承 + 只覆盖被编辑的字段」。
         classes.push({
+          ...prev,
           SubjectId: sid,
           IsEnabled: prev.IsEnabled !== false,
-          ...(prev.AttachedObjects ? { AttachedObjects: prev.AttachedObjects } : {}),
         });
       });
 
@@ -795,8 +806,43 @@
       return r;
     },
 
-    // ---- 班级（= 课表资源名）----
+    // ---- 班级（展示用：**班级实体** + 它的课表资源名）----
+    //
+    // 为什么必须用 /class/list 而不是 ClassPlan/list：
+    //   · `ClassPlan/list` 返回的是**资源名**（`default_classplan`, `cp_class01`…）。
+    //     把它当班级下拉用有两个后果：① 用户看到的"班级"是 `cp_class08` 这种机器名，
+    //     而不是「8班」；② 按下标取首个会选中 `default_classplan`（一张空信封），
+    //     症状是「课表页打开是空的 / 显示的不是我这个班」——正是要修的那类问题。
+    //   · `/class/list` 给的是班级实体（`class_08` / `8班`）并附带其课表资源名
+    //     （后端补 `class_plan` 字段），下拉既能显示人话、又能直接取到正确资源。
+    //
+    // 返回值语义：`id` **保持「课表资源名」**（与 state.classId / getSchedule /
+    // putSchedule 的既有契约一致，改语义会连带打断聊天房间号等下游），
+    // 另给 classId / displayCode 供界面显示。
     listClasses: async () => {
+      if (wantDemo()) return D.classes();
+      if (canUseBackend()) {
+        try {
+          const r = await reqTo(state.mgmtHost, "/class/list");
+          if (Array.isArray(r) && r.length) {
+            const mapped = r
+              .map((c) => ({
+                id: c.class_plan || "",
+                name: c.name || c.class_id || "",
+                code: c.code || "",
+                classId: c.class_id || "",
+                displayCode: c.display_code || c.name || c.class_id || "",
+                deviceCount: c.device_count || 0,
+                sortOrder: c.sort_order || 0,
+              }))
+              // 没有课表资源名的班级不进下拉：选中它会用空 name 去取资源，
+              // 客户端只会拿到 404 / 空课表 —— 与其列出来误导人，不如不列。
+              .filter((c) => c.id && c.name)
+              .sort((a, b) => a.sortOrder - b.sortOrder || String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
+            if (mapped.length) return mapped;
+          }
+        } catch (_) { /* 老后端没有 class_plan 字段 → 回退资源名清单，至少不空 */ }
+      }
       const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
       return Array.isArray(r) ? normResources(r) : D.classes();
     },
