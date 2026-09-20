@@ -28,6 +28,13 @@
       secret: cfg.secret,
       roomId: cfg.roomId,
     });
+    // 兑现上面注释里的契约：「已连接并发起 offer」。
+    // ⚠️ 若调用方需要先挂 onTrack/on('startRemote') 再协商，请改用
+    //    getConfig() + 自建实例，不要把本函数当构造器用（会与协商竞态）。
+    await p2p.connect();
+    await p2p.startController(opts && opts.localStream ? opts.localStream : null);
+    return p2p;
+  }
 
   const P2PSignal = { getConfig, createController };
   global.P2PSignal = P2PSignal;
