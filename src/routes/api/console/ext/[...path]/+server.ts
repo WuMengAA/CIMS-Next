@@ -40,7 +40,22 @@ import {
 	// 面板持久化配置（控制 / 媒体 / 实验特性）—— 服务端存储，全校一致
 	getConsoleSettings,
 	saveConsoleSettings,
-	CONSOLE_SETTINGS_KEYS as SETTINGS_KEYS
+	CONSOLE_SETTINGS_KEYS as SETTINGS_KEYS,
+	// ── 设备会话回执（远控/媒体直连）────────────────────────────────────────
+	// ⚠️ 这一组曾**整体漏导入**，导致本路由一被调用就抛
+	//    `ReferenceError: getDeviceSession is not defined` → HTTP 500。
+	// 后果是远控链路在 API 层就断了：教室端代理 POST 回报 VNC 会话时先撞
+	// `verifyDeviceReportSecret` 未定义（500），面板 GET 轮询时撞
+	// `getDeviceSession` 未定义（500）—— 面板永远"等待设备回报会话地址"，
+	// 而设备其实早就报过（或压根没敢报）。表现为「远控没反应」，根因却是
+	// 一行 import 缺失，排查时极容易误判成网络/代理问题。
+	// 教训：本文件是「多端点大杂烩」，新增端点务必核对 import —— TS 不会
+	// 把未定义标识符当编译错误（会被当成全局变量放过）。
+	getDeviceSession,
+	clearDeviceSession,
+	putDeviceSession,
+	listDeviceSessions,
+	verifyDeviceReportSecret
 } from "$lib/server/console-ext.js";
 
 /**
@@ -198,6 +213,20 @@ export async function POST(event: RequestEvent) {
 	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
 	if (path === "vnc-session" || path === "media-session") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
+		// 带了这个头 = 调用方**自称是设备代理**（只有 Rust 代理会发，面板从不发）。
+		// 此时密钥不对必须明确 403，不能落到用户鉴权分支去回「请先登录」——
+		// 那会把「设备密钥配错了」伪装成「登录过期」，而这两件事的排查方向完全相反
+		// （一个去查 CONSOLE_DEVICE_REPORT_SECRET / 代理环境变量，一个去重新登录）。
+		// 缺失该头才落下去，保留面板自身 POST 这个路径的历史行为。
+		if (secret && !verifyDeviceReportSecret(secret)) {
+			return json(
+				{
+					error:
+						"设备密钥无效：x-stelarith-device-secret 与服务端 CONSOLE_DEVICE_REPORT_SECRET 不一致（或服务端未配置，此时一律拒绝）"
+				},
+				{ status: 403 }
+			);
+		}
 		if (verifyDeviceReportSecret(secret)) {
 			const proto = path === "vnc-session" ? "vnc" : "media";
 			const uid = String(body.uid ?? "").trim();
