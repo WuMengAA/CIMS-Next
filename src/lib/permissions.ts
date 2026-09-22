@@ -38,6 +38,7 @@ export type Role =
 	| "editor"
 	| "moderator"
 	| "teacher"
+	| "homeroom"
 	| "user"
 	| "techrep"
 	| "viewer";
@@ -180,6 +181,9 @@ export const ROLE_TITLES: Record<Role, TitleKey[]> = {
 	viewer: ["visitor"],
 	user: ["visitor", "participant"],
 	techrep: ["visitor", "participant", "techcommissioner"],
+	// 班主任：能进面板（viewConsole）+ 参与者 + 广播员（本班/年级广播）。
+	// 设备轴走独立正交轴（ROLE_DEVICE.homeroom = watch/control/remote），与内容称号无关。
+	homeroom: ["visitor", "participant", "broadcaster"],
 	teacher: ["visitor", "participant", "broadcaster"],
 	editor: ["visitor", "participant", "broadcaster", "reviewer", "editor"],
 	moderator: ["visitor", "participant", "broadcaster", "reviewer", "editor"],
@@ -258,6 +262,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 	editor: "编辑",
 	moderator: "审核员",
 	teacher: "老师",
+	homeroom: "班主任",
 	user: "学生",
 	techrep: "电教委员",
 	viewer: "游客"
@@ -307,12 +312,19 @@ export function userCan(
 const ROLE_DEVICE: Record<Role, DeviceTier[]> = {
 	owner: ["watch", "control", "remote", "manage"],
 	admin: ["watch", "control", "remote", "manage"],
-	editor: ["watch", "control"],
-	moderator: ["watch"],
-	teacher: ["watch", "control"],
-	user: ["watch"],
+	// ⚠️ 设备三关铁律（#249，2026-09-21 方案）：能碰设备（**含看画面 watch**）的
+	// 只有 站长(owner/admin) / 班主任(homeroom) / 电教委员(techrep)。其余角色一律
+	// 清空设备档位 —— 不是前端藏，是权限层就没有（本机截图=敏感内容）。
+	editor: [],
+	moderator: [],
+	// 老师（任课教师）2026-09-21 方案：收回全部设备档，连画面都没有。
+	// 之前提档到 remote 与铁律冲突，已回退（带班的设备运维归班主任 homeroom）。
+	teacher: [],
+	user: [],
 	techrep: ["watch", "control", "remote"],
-	viewer: ["watch"]
+	// 班主任：本班设备全部（含远控），与电教委员同档；本班归属由代理层按绑定班级收敛。
+	homeroom: ["watch", "control", "remote"],
+	viewer: []
 };
 
 /** 设备档位高低序（判定「包含」用）。 */
@@ -350,6 +362,8 @@ const ROLE_SCOPE: Record<Role, BroadcastScope | null> = {
 	editor: "school",
 	moderator: "grade",
 	teacher: "grade",
+	// 班主任：本班/年级广播（方案表：本班/年级）
+	homeroom: "grade",
 	techrep: "class",
 	user: "class",
 	viewer: null
@@ -430,6 +444,8 @@ const ROLE_TIER: Record<Role, ManagementTier> = {
 	editor: "school",
 	moderator: "grade",
 	teacher: "grade",
+	// 班主任：管理分级与本班绑定（设备代理层按绑定班级收敛）；广播范围另有 grade。
+	homeroom: "class",
 	techrep: "class",
 	user: "class",
 	viewer: "class"
@@ -492,6 +508,7 @@ const ROLE_LEVEL: Record<Role, Level> = {
 	editor: 5,
 	moderator: 5,
 	teacher: 4,
+	homeroom: 4,
 	techrep: 3,
 	user: 2,
 	viewer: 1
@@ -658,6 +675,7 @@ export const ASSIGNABLE_ROLES: Role[] = [
 	"editor",
 	"moderator",
 	"teacher",
+	"homeroom",
 	"techrep",
 	"user",
 	"viewer"

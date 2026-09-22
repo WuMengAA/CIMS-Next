@@ -24,7 +24,7 @@
 			className: string;
 			gradeName: string;
 			accountId: string;
-			can: { control: boolean; remote: boolean; manage: boolean; issue: boolean };
+			can: { control: boolean; remote: boolean; manage: boolean; issue: boolean; broadcast: boolean };
 			broadcastScopes: string[];
 			userId: number;
 		};
@@ -118,6 +118,7 @@
 			remote: data.can.remote ? "1" : "0",
 			manage: data.can.manage ? "1" : "0",
 			issue: data.can.issue ? "1" : "0",
+			broadcast: data.can.broadcast ? "1" : "0",
 			readonly: data.readonly ? "1" : "0",
 			// 广播可达范围（class/grade/school）逗号分隔：面板据此只列可选范围
 			bscopes: (data.broadcastScopes || []).join(","),

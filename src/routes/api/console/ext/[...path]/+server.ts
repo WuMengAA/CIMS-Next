@@ -88,7 +88,7 @@ const DEVICE_TIERS: DeviceTier[] = ["watch", "control", "remote", "manage"];
  */
 type ConsoleUser = User & { id: number };
 
-function guard(event: RequestEvent, need: Action | DeviceTier = "viewConsole") {
+function guard(event: RequestEvent, need: Action | DeviceTier | "broadcast" = "viewConsole") {
 	const u = verifyToken(event.cookies.get("admin_token"));
 	if (!u) return { error: json({ error: "请先登录" }, { status: 401 }) } as const;
 	// 缺 id 时后续所有以 id 为键的操作都会静默失效，不如在这里明确拒绝。
@@ -100,9 +100,13 @@ function guard(event: RequestEvent, need: Action | DeviceTier = "viewConsole") {
 		return { error: json({ error: "无权限" }, { status: 403 }) } as const;
 	}
 	// 第二道门按 need 的归属走对应轴：设备档位查 canDevice，内容动作查 can。
-	const ok = DEVICE_TIERS.includes(need as DeviceTier)
-		? canDevice(u.role, need as DeviceTier)
-		: userCan(u, need as Action);
+	// broadcast = 复合位：内容轴 sendBroadcast（称号）或设备轴 control 档任一即可。
+	const ok =
+		need === "broadcast"
+			? userCan(u, "sendBroadcast") || canDevice(u.role, "control")
+			: DEVICE_TIERS.includes(need as DeviceTier)
+				? canDevice(u.role, need as DeviceTier)
+				: userCan(u, need as Action);
 	if (!ok) {
 		return { error: json({ error: "无权限" }, { status: 403 }) } as const;
 	}
@@ -269,11 +273,14 @@ export async function POST(event: RequestEvent) {
 	}
 
 	// 写操作权限：按语义分档（越敏感越收紧）
-	//   · notices（向大屏广播）→ device.control：设备级可见操作，电教委员及以上
+	//   · notices（向大屏广播）→ 内容轴 broadcast（sendBroadcast 称号）**或** 设备轴 control 档：
+	//     ⚠️ 设备三关铁律（#249）收回 teacher 的 control 后，老师仍须能发本班通知
+	//     （方案表：teacher = 给本班发消息/广播，广播是内容能力，与设备轴解耦）。
 	//   · chat（班级/年级群发言）→ chatClass/chatGrade：内容轴 L2，注册电教委员即可
 	//   · 其余（audit 等）→ submitIssue：内容轴 L2
-	const need: Action | DeviceTier =
-		path === "notices" ? "control"
+	const isBroadcastable = (u: ConsoleUser) => userCan(u, "sendBroadcast") || canDevice(u.role, "control");
+	const need: Action | DeviceTier | "broadcast" =
+		path === "notices" ? "broadcast"
 		: path === "audit/prune" ? "manage"
 		// settings 决定教室端行为（P2P/压缩/录像保留），属部署级配置 → 设备管理档。
 		: path === "settings" ? "manage"

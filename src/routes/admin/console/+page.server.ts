@@ -42,7 +42,10 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			control: canDevice(u.role, "control"),
 			remote: canDevice(u.role, "remote"),
 			manage: canDevice(u.role, "manage"),
-			issue: userCan(u, "submitIssue")
+			issue: userCan(u, "submitIssue"),
+			// 广播位：内容轴 sendBroadcast（称号）或设备轴 control 档任一。
+			// 设备三关铁律（#249）下 teacher 无 control，但仍须能发本班通知 → 广播走内容轴。
+			broadcast: userCan(u, "sendBroadcast") || canDevice(u.role, "control")
 		},
 		// 广播可达范围（第三维度：能发 ≠ 能发多远）。
 		// 面板据此只列出该账号可选的范围，避免「选了全校却被服务端 403」的挫败感。

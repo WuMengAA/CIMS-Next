@@ -75,6 +75,9 @@
       remote: flag("remote"),
       manage: flag("manage"),
       issue: flag("issue"),
+      // 广播位（2026-09-23 新增）：能发通知/广播 = 内容轴 sendBroadcast 称号
+      // 或设备轴 control 档任一。与设备三关铁律解耦 —— 老师没有设备档也能发本班通知。
+      broadcast: flag("broadcast"),
       // 广播可达范围（class/grade/school）。宿主按角色等级算好后下发；
       // 内嵌态拿不到就视为「仅本班」，宁可少列也不给未授权的大范围。
       bscopes: (q.get("bscopes") || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -83,13 +86,16 @@
     };
     // readonly 有两种来源：宿主显式下发的 readonly=1（只读观看态），
     // 或内嵌但一个设备写权限位都没有 —— 两者归一，避免各自为政。
-    p.readonly = embedded && (flag("readonly") || (!p.control && !p.remote && !p.manage));
+    // ⚠️ 2026-09-23（#249 设备三关）：teacher 收回全部设备档后仍持有 broadcast
+    // （能发本班通知）—— 广播位不算"纯只读"，否则 readonly-mode 会把通知入口
+    // （data-need="broadcast"）一并藏掉，老师连通知都发不了。
+    p.readonly = embedded && (flag("readonly") || (!p.control && !p.remote && !p.manage && !p.broadcast));
     return p;
   })();
 
   // 只读观看态：整体套一层标记，供 CSS 收敛一切写操作入口的样式。
   if (PERM.readonly) document.documentElement.classList.add("readonly-mode");
-  const NEED_LABEL = { control: "设备控制", remote: "远程控制", manage: "设备管理", issue: "提交上报" };
+  const NEED_LABEL = { control: "设备控制", remote: "远程控制", manage: "设备管理", issue: "提交上报", broadcast: "通知广播" };
   /** 设备档位 → 中文（权限页展示用；与 NEED_LABEL 同源但含未用于门控的 watch）。 */
   const NEED_LABEL_DEVICE = { watch: "观看", control: "设备控制", remote: "远程控制", manage: "设备管理" };
   /**
@@ -99,18 +105,35 @@
    */
   const MOD_CORE = new Set(((API && API.MODULE_CATALOG) || []).filter((m) => m.core).map((m) => m.id));
   const allow = (need) => !need || !PERM.embedded || !!PERM[need];
-  /** 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。 */
+  /**
+   * 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。
+   *
+   * **约定：导航里的每个视图都必须在这里有一条**，哪怕是显式的 `null`（表示"任何能进
+   * 面板的人都可看"）。写 null 不是为了形式，而是因为「漏写」与「故意不设限」在代码里
+   * 长得一模一样 —— 只能靠 `_probe/console-identity-check.mjs` 把两者区分开。
+   */
   const VIEW_NEED = {
-    schedule: "control", config: "control", plugins: "manage",
+    // 明确不需要权限：只有总览、权限说明、点歌（点歌的"推送"按钮另行门控）。
+    // chat（师生沟通）2026-09-23 起按 issue 位门控：能参与交流 = 拥有 participant
+    // 称号（它同时授予 submitIssue 与 chatClass），游客/只读观看态不该有沟通入口。
+    dashboard: null, roles: null, chat: "issue", voicehub: null,
+    // 课表 / 点名：纯教学功能（看课表、抽人），不碰设备 —— 任何能进面板的人可用；
+    // 课表里的「保存并下发」按钮另行 data-need="control" 二次门控（下发才碰设备）。
+    schedule: null, random: null,
+    // 通知广播：**内容轴广播能力**（broadcast 位 = sendBroadcast 称号或设备 control 档），
+    // 不与设备轴绑定 —— 老师没有设备档也要能发本班通知（方案表：teacher 发本班消息/广播）。
+    config: "manage", plugins: "manage",
     // 班级管理：看+登记班级是电教委员/老师的日常（control）；
     // 页内的「审核」按钮另加 data-need="manage" 二次门控，不把整页锁死。
     classes: "control",
-    devices: "control", remote: "remote", notify: "control",
+    devices: "control", remote: "remote", notify: "broadcast",
     report: "issue", bug: "issue",
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
     // （写操作在页内逐个按钮上再门控，不把整页锁死）。
     classisland: "control",
-    random: "control", filetransfer: "control", volume: "control",
+    // 定时广播 / 操作日志：都建在"能给设备下指令"之上，按 control 档门控。
+    scheduled: "control", audit: "control",
+    filetransfer: "control", volume: "control",
     // 权限与分级页是纯读信息，不需要设备权限 —— 任何能进面板的人
     // 都该看得到"自己到底能做什么"，否则权限不透明会变成猜谜。
     // 自检页同理：它只是"把每段各探一次"，本身不改任何东西。
@@ -121,6 +144,160 @@
     media: "remote",
   };
 
+  // ============ 身份适配（同一个系统，不同身份，界面不一样）============
+  //
+  // 权限门控回答「**能不能**做」；身份适配回答「**该不该摆在他面前**」。
+  // 这两件事必须分开：一个 L4 老师完全可能有 control 位（能管本班设备），
+  // 但「插件 / 开发者选项 / 配置下发 / ClassIsland 专页」不该出现在他日常的侧栏里
+  // —— 那不是他的工作，摆着只会让他以为"要学的东西这么多"。
+  //
+  // 所以规则是：**能力是底线，身份决定默认**。
+  // 主列表只放这个身份日常用得到的；其余**仍然可用**的入口收进「更多功能」，
+  // 点一下就展开。隐藏的是"注意力占用"，不是"权限"。
+  //
+  // 未识别的身份（role 为空，例如技术人员单独打开面板排障）→ 不收敛，全量平铺，
+  // 免得排障时还得先找菜单。
+  const ROLE_IDENTITY = {
+    owner: { who: "站长", panel: "管理面板", blurb: "全校设备、用户与站点设置" },
+    admin: { who: "站长", panel: "管理面板", blurb: "全校设备、用户与站点设置" },
+    editor: { who: "编辑", panel: "管理面板", blurb: "内容与页面管理" },
+    moderator: { who: "审核员", panel: "管理面板", blurb: "审核内容与权限申请" },
+    teacher: { who: "老师", panel: "教师面板", blurb: "看课表、发本班通知、课堂点名" },
+    // 班主任：本班设备运维主力（设备三关之一，与电教委员同档）。
+    homeroom: { who: "班主任", panel: "班主任面板", blurb: "本班设备与远程控制、本班/年级通知" },
+    techrep: { who: "电教委员", panel: "电教委员面板", blurb: "运维本班设备、处理报修、本班点歌与沟通" },
+    user: { who: "学生", panel: "学生面板", blurb: "查看本班设备状态、提交报修" },
+    viewer: { who: "访客", panel: "只读面板", blurb: "只能观看，不能做任何操作" },
+  };
+
+  /**
+   * 各身份的**主列表**（写在这个身份日常动线里的视图）。
+   * 不在此表内、但权限允许的视图 → 归入「更多功能」。`null` = 不收敛。
+   */
+  const ROLE_PRIMARY = {
+    // 访客/学生：能看的只有总览（设备状态在上面的卡片里）和自己的权限说明。
+    viewer: ["dashboard", "roles"],
+    user: ["dashboard", "chat", "report", "bug", "roles"],
+    // 老师：设备三关铁律下无任何设备档位 —— 只摆课表、通知、点名、沟通等教学动线，
+    // 不再出现「设备控制/远程控制/ClassIsland」入口（点了也 403 的入口是误导）。
+    teacher: ["dashboard", "schedule", "notify", "random", "chat", "report", "bug", "roles"],
+    // 班主任：本班设备运维 + 教学动线（设备三关之一，与电教委员同档）。
+    homeroom: ["dashboard", "schedule", "devices", "remote", "classisland", "notify", "random", "volume", "chat", "report", "bug", "roles"],
+    // 电教委员：设备运维主力 —— 多了远程控制、ClassIsland 状态页、自检（排查"没反应"是日常）。
+    techrep: ["dashboard", "devices", "remote", "classisland", "notify", "chat", "test", "report", "bug", "roles"],
+    // 审核员/编辑无设备档位（设备三关收紧），不摆设备操作入口。
+    moderator: ["dashboard", "chat", "report", "bug", "roles"],
+    editor: ["dashboard", "classes", "notify", "scheduled", "chat", "filetransfer", "roles"],
+    admin: null,
+    owner: null,
+  };
+
+  const IDENT = ROLE_IDENTITY[PERM.role] || null;
+  const PRIMARY_VIEWS = (PERM.role && PERM.role in ROLE_PRIMARY)
+    ? ROLE_PRIMARY[PERM.role]
+    : null;
+  let navMoreOpen = false;
+
+  /** 身份一句话：给顶栏 title / 抽屉身份条用。 */
+  function identityLine() {
+    if (!IDENT) return "";
+    const level = PERM.levelLabel ? PERM.levelLabel + " · " : "";
+    return level + IDENT.who + " — " + IDENT.blurb;
+  }
+
+  /**
+   * 按身份收拾侧栏：品牌副标题改成对应面板名，非主列表项收进「更多功能」。
+   * 正在浏览的那一项永远显示 —— 否则会出现"高亮项消失了"的诡异状态。
+   */
+  function applyIdentityNav() {
+    if (IDENT) {
+      // 「· 电教委员面板」写死会让老师和站长第一眼就怀疑自己进错了地方
+      document.title = "星集控 · " + IDENT.panel;
+      const sub = document.querySelector(".brand .sub");
+      if (sub) sub.textContent = "· " + IDENT.panel;
+      const shSub = document.querySelector(".sidebar-head .sh-sub");
+      if (shSub) shSub.textContent = IDENT.panel;
+      const who = $("#nav-who");
+      if (who) {
+        who.textContent = IDENT.who + " · " + IDENT.blurb;
+        who.hidden = false;
+      }
+    }
+    if (!PRIMARY_VIEWS) return; // 未识别身份 → 不收敛
+    const set = new Set(PRIMARY_VIEWS);
+    const items = document.querySelectorAll("#sidebar .nav[data-view]");
+    let extra = 0;
+    items.forEach((b) => {
+      const isPrimary = set.has(b.dataset.view);
+      const active = b.classList.contains("active");
+      b.classList.toggle("nav-extra", !isPrimary);
+      b.classList.toggle("nav-extra-hide", !isPrimary && !navMoreOpen && !active);
+      if (!isPrimary) extra++;
+    });
+    const btn = $("#nav-more");
+    if (btn) {
+      btn.classList.toggle("hidden", extra === 0);
+      const label = btn.querySelector(".nav-label");
+      if (label) label.textContent = navMoreOpen ? "收起更多功能" : "更多功能（" + extra + "）";
+      btn.setAttribute("aria-expanded", navMoreOpen ? "true" : "false");
+    }
+    refreshGroupVisibility();
+  }
+
+  /** 分组标题随成员显隐：组内所有视图项都被权限/身份隐藏时，整组（含标题）一起隐藏，
+   *  避免出现「空标题分组」。在权限收拾与「更多功能」开合后都要重算。 */
+  function refreshGroupVisibility() {
+    document.querySelectorAll("#sidebar .nav-group").forEach((g) => {
+      const anyVisible = [...g.querySelectorAll(".nav[data-view]")].some(
+        (b) => !b.classList.contains("hidden") && !b.classList.contains("nav-extra-hide")
+      );
+      g.classList.toggle("hidden", !anyVisible);
+    });
+  }
+
+  /** 取侧栏上某一项的人话名称（唯一来源就是导航本身，不另写一份标签表）。 */
+  function viewLabel(view) {
+    const b = document.querySelector(`#sidebar .nav[data-view="${view}"]`);
+    const l = b && b.querySelector(".nav-label");
+    return l ? l.textContent.trim() : view;
+  }
+
+  /**
+   * 总览页顶部的「我的身份」卡。
+   *
+   * 存在的理由：身份适配如果只体现在"少几个菜单"，用户是感觉不到的 —— 他只会
+   * 觉得"功能不全"。所以这里把「你是谁 / 你能做什么 / 常去哪几页」正着说一遍，
+   * 并把入口直接摆出来。少即是明示，不是隐藏。
+   */
+  function identityCard() {
+    if (!IDENT) return "";
+    const skip = new Set(["dashboard", "roles"]);
+    const quick = (PRIMARY_VIEWS || [])
+      .filter((v) => !skip.has(v))
+      .slice(0, 7)
+      .map((v) => `<button class="id-act" data-act="go" data-v="${esc(v)}">${esc(viewLabel(v))}</button>`)
+      .join("");
+    const name = PERM.displayName || PERM.user || "";
+    return `
+      <div class="card id-card">
+        <div class="id-head">
+          <span class="id-avatar" aria-hidden="true">${esc((name || IDENT.who).slice(0, 1))}</span>
+          <div class="id-text">
+            <div class="id-who">${esc(IDENT.who)}${name ? `<span class="id-sub"> · ${esc(name)}</span>` : ""}</div>
+            <div class="id-blurb">${esc(IDENT.blurb)}</div>
+          </div>
+          <span class="grow"></span>
+          <span class="chip">${esc(PERM.levelLabel || "未登录")}</span>
+        </div>
+        ${quick ? `<div class="id-actions">${quick}</div>` : ""}
+        <p class="id-note muted">${
+          PRIMARY_VIEWS
+            ? "侧栏「更多功能」里还收着其它可用入口。"
+            : "当前是管理身份，全部入口都在侧栏。"
+        }能点得了的都能做，点不了的确实是没权限 —— 权限由服务端判定，不是界面藏起来的。</p>
+      </div>`;
+  }
+
   function renderPermChip() {
     const el = $("#perm-chip");
     if (!el) return;
@@ -129,11 +306,14 @@
     if (PERM.manage) parts.push("设备管理");
     if (PERM.control) parts.push("设备控制");
     if (PERM.remote) parts.push("远程控制");
+    if (PERM.broadcast) parts.push("通知广播");
     if (PERM.issue) parts.push("上报");
     // 等级标签（L1–L5）单独前置：它属于内容轴，与后面的设备档位是两个维度。
     const level = PERM.levelLabel ? PERM.levelLabel + " · " : "";
     el.textContent = level + (PERM.roleLabel || PERM.role || "只读") + " · " + (parts.length ? parts.join(" / ") : "仅查看");
     el.classList.toggle("readonly", !!PERM.readonly);
+    // 身份一句话进 title：不占地方，但鼠标一停就知道"我在这儿能干什么"。
+    if (IDENT) el.title = identityLine() + "｜可执行：" + (parts.length ? parts.join("、") : "仅查看");
     if (PERM.readonly) el.title = "当前为只读观看，所有设备写操作已隐藏";
     el.classList.remove("hidden");
   }
@@ -151,6 +331,9 @@
       el.title = "当前账号（" + (PERM.roleLabel || PERM.role || "只读") + "）无「" +
         (NEED_LABEL[el.dataset.need] || el.dataset.need) + "」权限";
     });
+    // 权限收拾完再按身份收拾一次：顺序不能反 —— 身份适配是在"能用什么"之上
+    // 再做"默认摆什么"，先跑会把无权限项也算进"更多功能"的计数里。
+    applyIdentityNav();
   }
 
   // ============ 视图 ============
@@ -190,6 +373,8 @@
           <div class="hero-small">设备在线率</div>
         </div>
       </div>
+
+      ${identityCard()}
 
       <div class="grid g4">
         <div class="kpi"><div class="n" style="color:var(--ok)">${online}</div><div class="l">🖥 在线设备</div></div>
@@ -285,8 +470,7 @@
       .join("");
 
     return `
-      <div class="card"><h3>时间表 · 课程表 · ${esc(currentClassLabel() || "（未选择班级）")}
-        ${API.state.classId ? `<span class="muted" style="font-size:12px;font-weight:400">（资源 ${esc(API.state.classId)}）</span>` : ""}</h3>
+      <div class="card"><h3>时间表 · 课程表 · ${esc(currentClassLabel() || "（未选择班级）")}</h3>
         <p class="muted">
           竖向列表：每天一块，节次自上而下。直接改科目名后点「保存并下发」，
           配置将推送到本班所有设备。科目名需与全校科目表一致（见「配置下发」），
@@ -327,34 +511,38 @@
           <textarea id="cfg-json">${esc(JSON.stringify(c,null,2))}</textarea>
         </div>
         <div class="row" style="margin-top:8px">
-          <button class="primary" data-act="save-config" data-need="control">保存并下发</button>
+          <button class="primary" data-act="save-config" data-need="manage">保存并下发</button>
           <button data-act="reload">重新拉取</button>
         </div>
       </div>`;
   };
 
   views.plugins = async () => {
-    const ps = await API.listPlugins();
+    const comp = await API.getComponents();
+    const has = comp != null && typeof comp === "object" && Object.keys(comp).length > 0;
+    const preview = has ? JSON.stringify(comp, null, 2) : "";
     return `
-      <div class="card"><h3>组件配置（CIMS Components 资源）</h3>
-        <p class="muted">
-          这里管理的是 <b>CIMS 下发给教室端的「组件」资源</b>（大屏上显示哪些组件、放在哪里），
-          <b>不是</b> ClassIsland 的插件启停。
-        </p>
+      <div class="card"><h3>ClassIsland 插件与模块（真实状态）</h3>
         <p class="muted">
           ClassIsland <b>没有运行时启停第三方插件的公开接口</b> —— 插件放进 Plugins 目录即被加载，
-          禁用只能改宿主自己的配置并重启。要看「教室端到底装了哪些插件、星璃模块开了哪些」，
-          请到 <b>「ClassIsland 专页」</b>（数据来自设备真实心跳，可对星璃模块开关直接生效）。
+          禁用只能改教室机自己的配置并重启。要看「教室端到底装了哪些插件、星璃模块开了哪些」，
+          请到 <b>「ClassIsland 专页」</b>（数据来自教室机真实心跳，星璃模块开关能直接生效）。
         </p>
-        <table><thead><tr><th>组件</th><th>版本</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${ps.length
-          ? ps.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.ver)}</td>
-          <td><span class="tag ${p.enabled?"ok":""}">${p.enabled?"已启用":"已禁用"}</span></td>
-          <td><button data-act="toggle-plugin" data-need="manage" data-id="${p.id}" data-on="${p.enabled?0:1}">${p.enabled?"禁用":"启用"}</button></td></tr>`).join("")
-          : emptyRow(4, "该账户下暂无组件资源")}
-        </tbody></table>
         <div class="row" style="margin-top:8px">
-          <button data-act="go" data-v="classisland" data-need="control">前往 ClassIsland 专页（真实插件与模块状态）→</button>
+          <button class="primary" data-act="go" data-v="classisland" data-need="control">前往 ClassIsland 专页 →</button>
+        </div>
+      </div>
+      <div class="card"><h3>大屏组件布局（CIMS 组件资源）</h3>
+        <p class="muted">
+          这份 JSON 决定教室大屏显示哪些组件、放在哪里，存在 CIMS 的 <code>default_components</code>
+          资源里（唯一一张真实组件资源）。${has ? "" : "当前尚未配置——留空保存等于清空该资源。"}
+        </p>
+        <textarea data-id="comp-json" rows="10" spellcheck="false"
+          placeholder='{ "components": [ { 组件ID, 位置… } ] }'
+          style="width:100%;font-family:monospace;font-size:13px">${esc(preview)}</textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="primary" data-act="save-components" data-need="control">保存组件布局</button>
+          <button data-act="reload">重新拉取</button>
         </div>
       </div>`;
   };
@@ -395,6 +583,23 @@
   const devCell = (d) =>
     `<td>${d.hostKnown ? esc(d.host) : `<span class="muted">（尚未上报主机名）</span>`}` +
     `<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>`;
+
+  /**
+   * 账号/属主的显示：给不出人话名字时退回一个**短编号**，完整编号放 title。
+   *
+   * 后端目前只回 `owner_user_id`（一串 UUID）。整串摆进表格既占地方又没人认得，
+   * 所以截前 8 位 + 悬停看全；等接口补上姓名/邮箱后，这里直接换成名字即可。
+   */
+  const shortId = (v, fallback = "—") => {
+    const s = String(v || "").trim();
+    if (!s) return fallback;
+    return s.length > 8 ? s.slice(0, 8) + "…" : s;
+  };
+  const idCell = (v) => {
+    const s = String(v || "").trim();
+    if (!s) return `<td class="muted">—</td>`;
+    return `<td class="muted" title="${esc(s)}">${esc(shortId(s))}</td>`;
+  };
 
   // 设备表的交互状态**外提**到模块作用域：`go()` 是整块替换 `view.innerHTML`，
   // 状态若留在闭包里，用户输好搜索词点一次「刷新」就白输了 —— 60 班时这很烦。
@@ -482,13 +687,11 @@
     return `
       <div class="card"><h3>设备控制</h3>
         <p class="muted">
-          一班一号：每台设备在任一时刻只属于一个班级（数据层由
-          <code>client_profiles.class_id</code> 单值字段保证，不靠人工约定）。
-          同一台设备若要换班，需先在管理端解绑/转移，不会静默抢占。
+          每台教室电脑同一时刻只属于一个班级。要换班，先在下面解绑再绑到新班，不会悄悄抢走别的班。
         </p>
         <p class="muted">
-          状态全部来自设备<b>真实心跳</b>（<code>client_status</code> 表，判定阈值 ${esc(String(st.fresh || 90))} 秒）：
-          在线 ${online} / 共 ${ds.length} 台${never ? `，其中 <b>${never}</b> 台从未上报（尚未接入集控）` : ""}。
+          在线 ${online} / 共 ${ds.length} 台${never ? `，其中 <b>${never}</b> 台从未上报（还没接入集控）` : ""}。
+          状态取自设备真实心跳：超过 ${esc(String(st.fresh || 90))} 秒没有心跳即判离线。
         </p>
         ${
           unbound
@@ -505,7 +708,13 @@
         </div>
         <table><thead><tr><th>设备</th><th>所属班级</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>绑定班级</th><th>操作</th></tr></thead>
         <tbody id="dev-body">${body}</tbody></table>
-        <p class="muted">重启/刷新经 CIMS management 原生指令通道；锁屏/截图经命令队列下发 <code>stelarith_task</code>，由本机 ClassIsland 插件 + 本地代理执行。</p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            「一班一号」由 <code>client_profiles.class_id</code> 单值字段保证；在线判定取自
+            <code>client_status</code> 表。重启/刷新走 CIMS management 原生指令通道；
+            锁屏/截图经命令队列下发 <code>stelarith_task</code>，由本机 ClassIsland 插件 + 本地代理执行。
+          </p>
+        </details>
       </div>`;
   };
 
@@ -716,8 +925,14 @@
     const ds = st.devices || [];
     return `
       <div class="card"><h3>远程屏幕控制</h3>
-        <p class="muted">点「远程控制」→ 经命令队列下发 <code>remote_control_start</code> → ClassIsland 插件 → 本地代理<b>按需启动 VNC</b> → 面板内嵌 noVNC 连接。会话级端口 + 令牌，结束即关；每次控制写审计。</p>
-        <p class="muted">一班一号：远程控制按设备所属班级归属，一台设备只服务一个班，不共享会话。</p>
+        <p class="muted">点「远程控制」即可在本页看到那台教室电脑的画面，可操作鼠标键盘。会话用完即关，每次控制都会留下记录。</p>
+        <p class="muted">一台电脑只服务一个班，不同班级不会共用同一个远程会话。</p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            流程：命令队列下发 <code>remote_control_start</code> → ClassIsland 插件 → 本地代理按需启动 VNC
+            → 面板内嵌 noVNC 连接。会话级端口 + 一次性令牌，结束即销毁；每次控制写审计。
+          </p>
+        </details>
         <table><thead><tr><th>设备</th><th>所属班级</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${
           ds.length
@@ -829,9 +1044,11 @@
           <button data-act="shutdown-sched" data-need="control" data-id="${esc(cur.id)}" data-name="${esc(cur.host || cur.id)}" ${cur.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
         </div>
         <p class="muted" style="margin-top:8px">
-          <b>切班</b>：把本机档案的当前课表群切到指定班级（集控通道下发不了
-          <code>SelectedClassPlanGroupId</code>，只能由本地插件改档案）。
+          <b>切班</b>：把这台电脑正在用的课表换成另一个班的。选好班再点「切换课表群」。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">集控通道下发不了 <code>SelectedClassPlanGroupId</code>，只能由设备上的本地插件改写本机档案。</p>
+        </details>
         <div class="row">
           <select id="ci-group" style="min-width:220px"><option value="">（不改变）</option>${classOpts}</select>
           <button data-act="ci-switch-class" data-need="control" data-id="${cur.id}">切换课表群</button>
@@ -841,9 +1058,12 @@
       <div class="card">
         <h3>星璃功能模块开关</h3>
         <p class="muted">
-          这些开关<b>立刻生效</b>（写本机 <code>stelarith-modules.json</code> 并即时应用，无需重启）。
+          这些开关<b>立刻生效</b>，不用重启那台电脑。
           带「核心」标记的模块不允许关闭 —— 关掉之后这台设备将无法被集控发现或控制。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">开关写入设备本机 <code>stelarith-modules.json</code> 并由插件即时应用。</p>
+        </details>
         <table><thead><tr><th>模块</th><th>说明</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${modules.map((m) => `<tr>
           <td>${esc(m.label)}${m.core ? ' <span class="tag">核心</span>' : ""}</td>
@@ -858,10 +1078,16 @@
       <div class="card">
         <h3>宿主插件清单</h3>
         <p class="muted">
-          由插件的 <code>IPluginService.LoadedPlugins</code> 反射采集，是宿主的真实加载结果。
-          <b>ClassIsland 没有运行时启停第三方插件的公开接口</b> —— 插件在 Plugins 目录里即加载，
-          禁用只能改宿主自己的配置并重启。星集控插件标记为「核心」，面板对它只读。
+          这里列的是这台电脑上 ClassIsland 实际加载到的插件。
+          <b>插件装上就是加载状态，面板不能在这儿启停它</b> —— 要禁用得改那台电脑上的 ClassIsland 配置再重启。
+          星集控插件标记为「核心」，面板只读。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            清单由插件的 <code>IPluginService.LoadedPlugins</code> 反射采集，是宿主的真实加载结果。
+            ClassIsland 没有运行时启停第三方插件的公开接口。
+          </p>
+        </details>
         <table><thead><tr><th>插件</th><th>ID</th><th>版本</th><th>加载状态</th></tr></thead><tbody>
         ${plugins.length
           ? plugins.map((p) => `<tr>
@@ -881,7 +1107,10 @@
     const m = await API.permissions();
     if (!m) {
       return `<div class="card"><h3>权限与分级</h3>
-        <p class="muted">权限信息不可用 —— 面板需在内嵌态（经网站 <code>/admin/console</code>）打开才能读取服务端解算的权限矩阵。</p></div>`;
+        <p class="muted">读不到权限信息。请从网站的「集控面板」入口进入本页（而不是单独打开面板网址）。</p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">权限矩阵由服务端解算，需在内嵌态（经网站 <code>/admin/console</code>）打开才能读取。</p>
+        </details></div>`;
     }
     const me = m.me || {};
     const rows = (m.roles || []).map((r) => `<tr>
@@ -895,10 +1124,15 @@
     return `
       <div class="card"><h3>我的权限快照</h3>
         <p class="muted">
-          等级只是<b>显示秩位</b>；<b>称号</b>才是权限的载体。网站在服务端按同一套门控逻辑解算后下发
-          （<code>userCan()</code> / <code>canDevice()</code> / <code>canBroadcastTo()</code>），
-          因此界面显示的能力与服务端实际放行**永远一致**。
+          你能做什么，由下面的<b>称号</b>决定；等级只是显示用的高低次序。
+          界面上显示得出来的能力，服务端一定放行；显示不出来的，点了也会被拒。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            网站服务端按同一套门控逻辑解算后下发（<code>userCan()</code> / <code>canDevice()</code> /
+            <code>canBroadcastTo()</code>），因此界面显示与服务端实际放行永远一致。
+          </p>
+        </details>
         <div class="grid2">
           <div class="kv">
             <div><span class="muted">角色</span><b>${esc(me.roleLabel || "—")}</b></div>
@@ -916,8 +1150,8 @@
 
       <div class="card"><h3>管理分级（谁管到哪一级）</h3>
         <p class="muted">
-          分级回答「管到哪一级」，与「称号（能做什么）」「设备轴（设备多敏感）」「广播范围（能喊多远）」
-          是四条独立轴。分级只是<b>上限</b>：校级管理员若没有 <code>device.remote</code>，依然不能远控。
+          分级回答「管到哪一级」，和「称号（能做什么）」「设备（能碰多敏感的设备）」「广播范围（能喊多远）」
+          是四个互不替代的维度。分级只是<b>上限</b>：校级管理员如果没有远控这个称号，一样不能远控。
         </p>
         <table><thead><tr><th>分级</th><th>职责边界</th><th>对应角色</th></tr></thead><tbody>
           ${(m.managementTiers || []).map((t) => `<tr>
@@ -1065,10 +1299,9 @@
                       <span class="tag ${badge.cls}">${esc(badge.text)}</span>
                     </header>
                     <div class="cls-meta">
-                      <span><i>主键</i><em>${esc(c.class_id || "—")}</em></span>
-                      <span><i>课表</i><em>${esc(c.class_plan || "（尚未生成）")}</em></span>
+                      <span><i>课表</i><em>${c.class_plan ? "已生成" : "尚未生成"}</em></span>
                       <span><i>设备</i><em>${c.device_count || 0} 台</em></span>
-                      <span><i>属主</i><em>${esc(c.owner_user_id || "系统 / 无属主")}</em></span>
+                      <span><i>属主</i><em title="${esc(c.owner_user_id || "")}">${esc(shortId(c.owner_user_id, "系统 / 无属主"))}</em></span>
                     </div>
                     ${c.review_status === "rejected" && c.reject_reason
                       ? `<div class="muted" style="font-size:12px;color:var(--err)">驳回原因：${esc(c.reject_reason)}</div>`
@@ -1119,9 +1352,9 @@
           ${(pending.classes || [])
             .map(
               (p) => `<tr>
-            <td><b>${esc(p.code || p.name || p.class_id)}</b><br><span class="muted" style="font-size:12px">${esc(p.class_id)}</span></td>
+            <td><b>${esc(p.code || p.name || p.class_id)}</b></td>
             <td>${esc(String(p.graduation_year ?? "—"))} / ${esc(String(p.class_number ?? "—"))}</td>
-            <td class="muted">${esc(p.owner_user_id || "—")}</td>
+            ${idCell(p.owner_user_id)}
             <td><input class="cls-rej" data-rej="${esc(p.class_id)}" placeholder="（可选）" aria-label="驳回原因" /></td>
             <td class="row">
               <button class="chip-btn" data-act="cls-approve" data-id="${esc(p.class_id)}">通过</button>
@@ -1189,7 +1422,7 @@
     const sandbox = "allow-scripts allow-same-origin allow-forms allow-modals";
     const sameOriginWarn =
       host && location.origin && host.indexOf(location.origin) === 0
-        ? `<p class="muted" style="color:var(--warn)">⚠ 点歌站与本站同源：此时 sandbox 的 allow-same-origin + allow-scripts 组合会削弱隔离效果，建议把点歌站放在独立域/端口。</p>`
+        ? `<p class="muted" style="color:var(--warn)">⚠ 点歌站和本面板在同一个网址下，隔离效果会打折。建议把点歌站放到独立的域名或端口。</p>`
         : "";
 
     return `
@@ -1279,7 +1512,7 @@
           <input id="nt-duration" type="number" min="0" max="3600" step="1" placeholder="时长(秒)"
                  title="教室大屏显示时长（秒）。留空 = 按正文字数自适应（3~20s）"
                  style="width:96px"/>
-          <button class="primary" data-act="send-notice" data-need="control">发布</button>
+          <button class="primary" data-act="send-notice" data-need="broadcast">发布</button>
         </div>
         <textarea id="nt-content" placeholder="通知正文（可空）" style="min-height:64px"></textarea>
 
@@ -1316,8 +1549,8 @@
         <p class="muted" style="margin-top:8px">
           本账号可广播的最大范围：<b>${esc(maxLabel)}</b>
           ${
-            PERM.embedded && !PERM.control
-              ? "（无设备控制权限，无法发布）"
+            PERM.embedded && !PERM.broadcast
+              ? "（无通知广播权限，无法发布）"
               : "。范围由内容等级决定：L2 仅本班 · L3 本年级 · L4+ 全校。"
           }
         </p>
@@ -1370,12 +1603,19 @@
       API.listFriends().catch(() => ({ friends: [], incoming: [], outgoing: [] })),
     ]);
     const classId = API.state.classId || "";
+    // 房间标题一律用人话：班级名、年级名。房间 id 是内部的（本班房间用的就是
+    // 课表资源名），直接摆到界面上老师看不懂，所以只在找不到人话名字时才退到
+    // 一个中性说法，绝不显示资源名本身。
+    const ownCls = currentClassLabel();
     const roomOpts = [
       { id: API.CHAT_ROOM_GLOBAL || "techrep-global", name: "全校电教委员群" },
       PERM.gradeName ? { id: API.gradeRoom(PERM.gradeName), name: "本年级（" + PERM.gradeName + "）" } : null,
-      classId ? { id: classId, name: "本班（" + classId + "）" } : null,
+      classId
+        ? { id: classId, name: ownCls ? "本班（" + ownCls + "）" : "本班" }
+        : null,
     ].filter(Boolean);
-    const curName = (roomOpts.find((r) => r.id === chatRoom) || {}).name || chatRoom;
+    const curName =
+      (roomOpts.find((r) => r.id === chatRoom) || {}).name || "当前会话";
 
     // 好友区：待处理请求置顶（需要动作），然后是好友列表（点「私聊」进会话）
     const reqRows = fr.incoming
@@ -2372,7 +2612,15 @@
     refreshOfflineBanner();
   }
 
-  document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
+  // 只给真正的视图项挂导航；「更多功能」是纯开合按钮，不该触发 go() 或收起抽屉。
+  document.querySelectorAll(".nav[data-view]").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
+  const navMoreBtn = $("#nav-more");
+  if (navMoreBtn) {
+    navMoreBtn.addEventListener("click", () => {
+      navMoreOpen = !navMoreOpen;
+      applyIdentityNav();
+    });
+  }
 
   // 离线横幅「重试」：先清标记再重渲染。若仍拿不到数据，请求过程中
   // 会再次置位 offline，横幅会自动回来 —— 不会出现「点了重试却假装好了」。
@@ -2683,10 +2931,14 @@
         await API.putConfig(API.state.classId, obj);
         toast("配置已保存并下发");
       }
-      else if (act === "toggle-plugin") {
-        await API.setPlugin(el.dataset.id, el.dataset.on === "1");
-        API.audit("plugin.toggle", el.dataset.id, el.dataset.on === "1" ? "启用组件" : "禁用组件");
-        toast("插件状态已更新"); go("plugins");
+      else if (act === "save-components") {
+        const el = document.querySelector("[data-id=comp-json]");
+        let obj;
+        try { obj = JSON.parse(el.value || "{}"); }
+        catch { return toast("JSON 不合法，未保存"); }
+        await API.saveComponents(obj);
+        API.audit("components.save", "default_components", "保存大屏组件布局");
+        toast("组件布局已保存"); go("plugins");
       }
       else if (act === "dev") {
         // 关机是不可逆动作：必须二次确认（防误触把整间教室的机器全关掉）
@@ -2895,31 +3147,31 @@
         }
       }
       else if (act === "fr-request") {
-        await API.friendAction("request", Number(b.dataset.id), b.dataset.name || "");
+        await API.friendAction("request", Number(el.dataset.id), el.dataset.name || "");
         toast("好友申请已发出");
         go("chat");
       }
       else if (act === "fr-accept") {
-        await API.friendAction("accept", Number(b.dataset.id));
+        await API.friendAction("accept", Number(el.dataset.id));
         toast("已接受好友");
         go("chat");
       }
       else if (act === "fr-reject") {
-        await API.friendAction("reject", Number(b.dataset.id));
+        await API.friendAction("reject", Number(el.dataset.id));
         toast("已拒绝");
         go("chat");
       }
       else if (act === "fr-remove") {
-        await API.friendAction("remove", Number(b.dataset.id));
+        await API.friendAction("remove", Number(el.dataset.id));
         toast("已删除");
         go("chat");
       }
       else if (act === "fr-dm") {
         // 进私聊：房间名用 dm:<小id>:<大id>，双方算出的名字一致
-        const id = Number(b.dataset.id);
+        const id = Number(el.dataset.id);
         const room = API.dmRoom(PERM.uid, id);
         if (!room) return toast("无法进入私聊（缺少用户 id）");
-        chatPeer = { id, name: b.dataset.name || String(id) };
+        chatPeer = { id, name: el.dataset.name || String(id) };
         chatRoom = room;
         go("chat");
       }
@@ -3453,21 +3705,58 @@
     );
   }
 
-  /** 当前所选班级的**人话**名称（找不到就退回资源名/空）。 */
+  /**
+   * 当前所选班级的**人话**名称。
+   *
+   * 拿不到人话名字时返回空串（调用方显示「未选择班级」），**绝不退回资源名**：
+   * `cp_class08` / `default_classplan` 是内部标识，老师看到只会一头雾水
+   * （「难道正常人会对着不知情的课表 Uid 切换课表吗」）。资源名只在审计日志里留。
+   */
   function currentClassLabel() {
     const cur = classList.find((c) => c.id === API.state.classId);
-    return cur ? cur.name || cur.id : API.state.classId || "";
+    if (!cur) return "";
+    const name = String(cur.name || "").trim();
+    if (!name) return "";
+    // 万一后端只回了资源名当名字，也不要当成班级名展示
+    if (/^(cp_class|classplan_|default_|class_)/i.test(name)) return "";
+    return name;
   }
 
+  /**
+   * 顶栏「当前班级」胶囊的状态灯：正常 / 用了缓存（黄）/ 取不到（红）。
+   *
+   * 三种状态必须能**看出来**：否则「显示的是上次成功加载的班级」和
+   * 「显示的就是此刻真实的班级」长得一模一样，老师会拿着一张过期的班级列表去下发通知。
+   */
+  function setClassPickState(err) {
+    const pick = $("#class-pick");
+    if (!pick) return;
+    pick.classList.toggle("stale", !!(err && err.stale));
+    pick.classList.toggle("err", !!(err && !err.stale));
+    const label = pick.querySelector(".cp-label");
+    if (label) label.textContent = err ? (err.stale ? "班级可能不是最新" : "班级加载失败") : "当前班级";
+    pick.title = err ? err.message : "切换当前班级（课表、设备、广播都跟着它走）";
+  }
+
+  let lastClassErrMsg = ""; // 同一条错误只提示一次，避免每次刷新都弹一遍
+
   async function loadClasses() {
+    const pick = $("#class-pick");
+    if (pick) pick.classList.add("loading");
     const cs = await API.listClasses();
+    if (pick) pick.classList.remove("loading");
     classList = cs;
+    const cerr = API.state.classListError || null;
     const sel = $("#class-select");
     sel.innerHTML = cs.length
       ? cs
-          .map((c) => `<option value="${esc(c.id)}" title="课表资源：${esc(c.id)}">${esc(c.name || c.id)}</option>`)
+          .map((c) => {
+            // 设备数写进选项：老师选班的实际依据是「这个班有没有机器要管」
+            const dev = (c.deviceCount || 0) > 0 ? ` · ${c.deviceCount}台设备` : "";
+            return `<option value="${esc(c.id)}" title="课表资源：${esc(c.id)}">${esc(c.name || c.id)}${dev}</option>`;
+          })
           .join("")
-      : `<option value="">（该账户下暂无班级）</option>`;
+      : `<option value="">${cerr ? "班级加载失败 —— 点这里重试" : "（该账户下暂无班级）"}</option>`;
 
     // 自动挑选态（用户没手动选过）→ 每次都按账号班级重算一遍：账号班级可能是
     // 登录后才由 /api/me 补上的，只算一次会永远停在上一次的兜底结果上。
@@ -3487,9 +3776,24 @@
       else API.setClass("");
     }
     sel.value = API.state.classId || "";
+    setClassPickState(cerr);
+    // 胶囊上写不下原因（"服务正在限流，请等 1 分钟后再试"），用一条 toast 说清；
+    // 同一条错误只弹一次，避免每次切换视图、每次账号校准都重复打扰。
+    if (cerr && cerr.message && cerr.message !== lastClassErrMsg) {
+      lastClassErrMsg = cerr.message;
+      toast(cerr.message);
+    } else if (!cerr) {
+      lastClassErrMsg = "";
+    }
     $("#user-chip").textContent = API.state.demo ? "演示用户" : "已登录";
   }
   $("#class-select").addEventListener("change", (e) => {
+    // 加载失败时下拉里只有「点这里重试」这一项，其 value 为空。
+    // 此时选中它 = 重试，而**不是**"把当前班级设成空"。
+    if (!e.target.value) {
+      if (API.state.classListError) loadClasses();
+      return;
+    }
     classAutoChosen = false; // 用户明确选过：后续校准不再覆盖
     API.setClass(e.target.value);
     go(current);
