@@ -3,10 +3,68 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, getUser, updateProfile } from "$lib/server/auth.js";
 import { recordActivity } from "$lib/server/activity.js";
 import { syncUserUpdateToCims } from "$lib/server/cims-account.js";
+import {
+	userCan,
+	canDevice,
+	roleLevelLabel,
+	ROLE_LABELS,
+	allowedBroadcastScopes,
+	roleManagementTier,
+	MANAGEMENT_TIER_LABELS
+} from "$lib/permissions.js";
+import type { Role } from "$lib/permissions.js";
 
-/** GET /api/me —— 当前登录用户资料。 */
+/**
+ * 取当前登录用户：先认浏览器 Cookie（网页），再认 Bearer 令牌（桌面端）。
+ *
+ * 桌面客户端经 OAuth 拿到的是令牌、没有 Cookie，所以必须支持 Authorization 头；
+ * 否则桌面端永远读不到自己的身份，也就没法按身份适配界面。
+ */
+function resolveUser(event: RequestEvent) {
+	const cookieToken = event.cookies.get("admin_token");
+	if (cookieToken) {
+		const u = verifyToken(cookieToken);
+		if (u) return u;
+	}
+	const auth = event.request.headers.get("authorization") ?? "";
+	if (auth.toLowerCase().startsWith("bearer ")) {
+		return verifyToken(auth.slice(7).trim());
+	}
+	return null;
+}
+
+/**
+ * 身份快照：**服务端解算好再下发**。
+ *
+ * 前端（网页面板 / 桌面客户端）一律不得自行从 role 推导能力 —— 推导逻辑一旦
+ * 分叉，就会出现「界面点得了、服务端拒绝」或反过来的错位。这里与集控面板
+ * `/admin/console` 用同一套函数（userCan / canDevice / allowedBroadcastScopes），
+ * 保证两边看到的"我能做什么"永远一致。
+ */
+function identityOf(u: NonNullable<ReturnType<typeof verifyToken>>) {
+	const role = u.role as Role | null | undefined;
+	const tier = roleManagementTier(role);
+	return {
+		role: role ?? null,
+		roleLabel: role ? ROLE_LABELS[role] : "未登录",
+		levelLabel: role ? roleLevelLabel(role) : "未登录",
+		className: u.className || "",
+		gradeName: u.gradeName || "",
+		can: {
+			control: canDevice(role, "control"),
+			remote: canDevice(role, "remote"),
+			manage: canDevice(role, "manage"),
+			issue: userCan(u, "submitIssue")
+		},
+		broadcastScopes: allowedBroadcastScopes(role),
+		managementTier: tier,
+		managementTierLabel: tier ? MANAGEMENT_TIER_LABELS[tier] : "—"
+	};
+}
+
+/** GET /api/me —— 当前登录用户资料 + 身份快照（Cookie 或 Bearer 均可）。 */
 export function GET(event: RequestEvent) {
-	const user = verifyToken(event.cookies.get("admin_token"));
+	const user = resolveUser(event);
 	if (!user) return json(null);
 	return json({
 		username: user.username,
@@ -19,7 +77,9 @@ export function GET(event: RequestEvent) {
 		gradeName: user.gradeName || "",
 		createdAt: user.createdAt,
 		lastLoginAt: user.lastLoginAt ?? null,
-		loginCount: user.loginCount ?? 0
+		loginCount: user.loginCount ?? 0,
+		// 身份快照：桌面端 / 面板据它决定"摆什么、藏什么"
+		identity: identityOf(user)
 	});
 }
 
