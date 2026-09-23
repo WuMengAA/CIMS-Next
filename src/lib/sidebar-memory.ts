@@ -20,3 +20,12 @@ export function readMoreOpen(): boolean {
 export function writeMoreOpen(v: boolean): void {
 	writePref("nav:expanded", v);
 }
+
+/** 「校园」等折叠分组的展开态（工作区侧边栏）。 */
+export function readCampusOpen(): boolean {
+	return readPref<boolean>("nav:campus-expanded", false);
+}
+
+export function writeCampusOpen(v: boolean): void {
+	writePref("nav:campus-expanded", v);
+}

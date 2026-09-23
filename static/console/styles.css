@@ -193,6 +193,21 @@ h1, h2, h3, h4, h5, .brand, .login-card h2, .card h3, .hero-title {
   width: 3px; border-radius: 2px; background: var(--ring);
 }
 
+/* 侧栏分类分组：标题做细分割线，把同类入口归到一处（「以主要内容为标题」）。
+   整组（含标题）在成员全部被权限/身份隐藏时由 app.js 加 .hidden 收起。 */
+.nav-group { margin-top: 2px; }
+.nav-group-label {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 10px 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  color: var(--muted-foreground); opacity: .82;
+}
+.nav-group-label::after {
+  content: ""; flex: 1 1 auto; height: 1px;
+  background: var(--line, rgba(128, 128, 128, .2));
+}
+.nav-group.hidden { display: none !important; }
+
 /* 抽屉身份条（窄屏浮层才显示，见下方 @media）：与外层 CMS 抽屉做视觉区分 */
 .sidebar-head { display: none; }
 
