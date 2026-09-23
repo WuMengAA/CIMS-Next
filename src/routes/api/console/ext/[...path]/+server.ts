@@ -43,7 +43,11 @@ import {
 	clearDeviceSession,
 	putDeviceSession,
 	listDeviceSessions,
-	verifyDeviceReportSecret
+	verifyDeviceReportSecret,
+	// ── 设备截图回传（#T07.7 步骤 2）────────────────────────────────────
+	putDeviceCapture,
+	getDeviceCapture,
+	clearDeviceCapture
 } from "$lib/server/console-ext.js";
 
 /**
@@ -64,6 +68,8 @@ import {
  *   POST       /api/console/ext/vnc-session    教室端代理回报 VNC 会话（**设备密钥鉴权，非用户会话**）
  *   GET        /api/console/ext/media-session  媒体直连会话（快照/录像下载用）
  *   POST       /api/console/ext/media-session  代理回报媒体直连地址（同设备密钥鉴权）
+ *   GET        /api/console/ext/captures       设备截图回传（面板轮询取教室端截屏）
+ *   POST       /api/console/ext/captures       代理回报截图 PNG（设备密钥鉴权，base64）
  *   GET        /api/console/ext/sessions       全部未过期会话（诊断用；没有它就只能靠猜）
  *
  * 权限：所有端点需 viewConsole（等级轴 L1+）；写操作另需设备档位或内容能力 ——
@@ -180,6 +186,24 @@ export async function GET(event: RequestEvent) {
 			const s = getDeviceSession("media", uid);
 			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
 		}
+		case "captures": {
+			// 设备截图回传：面板点「截图」下发指令后按 uid 轮询这里，拿到教室端回报的 PNG。
+			// 语义与 vnc/media 会话一致：明确区分「没报过」与「报过但已过期/已取走」。
+			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+			if (!uid) return json({ capture: null, reason: "missing_uid" });
+			const c = getDeviceCapture(uid);
+			if (!c) return json({ capture: null, reason: "no_capture_reported" });
+			return json({
+				capture: {
+					at: c.meta.at,
+					bytes: c.meta.bytes,
+					// 面板要展示图片，一次请求带全字节最省事（图 ≤ 数百 KB，base64 内嵌无压力）；
+					// 不另开图片二进制端点，少一个可被滥用的静态出口。
+					image_base64: c.png.toString("base64")
+				},
+				reason: "ok"
+			});
+		}
 		case "sessions":
 			// 诊断页用：一眼看到"代理到底有没有报过"，而不是只有 session:null 一个空字。
 			return json({ sessions: listDeviceSessions() });
@@ -204,7 +228,7 @@ export async function POST(event: RequestEvent) {
 	// 鉴权用部署级共享密钥（`CONSOLE_DEVICE_REPORT_SECRET`），且**未配置即拒绝**：
 	// 这个入口会把 ip/port 写进面板要嵌的 iframe，一旦可被任意伪造，
 	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
-	if (path === "vnc-session" || path === "media-session") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		// 带了这个头 = 调用方**自称是设备代理**（只有 Rust 代理会发，面板从不发）。
 		// 此时密钥不对必须明确 403，不能落到用户鉴权分支去回「请先登录」——
@@ -221,6 +245,36 @@ export async function POST(event: RequestEvent) {
 			);
 		}
 		if (verifyDeviceReportSecret(secret)) {
+			if (path === "captures") {
+				// 截图回传：body {uid, image_base64}。PNG 以 base64 内嵌（与 GET 取图对称）。
+				const uid = String(body.uid ?? "").trim();
+				if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
+				const b64 = String(body.image_base64 ?? "").trim();
+				if (!b64) return json({ error: "缺少 image_base64" }, { status: 400 });
+				let raw: Buffer;
+				try {
+					raw = Buffer.from(b64, "base64");
+					// 严格校验：解码再编码必须还原原串（防「垃圾字节碰巧可解码」被当成图收下）。
+					if (raw.toString("base64").replace(/=+$/g, "") !== b64.replace(/=+$/g, "")) {
+						throw new Error("bad base64");
+					}
+				} catch {
+					return json({ error: "image_base64 不是合法 base64" }, { status: 400 });
+				}
+				// PNG 魔数校验：必须是真实 PNG（0x89 'P' 'N' 'G'），防任意垃圾字节占位。
+				if (raw.length < 64 || raw[0] !== 0x89 || raw[1] !== 0x50 || raw[2] !== 0x4e || raw[3] !== 0x47) {
+					return json({ error: "回传内容不是有效 PNG（<64B 或魔数不符）" }, { status: 400 });
+				}
+				const meta = putDeviceCapture(uid, raw);
+				addAudit({
+					actor: `device:${uid}`,
+					role: "device",
+					action: "capture.report",
+					target: uid,
+					detail: `${raw.length} bytes → ${meta.path.split(/[\\/]/).pop()}`
+				});
+				return json({ ok: true, at: meta.at, bytes: raw.length });
+			}
 			const proto = path === "vnc-session" ? "vnc" : "media";
 			const uid = String(body.uid ?? "").trim();
 			if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
@@ -493,6 +547,7 @@ export async function POST(event: RequestEvent) {
 		}
 		case "vnc-session":
 		case "media-session":
+		case "captures":
 			// 能走到这里说明没带有效设备密钥（上面那个分支已经处理过设备回报）。
 			// 面板自己不会 POST 这两个路径。返回明确原因而不是 `{ok:true}` ——
 			// 「回 ok 但什么都没发生」正是这类问题最难查的形态（调用方以为成功了）。
@@ -526,9 +581,14 @@ export async function DELETE(event: RequestEvent) {
 	const g = guard(event, path === "notices" ? "manage" : "submitIssue");
 	if ("error" in g) return g.error;
 
-	if (path === "vnc-session" || path === "media-session") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures") {
 		const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-		if (uid) clearDeviceSession(path === "vnc-session" ? "vnc" : "media", uid);
+		if (!uid) return json({ ok: false, error: "missing_uid" });
+		if (path === "captures") {
+			clearDeviceCapture(uid);
+			return json({ ok: true });
+		}
+		clearDeviceSession(path === "vnc-session" ? "vnc" : "media", uid);
 		return json({ ok: true });
 	}
 	if (path === "notices") return json({ ok: true, cleared: clearNotices() });

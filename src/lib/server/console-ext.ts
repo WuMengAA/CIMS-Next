@@ -12,6 +12,8 @@
  * - 审计只记元数据，不存敏感内容。
  */
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { getDb, nowIso } from "./db.js";
 
 export interface ConsoleNotice {
@@ -771,4 +773,90 @@ export function verifyDeviceReportSecret(provided: string | null | undefined): b
 	let diff = 0;
 	for (let i = 0; i < expect.length; i++) diff |= expect.charCodeAt(i) ^ got.charCodeAt(i);
 	return diff === 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 设备截图回传（#T07.7 步骤 2）
+//
+// 教室端代理（stelarith-agent）截屏后把 PNG 回传到 ext 层，面板按 uid 轮询取图。
+// 与 vnc/media 会话同类的「设备回执」：**瞬态**，每设备只保留最新一张，
+// TTL 过期即丢 —— 截图是"看一眼当下屏幕"的瞬时操作，留档由教室端
+// shots 目录负责（C:/ProgramData/Stelarith/shots），这里不做持久库。
+// 图片字节落盘 content/captures/（运行时数据，gitignore 忽略），
+// 内存索引只记元数据；面板 GET 时按需读回文件字节。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DeviceCaptureMeta {
+	uid: string;
+	/** 登记时间（epoch ms） */
+	at: number;
+	/** 图片字节数 */
+	bytes: number;
+	/** 落盘绝对路径 */
+	path: string;
+}
+
+const CAPTURE_TTL_MS = Math.max(15, Number(process.env.CONSOLE_CAPTURE_TTL_SECONDS ?? 60)) * 1000;
+const deviceCaptures = new Map<string, DeviceCaptureMeta>();
+
+const CAPTURES_DIR = path.join(path.resolve("content"), "captures");
+
+/** 登记一张设备截图（同设备覆盖旧图），返回元数据。uid 大小写不敏感（面板按 host 查时可能带大写）。 */
+export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): DeviceCaptureMeta {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) throw new Error("uid 不能为空");
+	if (!bytes || bytes.length === 0) throw new Error("图片字节为空");
+	fs.mkdirSync(CAPTURES_DIR, { recursive: true });
+	const p = (n: number) => String(n).padStart(2, "0");
+	const d = new Date();
+	const safe = key.replace(/[^A-Za-z0-9_.-]/g, "_");
+	const name = `${safe}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
+	const file = path.join(CAPTURES_DIR, name);
+	fs.writeFileSync(file, bytes);
+	const meta: DeviceCaptureMeta = { uid: key, at: Date.now(), bytes: bytes.length, path: file };
+	deviceCaptures.set(key, meta);
+	return meta;
+}
+
+/**
+ * 取某设备最新截图（含 PNG 字节）。过期/文件丢失/空文件一律视为无截图并清索引。
+ * 返回 `null` 表示「没有可用的截图」，与「设备没截过」等价 —— 面板据此展示
+ * 等待提示而不是报错。
+ */
+export function getDeviceCapture(uid: string): { meta: DeviceCaptureMeta; png: Buffer } | null {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return null;
+	const m = deviceCaptures.get(key);
+	if (!m) return null;
+	if (Date.now() - m.at > CAPTURE_TTL_MS) {
+		deviceCaptures.delete(key);
+		return null;
+	}
+	try {
+		const png = fs.readFileSync(m.path);
+		if (png.length === 0) {
+			deviceCaptures.delete(key);
+			return null;
+		}
+		return { meta: m, png };
+	} catch {
+		deviceCaptures.delete(key);
+		return null;
+	}
+}
+
+/** 主动清除某设备截图（面板取完图后可调，避免残留 TTL 窗口）。uid 大小写不敏感。 */
+export function clearDeviceCapture(uid: string): boolean {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return false;
+	const m = deviceCaptures.get(key);
+	deviceCaptures.delete(key);
+	if (m) {
+		try {
+			fs.unlinkSync(m.path);
+		} catch {
+			/* 文件可能已被外部清理，忽略 */
+		}
+	}
+	return !!m;
 }

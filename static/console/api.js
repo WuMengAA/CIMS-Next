@@ -1020,6 +1020,31 @@
       return { ...(out && typeof out === "object" ? out : { result: out }), dropped };
     },
 
+    // ---- 自助切班（互换 / 单切：申请 → 审批 → 执行，到期自动回退）----
+    // 全部走 cimsThrow：切换课表方案是**有副作用的写操作**，失败必须让老师看到，
+    // 不得像 cims() 那样吞掉异常返回 {} 造成「显示成功其实没切」的假象。
+    swapCreate: async (payload) =>
+      cimsThrow(`/class/swap`, { method: "POST", body: JSON.stringify(payload) }),
+    swapList: async (q = {}) => {
+      const qs = new URLSearchParams();
+      if (q.status) qs.set("status", q.status);
+      if (q.page) qs.set("page", String(q.page || 1));
+      qs.set("size", String(q.size || 50));
+      const s = qs.toString();
+      return cimsThrow(`/class/swap${s ? "?" + s : ""}`, {});
+    },
+    swapApprove: async (id) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" }),
+    swapReject: async (id, reason) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
+    swapCancel: async (id) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+    swapRollback: async (id) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/rollback`, { method: "POST", body: "{}" }),
+    swapGetConfig: async () => cims(`/class/swap/config`, {}, null),
+    swapSetConfig: async (cfg) =>
+      cimsThrow(`/class/swap/config`, { method: "POST", body: JSON.stringify(cfg) }),
+
     // ---- ClassIsland 组件配置（Components 资源）----
     getConfig: async (cls) => {
       const name = cls || state.classId || "default_components";
@@ -1233,6 +1258,14 @@
       try {
         const r = await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`);
         return r && r.session ? r.session : null;
+      } catch (_) { return null; }
+    },
+    // #T07.7 步骤 3：拉取教室端截图回传（ext 网关 /captures，同设备会话回执通道）。
+    // 返回 {capture: {at, bytes, image_base64}} 或 null（未报/失败不抛错）。
+    getCapture: async (uid) => {
+      try {
+        const r = await ext(`/captures?uid=${encodeURIComponent(uid)}`);
+        return r && r.capture ? r.capture : null;
       } catch (_) { return null; }
     },
     /**

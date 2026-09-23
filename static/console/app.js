@@ -131,6 +131,9 @@
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
     // （写操作在页内逐个按钮上再门控，不把整页锁死）。
     classisland: "control",
+    // 自助切班：互换/单切申请是班主任、电教委员的日常操办；审批同样控制档
+    // （换课表方案 ≈ 给设备下指令，不上升到设备管理档，站长本来就全档）。
+    swap: "control",
     // 定时广播 / 操作日志：都建在"能给设备下指令"之上，按 control 档门控。
     scheduled: "control", audit: "control",
     filetransfer: "control", volume: "control",
@@ -182,9 +185,9 @@
     // 不再出现「设备控制/远程控制/ClassIsland」入口（点了也 403 的入口是误导）。
     teacher: ["dashboard", "schedule", "notify", "random", "chat", "report", "bug", "roles"],
     // 班主任：本班设备运维 + 教学动线（设备三关之一，与电教委员同档）。
-    homeroom: ["dashboard", "schedule", "devices", "remote", "classisland", "notify", "random", "volume", "chat", "report", "bug", "roles"],
+    homeroom: ["dashboard", "schedule", "devices", "remote", "classisland", "notify", "random", "volume", "swap", "chat", "report", "bug", "roles"],
     // 电教委员：设备运维主力 —— 多了远程控制、ClassIsland 状态页、自检（排查"没反应"是日常）。
-    techrep: ["dashboard", "devices", "remote", "classisland", "notify", "chat", "test", "report", "bug", "roles"],
+    techrep: ["dashboard", "devices", "remote", "classisland", "notify", "chat", "test", "swap", "report", "bug", "roles"],
     // 审核员/编辑无设备档位（设备三关收紧），不摆设备操作入口。
     moderator: ["dashboard", "chat", "report", "bug", "roles"],
     editor: ["dashboard", "classes", "notify", "scheduled", "chat", "filetransfer", "roles"],
@@ -662,8 +665,8 @@
           <td>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart" ${d.online ? "" : "disabled"}>重启</button>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh" ${d.online ? "" : "disabled"}>刷新</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-host="${esc(d.host || d.id)}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-host="${esc(d.host || d.id)}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
             <button class="danger" data-act="dev" data-need="control" data-id="${d.id}" data-a="shutdown" data-confirm="1" ${d.online ? "" : "disabled"}>关机</button>
             <button data-act="shutdown-sched" data-need="control" data-id="${esc(d.id)}" data-name="${esc(d.host || d.id)}" ${d.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
           </td></tr>`;
@@ -1225,6 +1228,72 @@
    * 两个条件缺一不可：过审（未过审的班不该被下发）+ 有课表资源
    * （没有资源时选中它 = 课表页打开是空白，而标题显示一个与班级无关的资源名）。
    */
+  /**
+   * #T07.7 步骤 3：截图指令下发后轮询设备回传（最长约 20 秒），命中即弹窗展示。
+   * 教室端代理截屏 → PNG 回传 ext 网关 → 这里轮询 GET /captures?uid= 取图。
+   * 超时不当作硬错误：设备可能离线/没配 STELARITH_EXT_URL，toast 说明即可。
+   *
+   * ⚠️ uid 双 key（2026-09-24 实测发现）：CIMS 设备用 client_id（如 lab-pc-001）
+   * 下发指令，而教室端代理回传时用的是自己的 device_uid（= 主机名，如 n7-20091211）。
+   * 两者在部署里是**两个不同的串**，只查 client_id 会永远「等待回传超时」。
+   * 所以先按 client_id 查，miss 再按 host 查（host 字段就是 agent 的 UID）。
+   */
+  async function waitForCapture(uid, host) {
+    const keys = [uid, host && host !== uid ? host : null].filter(Boolean);
+    const TOTAL = 10, STEP = 2000;
+    for (let i = 0; i < TOTAL; i++) {
+      await new Promise((r) => setTimeout(r, STEP));
+      for (const k of keys) {
+        const cap = await API.getCapture(k);
+        if (!cap) continue;
+        showCaptureImage(uid, cap);
+        return true;
+      }
+    }
+    toast(
+      `等待截图回传超时（${uid} 未回报图片）。` +
+      "请检查：① 教室端代理已部署新版（含截图回传）；② STELARITH_EXT_URL/EXT_SECRET 配置；③ 设备在线。"
+    );
+    return false;
+  }
+
+  /** 把回传的 base64 PNG 弹窗展示（内存 Blob，不落盘、不留痕）。 */
+  function showCaptureImage(uid, cap) {
+    try {
+      const bin = atob(cap.image_base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "image/png" });
+      const url = URL.createObjectURL(blob);
+      const box = document.createElement("div");
+      box.style.cssText =
+        "position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;" +
+        "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px";
+      box.innerHTML =
+        `<b style="color:#fff;font-size:15px">教室端截图 · ${esc(uid)}</b>` +
+        `<img src="${url}" alt="教室端截图" style="max-width:92vw;max-height:76vh;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);background:#000"/>` +
+        `<div style="display:flex;gap:10px">` +
+        `<button class="chip-btn" style="min-width:110px">关闭</button>` +
+        `<button class="chip-btn" id="capture-refresh" style="min-width:110px">重新截图</button></div>`;
+      const close = () => { URL.revokeObjectURL(url); box.remove(); };
+      box.querySelector("button").onclick = close;
+      box.addEventListener("click", (e) => { if (e.target === box) close(); });
+      document.body.appendChild(box);
+      const again = box.querySelector("#capture-refresh");
+      if (again) again.onclick = () => {
+        const row = document.querySelector(`[data-act="dev"][data-a="screenshot"][data-id="${cssEscape(uid)}"]`);
+        box.remove();
+        if (row) row.click(); else waitForCapture(uid);
+      };
+      toast(`已收到 ${uid} 的截图（${cap.bytes} bytes）`);
+    } catch (e) {
+      toast("截图数据解码失败：" + ((e && e.message) || e));
+    }
+  }
+  function cssEscape(s) {
+    return String(s).replace(/["\\\n\r]/g, (c) => "\\" + c);
+  }
+
   function classSelectable(c) {
     return !!c && c.review_status === "approved" && !!c.class_plan && !/^default_/i.test(c.class_plan);
   }
@@ -2550,6 +2619,112 @@
       </div>`;
   };
 
+  // ============ 自助切班（互换 / 单切） ============
+  // 申请 → 审批 → 执行，到期可自动回退；所有写操作经 API.swapXxx（cimsThrow），失败必报错。
+  const SWAP_STATUS = {
+    pending: "待批准", approved: "已批准", executing: "执行中",
+    executed: "已执行", rejected: "已驳回", cancelled: "已撤销", rolled_back: "已回退",
+  };
+  let swapFilterStatus = "";
+  function _swapClassMap(classes) {
+    const m = new Map();
+    (classes || []).forEach((c) => { if (c.classId) m.set(c.classId, c.name || c.classId); });
+    return m;
+  }
+  function _swapFmt(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString("zh-CN", { hour12: false }); } catch (_) { return iso; }
+  }
+  function _swapStatusTag(status) {
+    const label = SWAP_STATUS[status] || status;
+    const cls = { pending: "warn", approved: "", executing: "warn", rejected: "err", cancelled: "", rolled_back: "" }[status] || "";
+    return `<span class="tag ${cls}">${esc(label)}</span>`;
+  }
+
+  views.swap = async () => {
+    const [classes, list, cfg] = await Promise.all([
+      API.listClasses().catch(() => []),
+      API.swapList({ status: swapFilterStatus }).catch(() => ({ items: [], total: 0 })),
+      API.swapGetConfig().catch(() => ({})),
+    ]);
+    const nameMap = _swapClassMap(classes);
+    const cur = API.state.classId || "";
+    const curClassId = (classes || []).find((c) => c.id === cur && c.classId) || {};
+    const curId = (curClassId && curClassId.classId) || cur;
+    const classOpts = (cls, sel) => (classes || [])
+      .filter((c) => c.classId)
+      .map((c) => `<option value="${esc(c.classId)}" ${c.classId === sel ? "selected" : ""}>${esc(c.name || c.classId)}</option>`)
+      .join("");
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const loc = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const defStart = loc(now);
+    const defEnd = loc(new Date(now.getTime() + 4 * 3600 * 1000));
+
+    const item = (r) => {
+      const fa = nameMap.get(r.from_class_id) || r.from_class_id;
+      const tb = nameMap.get(r.to_class_id) || r.to_class_id;
+      const kind = r.swap_type === "oneway" ? "单切" : "互换";
+      const btns = [];
+      if (r.status === "pending") {
+        btns.push(`<button class="primary" data-act="swap-approve" data-id="${esc(r.id)}">批准</button>`);
+        btns.push(`<button data-act="swap-reject" data-id="${esc(r.id)}">驳回</button>`);
+        btns.push(`<button data-act="swap-cancel" data-id="${esc(r.id)}">撤销</button>`);
+      } else if (r.status === "executed") {
+        btns.push(`<button data-act="swap-rollback" data-id="${esc(r.id)}" title="提前结束互换，把课表方案换回来">手动回退</button>`);
+      }
+      const btnsHtml = btns.length ? `<td style="white-space:nowrap">${btns.join(" ")}</td>` : "<td></td>";
+      return `<tr>
+        <td>${esc(fa)}<span class="muted"> → ${esc(tb)}</span></td>
+        <td>${kind}${r.swap_type === "swap" ? `<span class="muted" title="课表方案${r.from_plan_before} ↔ ${r.to_plan_before}"> · 对调</span>` : ""}</td>
+        <td>${_swapStatusTag(r.status)}</td>
+        <td class="muted" style="font-size:12px">${_swapFmt(r.effective_start_at) || "立即"}<br/>${_swapFmt(r.effective_end_at) || "长期"}</td>
+        <td class="muted" style="font-size:12px">${esc(r.reason || "")}</td>
+        ${btnsHtml}
+      </tr>`;
+    };
+    const rows = ((list && list.items) || []).map(item).join("") ||
+      `<tr><td colspan="6" class="muted" style="text-align:center;padding:16px 0">暂无申请记录</td></tr>`;
+
+    const tabs = ["", "pending", "approved", "executed", "rejected", "rolled_back"]
+      .map((s) => `<button class="chip${swapFilterStatus === s ? " active" : ""}" data-act="swap-filter" data-status="${s}">${s ? SWAP_STATUS[s] : "全部"}</button>`)
+      .join(" ");
+
+    return `
+      <div class="card">
+        <h3>自助切班 · 发起互换</h3>
+        <p class="muted">两个班对调课表方案，或把 A 班切成 B 班当前的方案（单切）。带生效时段时，到期自动换回原方案（后端每 30s 巡检）。${cfg.requires_approval === false ? "免审批模式：提交即执行。" : "默认需批准后方执行。"}</p>
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <label>发起班级（A）
+            <select id="swap-from" class="w100">${classOpts(classes, curId)}</select></label>
+          <label>目标班级（B）
+            <select id="swap-to" class="w100">${classOpts(classes, "")}</select></label>
+        </div>
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+          <label>类型
+            <select id="swap-type" class="w100">
+              <option value="swap">互换（A↔B 方案对调）</option>
+              <option value="oneway">单切（A 换成 B 的方案）</option>
+            </select></label>
+          <label>原因（选填）
+            <input id="swap-reason" class="w100" placeholder="如：周三两班合堂调课" maxlength="120"/></label>
+        </div>
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+          <label>开始生效 <input id="swap-start" type="datetime-local" class="w100" value="${defStart}"/></label>
+          <label>到期自动换回 <input id="swap-end" type="datetime-local" class="w100" value="${defEnd}"/></label>
+        </div>
+        <p class="muted" style="margin-top:6px">A/B 相同、时段与进行中申请重叠、两个班当前方案一致时都会被后端拒绝。</p>
+        <button class="primary" data-act="swap-submit" data-need="control">提交互换申请</button>
+      </div>
+      <div class="card">
+        <h3>互换申请记录</h3>
+        <div style="margin-bottom:8px">${tabs}</div>
+        <table class="tbl"><thead><tr><th>班级</th><th>方式</th><th>状态</th><th>生效时段</th><th>原因</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <p class="muted">已批准后由系统按「先挂起 → 再切方案」执行；执行中的申请若到期会先回退再放行新申请。</p>
+      </div>`;
+  };
+
   // ============ 移动端侧栏抽屉 ============
   // 窄屏下侧栏是浮层（见 styles.css 的 @media(max-width:760px)）：默认收起，
   // 由顶栏汉堡按钮开合，点菜单项 / 遮罩 / Esc 自动收起。
@@ -2704,6 +2879,48 @@
         randomHistory.push(picked); _randomSave(); return go("random");
       }
       if (act === "random-reset") { randomDrawn = new Set(); _randomSave(); toast("已重置「已抽」标记"); return go("random"); }
+      // ---- 自助切班（互换 / 单切）----
+      if (act === "swap-filter") { swapFilterStatus = el.dataset.status || ""; return go("swap"); }
+      if (act === "swap-submit") {
+        const from = (document.getElementById("swap-from") || {}).value || "";
+        const to = (document.getElementById("swap-to") || {}).value || "";
+        const type = (document.getElementById("swap-type") || {}).value || "swap";
+        if (!from || !to) return toast("请选择发起班级与目标班级");
+        if (from === to) return toast("不能与自身互换，请换一个目标班级");
+        const reason = ((document.getElementById("swap-reason") || {}).value || "").trim();
+        const s = (document.getElementById("swap-start") || {}).value || "";
+        const e = (document.getElementById("swap-end") || {}).value || "";
+        if (s && e && new Date(s) >= new Date(e)) return toast("开始时间必须早于结束时间");
+        const payload = { from_class_id: from, to_class_id: to, swap_type: type, reason: reason || undefined };
+        if (s) payload.effective_start_at = new Date(s).toISOString();
+        if (e) payload.effective_end_at = new Date(e).toISOString();
+        try {
+          const r = await API.swapCreate(payload);
+          toast((r && r.message) || "已提交");
+          swapFilterStatus = "";
+          return go("swap");
+        } catch (err) {
+          return toast("提交失败：" + ((err && err.message) || err));
+        }
+      }
+      if (act === "swap-approve") {
+        try { const r = await API.swapApprove(el.dataset.id); toast((r && r.message) || "已批准"); return go("swap"); }
+        catch (err) { return toast("批准失败：" + ((err && err.message) || err)); }
+      }
+      if (act === "swap-reject") {
+        const why = prompt("驳回原因（选填）：") ?? null;
+        try { const r = await API.swapReject(el.dataset.id, why || ""); toast((r && r.message) || "已驳回"); return go("swap"); }
+        catch (err) { return toast("驳回失败：" + ((err && err.message) || err)); }
+      }
+      if (act === "swap-cancel") {
+        try { const r = await API.swapCancel(el.dataset.id); toast((r && r.message) || "已撤销"); return go("swap"); }
+        catch (err) { return toast("撤销失败：" + ((err && err.message) || err)); }
+      }
+      if (act === "swap-rollback") {
+        if (!confirm("确认现在就把课表方案换回原样（提前结束本次互换）？")) return;
+        try { const r = await API.swapRollback(el.dataset.id); toast((r && r.message) || "已回退"); return go("swap"); }
+        catch (err) { return toast("回退失败：" + ((err && err.message) || err)); }
+      }
       // ---- 文件传输（面板侧；下发依赖部署包）----
       if (act === "ft-upload") {
         const f = document.getElementById("ft-file");
@@ -2947,6 +3164,10 @@
         await API.deviceAction(el.dataset.id, el.dataset.a);
         API.audit("device." + el.dataset.a, el.dataset.id, "下发设备指令");
         toast(`已下发指令：${el.dataset.a} → ${el.dataset.id}`);
+        // #T07.7 步骤 3：截图指令下发后轮询回传 —— 教室端代理截屏后会把 PNG
+        // 回传到 ext 网关（/api/console/ext/captures），这里等待并弹窗展示。
+        // data-host 是 agent 的 UID（设备行只带 client_id，回传 key 是 UID）。
+        if (el.dataset.a === "screenshot") waitForCapture(el.dataset.id, el.dataset.host);
       }
       else if (act === "assign") {
         const id = el.dataset.id;
