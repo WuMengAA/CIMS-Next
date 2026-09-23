@@ -192,16 +192,25 @@ export async function GET(event: RequestEvent) {
 		}
 		case "vnc-session": {
 			// 面板轮询：按 uid 取教室端回报的 VNC 会话。
+			// ⚠️ 双 key（#T07.7 步骤 5 脱节修复）：面板下发指令用的是 CIMS 的
+			// `client_id`（lab-pc-001），而教室端代理回报时用的是自己的
+			// `device_uid`（主机名 n7-20091211）——两者是**不同的串**。
+			// 只按 client_id 查会永远 `no_session_reported`，即使代理早就报过。
+			// 与 captures 的 waitForCapture 双 key 方案对齐：先按 uid（client_id）
+			// 查，miss 再按 host（= agent 的 UID）查。查询 key 本身已小写归一化
+			// （console-ext.ts sKey toLowerCase），host 传大写 N7-20091211 也能命中。
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-			if (!uid) return json({ session: null, reason: "missing_uid" });
-			const s = getDeviceSession("vnc", uid);
+			const host = String(event.url.searchParams.get("host") ?? "").trim();
+			if (!uid && !host) return json({ session: null, reason: "missing_uid" });
+			const s = getDeviceSession("vnc", uid) || (host ? getDeviceSession("vnc", host) : null);
 			// 明确区分「没人报过」与「报过但已过期」—— 前者要查代理，后者只要重发一次指令。
 			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
 		}
 		case "media-session": {
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-			if (!uid) return json({ session: null, reason: "missing_uid" });
-			const s = getDeviceSession("media", uid);
+			const host = String(event.url.searchParams.get("host") ?? "").trim();
+			if (!uid && !host) return json({ session: null, reason: "missing_uid" });
+			const s = getDeviceSession("media", uid) || (host ? getDeviceSession("media", host) : null);
 			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
 		}
 		case "captures": {

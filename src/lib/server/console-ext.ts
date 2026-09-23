@@ -714,13 +714,20 @@ export type DeviceSession = {
 const SESSION_TTL_MS = Math.max(30, Number(process.env.CONSOLE_SESSION_TTL_SECONDS ?? 300)) * 1000;
 const deviceSessions = new Map<string, DeviceSession>();
 
-const sKey = (proto: string, uid: string) => `${proto}:${uid}`;
+// ⚠️ uid 必须小写归一化（#T07.7 步骤 5 实测脱节）：教室端代理上报用的是
+// `device_uid`（主机名，可能是小写 n7-20091211），而 CIMS 面板轮询用的是
+// `client_id`（lab-pc-001）或 `host` 字段（大写 N7-20091211）——同一个设备的
+// 两种写法如果不归一化，`vnc:${uid}` 就永远对不上，症状是「面板一直等待设备
+// 回报会话地址」而 agent 其实早就报过了。与 captures 的 putDeviceCapture 同款
+// 处理（那边也是 toLowerCase 后当 key）。
+const sKey = (proto: string, uid: string) => `${proto}:${String(uid ?? "").trim().toLowerCase()}`;
 
-/** 登记/覆盖一个设备会话，返回落库后的对象。 */
+/** 登记/覆盖一个设备会话，返回落库后的对象。uid 存小写（key 归一化，查询双 key 才能命中）。 */
 export function putDeviceSession(
 	input: Omit<DeviceSession, "at"> & { at?: number }
 ): DeviceSession {
-	const s: DeviceSession = { ...input, at: input.at ?? Date.now() };
+	const uid = String(input.uid ?? "").trim().toLowerCase();
+	const s: DeviceSession = { ...input, uid, at: input.at ?? Date.now() };
 	deviceSessions.set(sKey(s.proto, s.uid), s);
 	return s;
 }

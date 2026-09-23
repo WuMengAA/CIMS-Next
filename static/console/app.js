@@ -946,7 +946,7 @@
           <td><span class="tag ${c.bound ? "ok" : "warn"}">${esc(c.label)}</span></td>
           <td>${esc(d.last)}</td>
           <td>${stateTag(d)}</td>
-          <td><button class="primary" data-act="remote-start" data-need="remote" data-id="${d.id}" ${d.online ? "" : "disabled"}>远程控制</button></td></tr>`;
+          <td><button class="primary" data-act="remote-start" data-need="remote" data-id="${d.id}" data-host="${esc(d.host || d.id)}" ${d.online ? "" : "disabled"}>远程控制</button></td></tr>`;
                 })
                 .join("")
             : emptyRow(5, "该账户下暂无已注册设备")
@@ -3694,13 +3694,15 @@
 
         // 轮询扩展网关的 VNC 会话回执（设备代理启动 VNC 后回报 ip/port/token）。
         // 30 秒等待期**必须有进度**，否则界面看起来像卡死（本页最常见的抱怨）。
+        // ⚠️ 双 key：设备行只带 client_id（uid），回执 key 是 agent 的 UID（host）——
+        // 只查 uid 会永远等不到（#T07.7 步骤 5 脱节修复，与截图 waitForCapture 同款）。
         const novnc = API.state.noVncUrl;
         const TOTAL = 20, STEP = 1500, SECS = (TOTAL * STEP) / 1000;
         let session = null;
         for (let i = 0; i < TOTAL; i++) {
           if (note) note.textContent = `已下发远程控制指令（CIMS → 插件 → 本地代理按需启 VNC）。等待设备回报会话地址…（${Math.round(((i + 1) * STEP) / 1000)}/${SECS} 秒）`;
           await new Promise((r) => setTimeout(r, STEP));
-          session = await API.deviceRemoteStatus(uid);
+          session = await API.deviceRemoteStatus(uid, el.dataset.host);
           if (session && session.ip && session.port) break;
         }
 

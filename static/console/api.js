@@ -1254,9 +1254,15 @@
       return out;
     },
     // 轮询扩展网关，取设备最新 VNC 会话回执：{ip, port, token} 或 null
-    deviceRemoteStatus: async (uid) => {
+    // ⚠️ 双 key（#T07.7 步骤 5 脱节修复）：CIMS 下发指令用的是 client_id（lab-pc-001），
+    // 教室端代理回报会话用的是 device_uid（主机名 n7-20091211）。只查 client_id
+    // 会永远拿不到回执。先按 uid 查，miss 再按 host（= agent 的 UID）查 —— 与
+    // waitForCapture 的截图双 key 同一套路；host 传大写也能命中（服务端已归一化）。
+    deviceRemoteStatus: async (uid, host) => {
       try {
-        const r = await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`);
+        const q = "/vnc-session?uid=" + encodeURIComponent(uid) +
+          (host && host !== uid ? "&host=" + encodeURIComponent(host) : "");
+        const r = await ext(q);
         return r && r.session ? r.session : null;
       } catch (_) { return null; }
     },
