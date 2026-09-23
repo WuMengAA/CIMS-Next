@@ -795,6 +795,29 @@
     return { envelope, dropped };
   }
 
+  // ---- 归一化单一命名空间（2026-09-23 T07.6 数据卫生收敛）----
+  //
+  // 视图契约 → 官方信封的全部归一化逻辑（norm*/denorm* 及配套辅助）聚合于此，
+  // 作为面板内部与对外的**统一入口**：新代码一律走 NORM.*，不再散落自由函数名。
+  // 旧函数名保留（见各成员注释），API 导出保持 `API.normModules` 等兼容名
+  // （app.js 至今仍用 API.normModules 渲染模块开关），因此本收敛对外行为零变化。
+  // 配套防漂移工具：`D:\Stelarith\_probe\console-copy-diff.mjs`（web 权威 vs 副本比对）。
+  const NORM = Object.freeze({
+    fmtTime,
+    ago,
+    auditActionLabel,
+    subjectNameMap,
+    notices: normNotices,       // 通知列表 → 面板形态
+    chat: normChat,             // 聊天消息 → 面板形态
+    audit: normAudit,           // 操作日志 → 面板形态
+    resources: normResources,   // CIMS 资源列表 → {id,name}
+    device: normDevice,         // device-status 一条 → 面板设备结构
+    demoDevice,
+    modules: normModules,       // 模块快照 {id:bool} → 有序数组（含目录文案）
+    schedule: normSchedule,     // 官方 Profile 信封 → 面板课表形态
+    denormSchedule,             // 面板课表形态 → 官方信封（回写方向）
+  });
+
   // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
   // 与 ext/stelarith-agent 的 verify() 对齐：token = hex(HMAC_SHA256(action + "|" + ts, secret))。
   // 生产环境：secret 为「网站—设备」共享密钥；更高安全用网站私钥 Ed25519 签名（见 sync/sign-task.mjs），
@@ -852,7 +875,9 @@
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setAccountId, setClass, setDemo, clearAuth, acct, canUseBackend, wantDemo, markOffline, markOnline,
     // 展示层辅助（面板渲染设备状态/模块开关直接用，避免在 app.js 里各写一套格式化）
-    normModules, ago, MODULE_CATALOG,
+    // NORM = 归一化单一命名空间（T07.6 收敛）：所有 norm*/denorm* 从这里取；
+    // normModules/ago 等旧名保留兼容（app.js 至今仍用 API.normModules）。
+    NORM, normModules, ago, MODULE_CATALOG,
     // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest / voicehubPush）。
     // 曾经写成 `voicehubList, voicehubRequest, voicehubPush,` 的简写属性：这几个标识符并不存在，
     // 对象字面量一求值就抛 ReferenceError，导致 global.API 从未赋值、整个面板 API 层全废。
@@ -956,7 +981,7 @@
       // 这条路径给出的是 `cp_class01` 这类机器名，不是给人看的班级名，仅作最后兜底。
       try {
         const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
-        return Array.isArray(r) ? normResources(r) : [];
+        return Array.isArray(r) ? NORM.resources(r) : [];
       } catch (_) {
         return [];
       }
@@ -976,7 +1001,7 @@
       try {
         subEnv = await cli(`/v1/client/Subjects?name=sub_school`, {}, null);
       } catch (_) { /* 科目表缺失：退化为显示短 GUID，不阻断课表 */ }
-      return normSchedule(env, subEnv);
+      return NORM.schedule(env, subEnv);
     },
     putSchedule: async (cls, panelOrEnvelope) => {
       const name = cls || state.classId || "default_classplan";
@@ -985,7 +1010,7 @@
       let payload = panelOrEnvelope;
       let dropped = [];
       if (panelOrEnvelope && Array.isArray(panelOrEnvelope.days)) {
-        const r = denormSchedule(panelOrEnvelope);
+        const r = NORM.denormSchedule(panelOrEnvelope);
         payload = r.envelope;
         dropped = r.dropped;
       }
@@ -1048,7 +1073,7 @@
         markOnline();
         return {
           fresh: Number((r && r.fresh_seconds) || 90) || 90,
-          devices: list.map(normDevice),
+          devices: list.map(NORM.device),
         };
       } catch (e) {
         // 原实现在这里回落演示设备（仅挂 error:true，UI 并不读它），
@@ -1340,7 +1365,7 @@
     // 定向解析 → 去重 → 下发 → 留痕 → 审计」一条龙。面板只管发一次。
     // 只有「独立打开面板且未配站点后端」时才退化为直连 CIMS 的旧路径。
     listNotices: async (classId) =>
-      normNotices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
+      NORM.notices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
     sendNotice: async (title, scope, classes, content, seconds) => {
       const body = {
         title,
@@ -1495,7 +1520,7 @@
     // 正文含 @全体 / @all 时，服务端会自动把这条升级为教室大屏广播（见
     // src/routes/api/console/ext/[...path]/+server.ts 的 chat 分支）——
     // 即「不要把重要消息只留在群里」，喊一句就上屏幕，不必再切页手工重发。
-    listChat: async (room) => normChat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
+    listChat: async (room) => NORM.chat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
     sendChat: async (text, from, room) => {
       const me = from || (state.classId || "电教委员");
       const r = await ext("/chat", {
@@ -1602,7 +1627,7 @@
 
     // ---- 操作日志（站点侧 SQLite）----
     listAudit: async (action) =>
-      normAudit(await ext("/audit" + (action ? "?action=" + encodeURIComponent(action) : ""), {}, "audit")),
+      NORM.audit(await ext("/audit" + (action ? "?action=" + encodeURIComponent(action) : ""), {}, "audit")),
     /** 记一条集控操作日志；失败不抛（审计不应阻断主流程）。 */
     audit: async (action, target, detail) => {
       try {
