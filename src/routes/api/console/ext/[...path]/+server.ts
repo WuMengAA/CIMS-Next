@@ -94,8 +94,26 @@ const DEVICE_TIERS: DeviceTier[] = ["watch", "control", "remote", "manage"];
  */
 type ConsoleUser = User & { id: number };
 
+/**
+ * 取请求用户：优先 `Authorization: Bearer`（桌面端官方客户端 / CLI 自检），
+ * 兜底 `admin_token` cookie（浏览器面板）。两路都走同一套 verifyToken 会话校验，
+ * Bearer 失效同样 401 —— 不会比 cookie 路径更宽。
+ *
+ * 为什么加这一层（#T07.7 步骤 4）：桌面端控制侧「远程截图 → 拉图」要轮询
+ * GET /captures，但桌面端没有 cookie 机制（token 存在 shared_preferences、
+ * 请求一律带 Bearer 头）。不加的话桌面端拿不到截图回传，截图链路在桌面端断掉。
+ */
+function requestUser(event: RequestEvent): User | null {
+	const bearer = event.request.headers.get("authorization") ?? "";
+	if (/^Bearer\s+/i.test(bearer)) {
+		const u = verifyToken(bearer.replace(/^Bearer\s+/i, "").trim());
+		if (u) return u;
+	}
+	return verifyToken(event.cookies.get("admin_token"));
+}
+
 function guard(event: RequestEvent, need: Action | DeviceTier | "broadcast" = "viewConsole") {
-	const u = verifyToken(event.cookies.get("admin_token"));
+	const u = requestUser(event);
 	if (!u) return { error: json({ error: "请先登录" }, { status: 401 }) } as const;
 	// 缺 id 时后续所有以 id 为键的操作都会静默失效，不如在这里明确拒绝。
 	if (typeof u.id !== "number") {
