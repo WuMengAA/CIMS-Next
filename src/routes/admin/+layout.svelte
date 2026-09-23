@@ -58,6 +58,11 @@
 		// 设备集控：等级轴只需要 L1（能进面板），实际能做什么由设备轴决定，
 		// 所以这里用 viewConsole 而非 manageContent —— 电教委员/只读也能看到入口。
 		{ title: "集控面板", url: "/admin/console", icon: MonitorSmartphone, need: "viewConsole", group: "设备" },
+		// 互动广播发布：同集控门槛（viewConsole，L2+）。发布能力另由 /api/console/ext/notices
+		// 按角色广播范围二次收敛（前端只是体验层，不是安全边界）。
+		{ title: "互动广播", url: "/admin/console/broadcast", icon: Megaphone, need: "viewConsole", group: "设备" },
+		// 班级与审核：师生看「我的班级 + 审核中提示」，管理员（设备 manage 档）额外看待审队列角标。
+		{ title: "班级与审核", url: "/admin/console/classes", icon: UsersRound, need: "viewConsole", group: "设备" },
 
 		// 治理：L5 站长
 		{ title: "用户管理", url: "/admin/users", icon: UsersRound, need: "manageUsers", group: "治理" },

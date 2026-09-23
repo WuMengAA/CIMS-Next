@@ -491,6 +491,47 @@
     });
   }
 
+  // ---- 班级列表缓存（`/class/list` 拿不到时的唯一合法兜底）----
+  //
+  // 为什么需要：CIMS 的 CCProtect 会按 IP 限流（60 秒窗口内 ≥5 次异常响应即封 60 秒），
+  // 封禁期间 `/class/list` 一律 429。没有缓存时面板只剩两条路：显示**演示班级**（假）
+  // 或者显示空白 —— 前者会让老师对着不存在的班下发指令，后者会让人以为"学校没建班级"。
+  // 缓存给的是**上一次真实成功的结果**，并配一句「可能不是最新」的说明，这才诚实。
+  const CLASS_CACHE_KEY = "stelarith.classes.cache.v1";
+
+  function writeClassCache(list) {
+    try {
+      localStorage.setItem(CLASS_CACHE_KEY, JSON.stringify({
+        at: Date.now(),
+        host: state.mgmtHost || "",
+        accountId: state.accountId || "",
+        list,
+      }));
+    } catch (_) { /* 隐私模式 / 配额满：缓存是尽力而为，失败不影响主流程 */ }
+  }
+
+  function readClassCache() {
+    try {
+      const raw = localStorage.getItem(CLASS_CACHE_KEY);
+      if (!raw) return [];
+      const obj = JSON.parse(raw);
+      // 缓存必须绑定「哪台后端 + 哪个账户」：否则换一所学校登录时，
+      // 下拉里会冒出上一所学校的班级 —— 这是最不能容忍的一类串档。
+      if (obj.host !== (state.mgmtHost || "") || obj.accountId !== (state.accountId || "")) return [];
+      return Array.isArray(obj.list) ? obj.list : [];
+    } catch (_) { return []; }
+  }
+
+  /** 把上游异常翻成一句老师能照着做的话（尽量给出"等多久/怎么办"）。 */
+  function describeClassErr(e) {
+    const m = String((e && e.message) || e || "");
+    if (/429|100429|异常封禁|限流/.test(m)) return "服务正在限流，请等 1 分钟后再试";
+    if (/401|未授权/.test(m)) return "登录状态已失效，请重新登录";
+    if (/timeout|abort|超时/i.test(m)) return "后端响应超时（本机 CIMS 可能没在跑）";
+    if (/该账户下暂无班级/.test(m)) return "该账户名下还没有班级";
+    return m || "未知错误";
+  }
+
   // ---- 星璃功能模块目录（面板展示用） ----
   //
   // 与插件端 `StelarithModules.All` 一一对应（id 必须完全一致 —— 三处共用同一套字符串：
@@ -850,31 +891,75 @@
     // putSchedule 的既有契约一致，改语义会连带打断聊天房间号等下游），
     // 另给 classId / displayCode 供界面显示。
     listClasses: async () => {
+      state.classListError = null;
       if (wantDemo()) return D.classes();
       if (canUseBackend()) {
-        try {
-          const r = await reqTo(state.mgmtHost, "/class/list");
-          if (Array.isArray(r) && r.length) {
-            const mapped = r
-              .map((c) => ({
-                id: c.class_plan || "",
-                name: c.name || c.class_id || "",
-                code: c.code || "",
-                classId: c.class_id || "",
-                displayCode: c.display_code || c.name || c.class_id || "",
-                deviceCount: c.device_count || 0,
-                sortOrder: c.sort_order || 0,
-              }))
-              // 没有课表资源名的班级不进下拉：选中它会用空 name 去取资源，
-              // 客户端只会拿到 404 / 空课表 —— 与其列出来误导人，不如不列。
-              .filter((c) => c.id && c.name)
-              .sort((a, b) => a.sortOrder - b.sortOrder || String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
-            if (mapped.length) return mapped;
+        let lastErr = null;
+        let notFound = false;
+        // 重试：429（CCProtect 封禁）与瞬时 5xx 都是**短时**故障，隔几百毫秒重试即可。
+        // 不重试的代价在 2026-09-22 被用户当场抓到：面板一打开，班级下拉里是演示班级
+        // （「高一(1)班」这种根本不存在的班），切也切不动 —— 因为真实请求被限流后，
+        // 旧实现直接静默换成了演示数据。
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const r = await reqTo(state.mgmtHost, "/class/list");
+            if (Array.isArray(r)) {
+              const mapped = r
+                .map((c) => ({
+                  id: c.class_plan || "",
+                  name: c.name || c.class_id || "",
+                  code: c.code || "",
+                  classId: c.class_id || "",
+                  displayCode: c.display_code || c.name || c.class_id || "",
+                  deviceCount: c.device_count || 0,
+                  sortOrder: c.sort_order || 0,
+                }))
+                // 没有课表资源名的班级不进下拉：选中它会用空 name 去取资源，
+                // 客户端只会拿到 404 / 空课表 —— 与其列出来误导人，不如不列。
+                .filter((c) => c.id && c.name)
+                .sort((a, b) => a.sortOrder - b.sortOrder || String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
+              if (mapped.length) { writeClassCache(mapped); return mapped; }
+              // 后端应答了、但该账户名下确实没有班级 → 重试不会有别的结果
+              lastErr = new Error("该账户下暂无班级");
+              break;
+            }
+            lastErr = new Error("班级列表返回了非数组");
+          } catch (e) {
+            lastErr = e;
+            // 404 = 后端根本没有这个接口（老版本），重试无意义，交给下面的兼容分支
+            if (/HTTP 404/.test(String((e && e.message) || ""))) { notFound = true; break; }
           }
-        } catch (_) { /* 老后端没有 class_plan 字段 → 回退资源名清单，至少不空 */ }
+          if (attempt < 2) await new Promise((r2) => setTimeout(r2, 350 * (attempt + 1)));
+        }
+
+        if (!notFound) {
+          // ① 有上次成功加载的结果 → 用它顶着，并**明确标注"不是最新"**。
+          //    老师看到的是真班级（只是可能少一个新建的），而不是凭空出现的假班级。
+          const cached = readClassCache();
+          if (cached.length) {
+            state.classListError = {
+              stale: true,
+              message: "班级列表暂时取不到（" + describeClassErr(lastErr) + "），当前显示的是上次成功加载的结果",
+            };
+            return cached;
+          }
+          // ② 没有缓存 → 显式报错并给空列表。**绝不**用演示班级冒充真实班级：
+          //    对着错误的班级下指令，比看到"加载失败"危险得多。
+          state.classListError = {
+            stale: false,
+            message: "班级列表获取失败：" + describeClassErr(lastErr),
+          };
+          return [];
+        }
       }
-      const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
-      return Array.isArray(r) ? normResources(r) : D.classes();
+      // 只有「后端没有 /class/list 这个接口」才退回资源名清单（老后端兼容路径）。
+      // 这条路径给出的是 `cp_class01` 这类机器名，不是给人看的班级名，仅作最后兜底。
+      try {
+        const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
+        return Array.isArray(r) ? normResources(r) : [];
+      } catch (_) {
+        return [];
+      }
     },
 
     // ---- 课表（ClassPlan 资源）----
@@ -921,14 +1006,16 @@
         { method: "POST", body: JSON.stringify(payload) }, "config");
     },
 
-    // ---- 插件/组件（Components 资源）----
-    listPlugins: async () => {
-      const r = await cims(`/account/${acct()}/Components/list`, {}, "plugins");
-      return Array.isArray(r) ? normResources(r) : D.plugins();
+    // ---- 大屏组件布局（Components 资源：default_components）----
+    // ⚠️ 历史教训：这里曾用 `/Components/list` 把所有资源名（课表方案 default_classplan /
+    //   cp_classNN、点歌榜 songboard…）当"组件"列出来，再把不存在的 enabled 字段渲染成
+    //   "已禁用" → 整页假状态。组件布局只有 `default_components` 这一张真资源，只碰它。
+    getComponents: async () => {
+      return cli(`/v1/client/Components?name=default_components`, {}, "config");
     },
-    setPlugin: async (id, enabled) => {
-      return cims(`/account/${acct()}/Components/write?name=${encodeURIComponent(id)}`,
-        { method: "POST", body: JSON.stringify({ enabled }) }, "plugins");
+    saveComponents: async (payload) => {
+      return cims(`/account/${acct()}/Components/write?name=default_components`,
+        { method: "POST", body: JSON.stringify(payload) }, "config");
     },
 
     // ---- 设备（客户端控制，CIMS 原生）----

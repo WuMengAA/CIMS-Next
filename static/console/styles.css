@@ -328,6 +328,42 @@ th { color: var(--muted-foreground); font-weight: 400; font-size: 11.5px; letter
 tbody tr:hover { background: var(--panel2); }
 
 .muted { color: var(--dim); }
+
+/* ===== 顶栏「当前班级」选择器 =====
+   面板上**每个视图**的数据（课表 / 设备 / 广播 / 通知 / 截屏）都跟着它走，
+   所以它不能是一个与背景同色的裸 select —— 必须"一眼看出这是什么、并且能点"。
+   旧版的问题：宽度只有内容那么宽、与权限/身份/设置挤在一排、没有文字说明，
+   老师既注意不到它，也说不清"我现在看的是哪个班"。
+   三态：正常（陶土橙描边）/ 数据可能过期（黄）/ 加载失败（红 + 可点重试）。 */
+.class-pick {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px 2px 10px; max-width: 268px;
+  border: 1px solid var(--primary); border-radius: 999px;
+  background: rgba(204, 120, 92, .12);
+  transition: background-color .18s ease, border-color .18s ease;
+}
+.class-pick:hover { background: rgba(204, 120, 92, .2); }
+.class-pick .cp-label {
+  font-size: 11px; color: var(--muted-foreground);
+  white-space: nowrap; letter-spacing: .02em;
+}
+/* 下拉本体：去掉自带的框与底色，让整颗胶囊看起来是**一个**控件 */
+.class-pick #class-select {
+  background: transparent; border: 0; padding: 3px 2px;
+  color: var(--foreground); font-size: 12.5px; font-weight: 500;
+  max-width: 176px; min-width: 0; text-overflow: ellipsis;
+}
+.class-pick #class-select:focus { box-shadow: none; outline: none; border: 0; }
+/* option 是浏览器原生弹层，必须显式给底色 —— 否则暗色主题下会出现
+   黑底黑字（看不出来）或白底白字 */
+.class-pick #class-select option { background: var(--panel); color: var(--text); }
+/* 用了缓存兜底 → 黄；彻底取不到 → 红，点一下重试 */
+.class-pick.stale { border-color: var(--warn); background: rgba(216, 178, 92, .14); }
+.class-pick.err { border-color: var(--err); background: rgba(247, 93, 89, .14); cursor: pointer; }
+.class-pick.err .cp-label { color: var(--err); }
+.class-pick.err .cp-label::after { content: " · 点此重试"; }
+.class-pick.loading { opacity: .65; }
+
 .chip {
   background: var(--panel2); padding: 3px 9px; border-radius: 999px;
   font-size: 12px; color: var(--muted-foreground); border: 1px solid var(--line);
@@ -486,7 +522,10 @@ button, select, input, textarea { touch-action: manipulation; }
   #topbar { padding: 0 10px; gap: 8px; }
   .top-left { flex: 1 1 auto; }
   .top-right { flex: 0 1 auto; min-width: 0; gap: 6px; }
-  #class-select { max-width: 104px; min-width: 0; }
+  /* 窄屏：空间不够，"当前班级"四个字让位给班级名本身（胶囊形状保留，仍可辨识） */
+  .class-pick { max-width: 156px; padding: 2px 4px 2px 8px; gap: 0; }
+  .class-pick .cp-label { display: none; }
+  .class-pick #class-select { max-width: 138px; min-width: 0; }
   .chip, .conn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 96px; }
   #btn-settings { white-space: nowrap; flex: 0 0 auto; }
   #sidebar {
@@ -763,3 +802,60 @@ button, select, input, textarea { touch-action: manipulation; }
 .shd-status { margin-top: 10px; font-size: 12.5px; min-height: 1em; color: var(--mutedx, #63625a); }
 .shd-status.err { color: var(--err, #b3261e); }
 .shd-status.ok { color: var(--ok, #3f6212); }
+
+/* ============================================================================
+   技术说明（可折叠）
+   ----------------------------------------------------------------------------
+   表名 / 资源名 / 端口 / 协议这类内部细节，排障时要能翻到，但不该占据正文：
+   默认收起，点开才显示。凡是把「怎么实现的」写进说明的地方都用它。
+   ============================================================================ */
+details.tech { margin: 8px 0 2px; }
+details.tech > summary {
+  cursor: pointer; font-size: 12px; color: var(--dim, #63625a);
+  list-style: none; user-select: none; opacity: 0.85;
+}
+details.tech > summary::-webkit-details-marker { display: none; }
+details.tech > summary::before { content: "▸ "; }
+details.tech[open] > summary::before { content: "▾ "; }
+details.tech > summary:hover { opacity: 1; }
+details.tech > p { margin: 6px 0 0; font-size: 12.5px; }
+
+/* ============================================================================
+   身份适配
+   ----------------------------------------------------------------------------
+   1) 侧栏「更多功能」折叠：不是这个身份日常要用的入口收进去（仍然可用）。
+   2) 抽屉身份条：一眼看到"我现在是谁"。
+   3) 总览「我的身份」卡：把"我是谁 / 我能做什么 / 去哪几页"正着说一遍。
+   ============================================================================ */
+.nav-extra-hide { display: none !important; }
+.nav-more-toggle { opacity: 0.75; font-style: normal; }
+.nav-more-toggle .nav-label { font-size: 12px; }
+.nav-more-toggle:hover { opacity: 1; }
+
+.sh-who {
+  display: block; margin-top: 2px;
+  font-size: 11px; font-style: normal; line-height: 1.35;
+  color: var(--dim, #63625a); opacity: 0.9;
+}
+
+.id-card { margin-bottom: 12px; }
+.id-head { display: flex; align-items: center; gap: 12px; }
+.id-avatar {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 17px; font-weight: 600;
+  background: var(--secondary, #eceae3); color: var(--primary, #a8482b);
+}
+.id-text { min-width: 0; }
+.id-who { font-weight: 600; }
+.id-sub { font-weight: 400; opacity: 0.75; }
+.id-blurb { font-size: 12.5px; color: var(--dim, #63625a); margin-top: 2px; }
+.id-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.id-act {
+  padding: 7px 14px; font-size: 13px; cursor: pointer;
+  border-radius: calc(var(--r, 0.5rem) - 3px);
+  border: 1px solid var(--border, rgba(0,0,0,0.12));
+  background: var(--card-nested, #f4f3ee); color: inherit;
+}
+.id-act:hover { border-color: var(--primary, #a8482b); color: var(--primary, #a8482b); }
+.id-note { margin: 10px 0 0; font-size: 12px; }
