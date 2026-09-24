@@ -2667,8 +2667,13 @@
       const kind = r.swap_type === "oneway" ? "单切" : "互换";
       const btns = [];
       if (r.status === "pending") {
-        btns.push(`<button class="primary" data-act="swap-approve" data-id="${esc(r.id)}">批准</button>`);
-        btns.push(`<button data-act="swap-reject" data-id="${esc(r.id)}">驳回</button>`);
+        // 批准/驳回 = manage（审批=替他人放行班级级变更，服务端 requiredTier 已锁 manage）；
+        // 撤销 = control（发起人权责内撤回）。data-need 交给 applyGating() 统一禁用+说明，
+        // 避免无权限用户看到按钮、点了才被 403 拦。
+        if (allow("manage")) {
+          btns.push(`<button class="primary" data-act="swap-approve" data-id="${esc(r.id)}">批准</button>`);
+          btns.push(`<button data-act="swap-reject" data-id="${esc(r.id)}">驳回</button>`);
+        }
         btns.push(`<button data-act="swap-cancel" data-id="${esc(r.id)}">撤销</button>`);
       } else if (r.status === "executed") {
         btns.push(`<button data-act="swap-rollback" data-id="${esc(r.id)}" title="提前结束互换，把课表方案换回来">手动回退</button>`);
