@@ -1,7 +1,23 @@
 import { redirect } from "@sveltejs/kit";
+import os from "node:os";
 import { verifyToken } from "$lib/server/auth.js";
 import { userCan, canDevice, roleLevelLabel, ROLE_LABELS } from "$lib/permissions.js";
 import type { PageServerLoad } from "./$types";
+
+// 老师手机页二维码内容 = 局域网 IPv4 + /teacher（老师手机与本机同 Wi-Fi 即可扫码直通）。
+function firstLanIPv4(): string {
+	try {
+		const nets = os.networkInterfaces();
+		for (const list of Object.values(nets)) {
+			for (const n of list || []) {
+				if (n.family === "IPv4" && !n.internal) return n.address;
+			}
+		}
+	} catch {
+		/* 查不到用回退值 */
+	}
+	return "127.0.0.1";
+}
 
 // 老师页（T09 第一步）：手机竖屏形态，顶部「教室现在的画面」+ 三个零输入大按钮
 // （拍照 / 发通知 / 关机），权限遵循服务端硬校验 —— 本页只做体验层门控。
@@ -30,6 +46,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			control: canDevice(u.role, "control"),
 			remote: canDevice(u.role, "remote"),
 			broadcast: userCan(u, "sendBroadcast") || canDevice(u.role, "control")
-		}
+		},
+		lanHost: firstLanIPv4()
 	};
 };

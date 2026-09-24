@@ -4,6 +4,7 @@
 	// 权限遵循服务端硬校验，本页只做体验层门控（无权限按钮禁用并说明原因）。
 	import { onMount } from "svelte";
 	import type { PageData } from "./$types";
+	import TeacherQr from "$lib/components/teacher-qr.svelte";
 
 	let { data }: { data: PageData } = $props();
 
@@ -27,6 +28,10 @@
 	let classLabel = $state(data.className || "");
 	// 最新截图缩略图（页面加载时顺手拉第一台设备的）
 	let lastCapture = $state<{ at: string; bytes: number; image_base64: string } | null>(null);
+	// 加载较慢提示（首访时 CIMS 令牌缓存清空会慢 5-10s，给用户重试入口）
+	let slowHint = $state(false);
+	// 老师手机页二维码弹窗（T09 第二步 · PWA 套壳入口）
+	let qrOpen = $state(false);
 
 	// 操作状态
 	let busy = $state(false);
@@ -267,6 +272,11 @@
 	onMount(() => {
 		loadAccount();
 		loadDevices();
+		// 首访慢提示：超过 12s 还在加载 → 提示可重试（CIMS 令牌缓存清空时首读 5-10s）
+		const t = setTimeout(() => {
+			if (devicesLoading) slowHint = true;
+		}, 12000);
+		return () => clearTimeout(t);
 	});
 
 	const canPhoto = data.can.remote;
@@ -285,6 +295,14 @@
 <svelte:head>
 	<title>星集控 · 老师页</title>
 	<meta name="robots" content="noindex,nofollow" />
+	<!-- 移动端套壳（T09 第二步）：PWA manifest + 主题色 + iOS 全屏 meta，
+	     手机浏览器「添加到主屏幕」后像 App 一样全屏打开 -->
+	<link rel="manifest" href="/teacher-manifest.webmanifest" />
+	<meta name="theme-color" content="#e8b23d" />
+	<meta name="mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+	<meta name="apple-mobile-web-app-title" content="老师页" />
 </svelte:head>
 
 <div class="teacher-page">
@@ -311,9 +329,20 @@
 		{/if}
 
 		{#if devicesLoading}
-			<div class="tp-empty">正在读取本班设备…</div>
+			<div class="tp-empty">
+				正在读取本班设备…
+				{#if slowHint}
+					<span class="tp-slow">
+						加载较慢（集控服务刚重启时首次读取需数秒）。
+						<button type="button" class="tp-link-btn" onclick={loadDevices}>重试</button>
+					</span>
+				{/if}
+			</div>
 		{:else if devicesError}
-			<div class="tp-empty tp-err">{esc(devicesError)}</div>
+			<div class="tp-empty tp-err">
+				{esc(devicesError)}
+				<button type="button" class="tp-link-btn" onclick={loadDevices}>重试</button>
+			</div>
 		{:else if devices.length === 0}
 			<div class="tp-empty">本班暂无设备{data.can.watch ? "" : "（没有设备观看权限，需班主任/电教委员）"}。</div>
 		{:else}
@@ -426,9 +455,16 @@
 	{/if}
 
 	<footer class="tp-foot">
-		<a href="/admin/console">打开完整集控面板 →</a>
+		<span>
+			<button type="button" class="tp-link-btn" onclick={() => (qrOpen = true)}>📱 手机扫码打开本页</button>
+		</span>
+		<span>
+			<a href="/admin/console">打开完整集控面板 →</a>
+		</span>
 	</footer>
 </div>
+
+<TeacherQr bind:open={qrOpen} lanHost={data.lanHost} />
 
 <style>
 	/* 老师页专用样式：手机竖屏为主，桌面也兼容。不依赖站点主题令牌，自带色板。 */
@@ -628,9 +664,25 @@
 	}
 	.tp-warn-text { font-size: 14px; line-height: 1.6; color: var(--tp-muted); }
 	.tp-warn-text b { color: var(--tp-ink); }
-	.tp-foot { text-align: center; font-size: 13px; }
+	.tp-foot { text-align: center; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
 	.tp-foot a { color: var(--tp-accent); text-decoration: none; }
 	.tp-foot a:hover { text-decoration: underline; }
+	.tp-link-btn {
+		border: none;
+		background: none;
+		padding: 0;
+		color: var(--tp-accent);
+		font-size: 13px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.tp-link-btn:hover { text-decoration: underline; }
+	.tp-slow {
+		display: block;
+		margin-top: 6px;
+		font-size: 12px;
+		color: var(--tp-warn);
+	}
 
 	/* 超窄屏（<360px）：按钮高度收紧保证一屏内 */
 	@media (max-width: 380px) {

@@ -1,8 +1,25 @@
 import { redirect } from "@sveltejs/kit";
+import os from "node:os";
 import { verifyToken } from "$lib/server/auth.js";
 import { can, userCan, canDevice, isConsoleReadOnly, roleLevelLabel, allowedBroadcastScopes } from "$lib/permissions.js";
 import { getCimsAccount } from "$lib/server/cims-account.js";
 import type { PageServerLoad } from "./$types";
+
+// 老师手机页二维码内容 = 局域网 IPv4 + /teacher（老师手机与本机同 Wi-Fi 即可扫码直通）。
+// 站点 8090 监听 0.0.0.0，局域网可达；查不到就回落 127.0.0.1。
+function firstLanIPv4(): string {
+	try {
+		const nets = os.networkInterfaces();
+		for (const list of Object.values(nets)) {
+			for (const n of list || []) {
+				if (n.family === "IPv4" && !n.internal) return n.address;
+			}
+		}
+	} catch {
+		/* 查不到用回退值 */
+	}
+	return "127.0.0.1";
+}
 
 // 集控面板子页面：仅对具备 viewConsole 的角色开放（L2+：站长/编辑/审核员/电教委员/注册用户）。
 // L1 只读访客已被 can(viewConsole) 挡在门外（门槛 2026-09-16 由 L1 提到 L2）。
@@ -54,6 +71,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 		// 当前用户 id：面板用它拼一对一私聊房间名（dm:<小id>:<大id>）。
 		// 只下发 id 本身，不含任何凭据；好友关系仍由服务端按会话用户校验。
 		userId: u.id,
-		accountId: account?.id ?? ""
+		accountId: account?.id ?? "",
+		lanHost: firstLanIPv4()
 	};
 };
