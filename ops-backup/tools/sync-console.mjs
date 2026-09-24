@@ -24,8 +24,15 @@ import path from "node:path";
 import zlib from "node:zlib";
 import crypto from "node:crypto";
 
-const SRC = "D:/Stelarith/Stelarith-website/stelarith/static/console";
-const DST = "D:/Stelarith/Stelarith-website/stelarith/build/client/console";
+// SRC/DST 可用环境变量覆盖 —— 这是为了让 CI 能把本脚本跑进**临时目录**来验证它的
+// 遍历完整性（见 scripts/check-console-assets.mjs），而**不必**碰生产正在服务的 build 目录。
+// 不设变量时行为与原先完全一致。
+const SRC = process.env.CONSOLE_SRC
+  ? path.resolve(process.env.CONSOLE_SRC)
+  : "D:/Stelarith/Stelarith-website/stelarith/static/console";
+const DST = process.env.CONSOLE_DST
+  ? path.resolve(process.env.CONSOLE_DST)
+  : "D:/Stelarith/Stelarith-website/stelarith/build/client/console";
 const CHECK_ONLY = process.argv.includes("--check");
 
 // 只处理真源码文件；忽略备份与已生成的旁文件（旁文件由本脚本产出）。
@@ -39,8 +46,21 @@ const CHECK_ONLY = process.argv.includes("--check");
 //      · 全新 build 时它根本不在 build/client/console/ → 老师页报「二维码库加载失败」；
 //      · 它发生变更时 --check 恒报「已一致」→ 漂移永远查不出。
 //    这与上一条是**同一形态**的 bug（"遍历范围 < 引用范围"），别再犯第三次。
-const EXT_OK = /\.(js|mjs|css|html)$/;
-const isBackup = (rel) => /\.bak-/.test(path.basename(rel));
+// 过滤策略：**生成物拒绝列表**（2026-09-24 由"扩展名允许列表"改过来）。
+//   本文件的遍历曾因**允许列表太窄**连踩两次**同一形态**的 bug（"遍历范围 < 引用范围"）：
+//     · 2026-09-20：正则只有 (js|css|html) → `protocol.mjs` 静默漏同步
+//                   → remote-webrtc.js 拿不到协议常量、整页加载失败；
+//     · 2026-09-24：readdirSync 不递归 → `vendor/qrcode.min.js` 静默跳过
+//                   → 老师页扫码报「二维码库加载失败」。
+//   允许列表要求"每新增一种文件类型都要记得回来改这里" —— 靠记性的约束必然再犯第三次。
+//   改为只排除**本脚本自己产出的旁文件**与编辑器备份/隐藏文件，其余一律同步。
+//   安全性依据：`static/` 本来就是公开目录（SvelteKit 原样对外），
+//   多同步一个文件不会比现状更暴露，而漏同步一个文件是**静默 404**。
+const isGenerated = (rel) => /\.(br|gz)$/i.test(rel);
+const isBackup = (rel) => {
+  const base = path.basename(rel);
+  return base.startsWith(".") || /\.bak-|\.(tmp|orig|rej|swp)$/i.test(base) || /~$/.test(base);
+};
 
 function walk(dir, base = dir) {
   const out = [];
@@ -49,7 +69,7 @@ function walk(dir, base = dir) {
     if (ent.isDirectory()) {
       if (ent.name === "node_modules" || ent.name.startsWith(".")) continue;
       out.push(...walk(abs, base));
-    } else if (EXT_OK.test(ent.name) && !isBackup(abs)) {
+    } else if (!isGenerated(ent.name) && !isBackup(ent.name)) {
       out.push(path.relative(base, abs).split(path.sep).join("/"));
     }
   }
