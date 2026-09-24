@@ -77,6 +77,11 @@ obj/
 *.user
 # 临时构建备份目录
 build_prev_*/
+# 原子发布（scripts/release-site.mjs）的旁路产物与历史版本
+build.next/
+build.old-*/
+build.failed-*/
+_swap-selftest/
 
 # Tauri generated (build.rs embed output)
 /admin-console/src-tauri/gen/
