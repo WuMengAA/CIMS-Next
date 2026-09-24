@@ -1,0 +1,35 @@
+name: xingjikong
+description: "星集控 · 独立桌面集控端（原生 Windows）—— 设备管控 / 广播通知 / 课堂工具"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  http: ^1.6.0
+  shared_preferences: ^2.5.5
+  path_provider: ^2.1.5
+  crypto: ^3.0.7
+  file_picker: ^10.0.0
+  url_launcher: ^6.3.0
+  # 本机截屏用：GDI 的 BitBlt / GetDIBits 需要手写 FFI 绑定与堆分配
+  ffi: ^2.1.0
+  tray_manager: ^0.5.3
+  window_manager: ^0.5.2
+  launch_at_startup: ^0.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    # 托盘图标。用 `cp` 从 windows/runner/resources/app_icon.ico 复制而来（原件保留），
+    # 因为托盘是**运行时**按路径加载的，不经过 Windows 资源编译器。
+    - assets/app_icon.ico

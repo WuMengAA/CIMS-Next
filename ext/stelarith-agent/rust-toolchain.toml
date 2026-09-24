@@ -1,0 +1,11 @@
+# 工具链钉死说明（2026-09-22 夜班修复）
+# ----------------------------------------------------------------
+# 默认 stable (rustc 1.98.1) 在编 webrtc 0.21.0 依赖树时会触发：
+#   - debug `cargo check`：cipher 0.4.4 触发 rustc ICE（use core::slice delayed bug）
+#   - `cargo update` 后：proc-macro（thiserror-impl/futures-macro/asn1-rs）
+#     运行时 STATUS_STACK_BUFFER_OVERRUN (0xc0000409)
+# 降到 1.97.0 后：依赖 MSRV（encoding_rs/icu_*/quinn-udp/rcgen/time 要求 ≥1.88）
+# 仍满足，且上述 ICE/崩溃均消失，webrtc + rust_socketio 可 `cargo check --release` 通过。
+# 故钉 1.97.0，使本仓库在 `cargo check`/`cargo build` 时无需手动 +toolchain 即可编过。
+[toolchain]
+channel = "1.97.0"
