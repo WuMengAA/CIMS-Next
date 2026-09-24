@@ -1,0 +1,15 @@
+[package]
+name = "stelarith-guard"
+version = "0.1.0"
+edition = "2021"
+description = "星璃·集控防拆 L2 守护进程：15s 探活本地 agent 与 ClassIsland，不在则拉起并记录篡改事件。仅监听 127.0.0.1（互斥端口）。"
+
+# 体量目标：与 stelarith-agent 同级 —— release 单二进制约 0.3~1MB（纯 std，零第三方依赖）。
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"
+
+[dependencies]
+# 零依赖：HTTP 探活用 std::net::TcpStream 手写极简 GET；进程探活用 std::process::Command 跑 tasklist。

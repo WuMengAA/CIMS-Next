@@ -88,7 +88,30 @@ if (-not $InstallRoot) {
     } else {
         V '插件清单 manifest.yml' 'fail' '缺失（插件无法被宿主识别）'
     }
-    V 'stelarith-sync.json' $(if (Test-Path -LiteralPath (Join-Path $pluginDir 'stelarith-sync.json')) { 'ok' } else { 'fail' }) '插件同步配置'
+    # 插件读配置走 PluginConfigFolder 优先 → 两处都要在，且**内容要一致**。
+    # 只查 install dir 会给出假结论：那份可能根本不生效（被 Config\Plugins 里的旧文件屏蔽）。
+    $pSync = Join-Path $pluginDir 'stelarith-sync.json'
+    $cSync = Join-Path $dataDir ('Config\Plugins\' + (Split-Path -Leaf $script:PLUGIN_DIRREL) + '\stelarith-sync.json')
+    V 'stelarith-sync.json（插件目录）' $(if (Test-Path -LiteralPath $pSync) { 'ok' } else { 'fail' }) '插件同步配置'
+    V 'stelarith-sync.json（配置目录·插件实际读取）' $(if (Test-Path -LiteralPath $cSync) { 'ok' } else { 'warn' }) '按 ClassIsland 规范，插件优先读这里'
+    if ((Test-Path -LiteralPath $pSync) -and (Test-Path -LiteralPath $cSync)) {
+        $h1 = (Get-FileHash -LiteralPath $pSync -Algorithm SHA256).Hash
+        $h2 = (Get-FileHash -LiteralPath $cSync -Algorithm SHA256).Hash
+        if ($h1 -ne $h2) { V '两处同步配置一致性' 'warn' '内容不一致 —— 实际生效的是「配置目录」那份，逐项核对再改' }
+    }
+    $eff = Get-SyncConfig $InstallRoot
+    if ($eff) {
+        $mode = if ($eff.NetworkMode) { [string]$eff.NetworkMode } else { 'wan(缺省)' }
+        V '当前生效的同步配置' 'ok' ('模式 ' + $mode + ' -> ' + $eff.ClientAppBase + '（Host: ' + $eff.Slug + '.' + $eff.BaseDomain + '）')
+        if ([string]::IsNullOrWhiteSpace([string]$eff.Slug)) {
+            V '租户 Slug' 'fail' '为空 —— 所有 CIMS 请求会 403（且会被限流中间件自封 IP）'
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$eff.ClientUid)) {
+            V '本机设备身份' 'warn' ('ClientUid 被显式写死为 ' + $eff.ClientUid + ' —— 同租户下不可重复，多台机器会互相顶号')
+        } else {
+            V '本机设备身份' 'ok' ('未写死 → 插件按计算机名（' + $env:COMPUTERNAME + '）登记')
+        }
+    }
     V 'stelarith-panel.json' $(if (Test-Path -LiteralPath (Join-Path $pluginDir 'stelarith-panel.json')) { 'ok' } else { 'warn' }) '内嵌面板地址'
     V '课表档案 Default.json' $(if (Test-Path -LiteralPath (Join-Path $dataDir 'Profiles\Default.json')) { 'ok' } else { 'warn' }) '离线显示用'
 }
@@ -138,27 +161,65 @@ if (-not $agentExe -or -not (Test-Path -LiteralPath $agentExe)) {
     V '代理自启任务' $(if ($at) { 'ok' } else { 'warn' }) `
         $(if ($at) { ($script:AGENT_TASK + "（" + $at.State + "）") } else { '未注册 —— 重新登录后代理不会自动起来' })
 
-    # 只判断「有没有配」，绝不回显密钥本身
-    $acmd = Get-AgentCmdPath $InstallRoot
-    if (Test-Path -LiteralPath $acmd) {
-        $raw = Get-Content -LiteralPath $acmd -Raw
-        $hasPub    = $raw -match 'STELARITH_SITE_PUBKEY='
-        $hasSecret = $raw -match 'STELARITH_AGENT_SECRET='
-        V '代理指令验签' $(if ($hasPub -or $hasSecret) { 'ok' } else { 'warn' }) `
-            $(if ($hasPub) { 'Ed25519 公钥模式（推荐）' }
-              elseif ($hasSecret) { '共享密钥模式（须与面板「设置 → 指令密钥」一致）' }
-              else { '未配置 —— 远程控制/重启会被代理拒绝' })
+    # T08 防拆 L3：自启任务必须带失败重启 + 防叠实例 + 补启动（缺一个都会在
+    # 「被 /End 或被强杀」后躺平）；另有独立看门狗任务兜底（见下）。
+    if ($at) {
+        $hardened = ($at.Settings.RestartCount -ge 3 -and
+                     $at.Settings.MultipleInstances -eq 'IgnoreNew' -and
+                     $at.Settings.StartWhenAvailable)
+        V '代理自启加固' $(if ($hardened) { 'ok' } else { 'warn' }) `
+            $(if ($hardened) { 'RestartCount=3/PT1M + IgnoreNew + StartWhenAvailable（防拆 L3）' }
+              else { ('加固缺失（RestartCount=' + $at.Settings.RestartCount + '，Multi=' + $at.Settings.MultipleInstances + '，SWA=' + $at.Settings.StartWhenAvailable + '）—— 重新部署一次即可补齐') })
     }
+    $wt = Get-AgentWatchdogTaskInfo
+    V '代理看门狗任务' $(if ($wt) { 'ok' } else { 'warn' }) `
+        $(if ($wt) { ($script:AGENT_WATCHDOG_TASK + "（" + $wt.State + "，每 5 分钟复查，不在就拉起）") } else { '未注册 —— 代理被 /End 后无人再拉起' })
+
+    # T11 防拆 L2：守护进程（常驻 15s 探活 agent/ClassIsland，不在就拉起 + 记篡改事件）
+    $guardExe = if ($InstallRoot) { Get-AgentGuardExePath $InstallRoot } else { '' }
+    if ($guardExe -and (Test-Path -LiteralPath $guardExe)) {
+        $gt = Get-AgentGuardTaskInfo
+        V '守护进程任务' $(if ($gt) { 'ok' } else { 'warn' }) `
+            $(if ($gt) { ($script:AGENT_GUARD_TASK + "（" + $gt.State + "，登录时拉起，15s 常驻探活）") } else { '未注册 —— 杀 agent 后要等 5 分钟看门狗才拉回' })
+        $gproc = Get-Process -Name 'stelarith-guard' -ErrorAction SilentlyContinue
+        V '守护进程运行' $(if ($gproc) { 'ok' } else { 'warn' }) `
+            $(if ($gproc) { ('在跑（PID ' + $gproc.Id + '，防拆 L2）') } else { '已安装但未运行（任务未触发？）' })
+    } else {
+        V '守护进程' 'warn' '未安装（stelarith-guard.exe 缺失）—— 仅 L3 看门狗 5 分钟兜底'
+    }
+
+    # 只判断「有没有配」，绝不回显密钥本身
+    # T06 整改：密钥不在 run-agent.cmd 里了，改存 agent-secret.cmd（ACL 受限）。
+    # 兼容旧部署：旧版密钥明文写在 run-agent.cmd 里，两边都检查。
+    $secretPath = Get-AgentSecretPath $InstallRoot
+    $acmd = Get-AgentCmdPath $InstallRoot
+    $secRaw = ''
+    if (Test-Path -LiteralPath $secretPath) {
+        $secRaw = Get-Content -LiteralPath $secretPath -Raw
+    }
+    $oldRaw = ''
+    if (Test-Path -LiteralPath $acmd) {
+        $oldRaw = Get-Content -LiteralPath $acmd -Raw
+    }
+    $raw = $secRaw + "`n" + $oldRaw
+    $hasPub    = $raw -match 'STELARITH_SITE_PUBKEY='
+    $hasSecret = $raw -match 'STELARITH_AGENT_SECRET='
+    $secMode = if (Test-Path -LiteralPath $secretPath) { '密钥文件（ACL 受限）' } elseif ($raw) { '旧版启动器明文（建议重新部署以迁移）' } else { '' }
+    V '代理指令验签' $(if ($hasPub -or $hasSecret) { 'ok' } else { 'warn' }) `
+        $(if ($hasPub) { 'Ed25519 公钥模式（推荐）' + $(if ($secMode) { '，来源：' + $secMode } else { '' }) }
+          elseif ($hasSecret) { '共享密钥模式（须与面板「设置 → 指令密钥」一致）' + $(if ($secMode) { '，来源：' + $secMode } else { '' }) }
+          else { '未配置 —— 远程控制/重启会被代理拒绝' })
 }
 
-# --- AI 插件（第三方）的密钥：部署包**故意不含**，所以必须明说它会是「未配置」状态 ---
-# 为什么值得单列：密钥被抽走后，插件只是**不工作**，它不会告诉你「配置被删了」——
+# --- AI 插件（第三方）的密钥：部署包**保留配置文件但把 apiKey 置空**，所以必须明说它会是「未配置」状态 ---
+# 为什么值得单列：密钥被置空后，插件只是**不工作**，它不会告诉你「配置里是空的」——
 # 现象与「这功能坏了」完全一样，正是本项目反复强调的「静默失败」。
+# 2026-09-21 起不再整份丢弃该文件（整份丢弃会让插件启动就刷报错），改成置空密钥。
 $aiDir = if ($InstallRoot) { Join-Path $InstallRoot 'data\Config\Plugins\ClassIsland.AISmartClass' } else { '' }
 if ($aiDir -and (Test-Path -LiteralPath $aiDir)) {
     $aiFile = Join-Path $aiDir 'aisettings.json'
     if (-not (Test-Path -LiteralPath $aiFile)) {
-        V 'AI 插件密钥' 'warn' '插件在但无配置文件 —— 部署包按安全规则不含密钥（见 docs/06 E1），要用就在本机重填'
+        V 'AI 插件密钥' 'warn' '插件在但无配置文件 —— 要用就在本机重填（出包时按安全规则不落密钥）'
     } else {
         # 只判断「有没有填」，绝不回显密钥本身
         $aiRaw = Get-Content -LiteralPath $aiFile -Raw
@@ -166,7 +227,7 @@ if ($aiDir -and (Test-Path -LiteralPath $aiDir)) {
         if ($aiM.Success -and $aiM.Groups[1].Value.Length -gt 8) {
             V 'AI 插件密钥' 'ok' ('已配置（长度 ' + $aiM.Groups[1].Value.Length + '，不回显内容）')
         } else {
-            V 'AI 插件密钥' 'warn' 'apiKey 为空 —— AI 功能不会工作'
+            V 'AI 插件密钥' 'warn' 'apiKey 为空（部署包按安全规则置空）—— 要用就在本机重填，否则 AI 功能不会工作'
         }
     }
 }

@@ -63,6 +63,20 @@ if ($RemoveAutoStart) {
     } else {
         Write-Info '本地代理自启任务不存在，跳过。'
     }
+    # T08 防拆 L3：看门狗任务也要一起摘（否则「卸掉自启」后它每 5 分钟把代理再拉起来）
+    if (Get-AgentWatchdogTaskInfo) {
+        Remove-AgentWatchdog | Out-Null
+        Write-Ok ('已移除本地代理看门狗任务：' + $script:AGENT_WATCHDOG_TASK)
+    } else {
+        Write-Info '本地代理看门狗任务不存在，跳过。'
+    }
+    # T11 防拆 L2：守护进程任务也要一起摘（否则「卸掉自启」后 guard 常驻把 agent 再拉起来）
+    if (Get-AgentGuardTaskInfo) {
+        Remove-StelarithGuard | Out-Null
+        Write-Ok ('已移除本地代理守护进程任务：' + $script:AGENT_GUARD_TASK)
+    } else {
+        Write-Info '本地代理守护进程任务不存在，跳过。'
+    }
     Write-Warn '已移除开机自启与桌面快捷方式（数据与安装目录保留）。'
     exit 0
 }
@@ -177,16 +191,17 @@ if (-not (Test-Path -LiteralPath $srcAgentExe)) {
 } elseif ($DryRun) {
     Write-Info ('[演练] 将替换本地代理 -> ' + (Get-AgentExePath $InstallRoot))
 } else {
-    # 配置取值优先级：
-    #   ① 本机已在用的 run-agent.cmd（里面是本机实际生效的密钥）—— 保住「已经跑通的配置」
-    #   ② 新包 config\deployment.json 的 Agent 段 —— 适用于本机还没装过代理的情况
-    #   ③ 都没有 → 不装。半成品代理（没密钥）会让远程控制/重启全部被拒，
+    # 配置取值优先级（T06 整改后）：
+    #   ① 本机受限密钥文件 agent-secret.cmd（新部署产物，ACL 受限）—— 首选
+    #   ② 旧版 run-agent.cmd 里的明文密钥（旧部署升级路径，读出来迁移到受限文件）
+    #   ③ 新包 config\deployment.json 的 Agent 段 —— 适用于本机还没装过代理的情况
+    #   ④ 都没有 → 不装。半成品代理（没密钥）会让远程控制/重启全部被拒，
     #      比明确不装更糟：面板上看着有，点了永远失败。
     $agentCfg = [ordered]@{ DeviceUid = ''; Secret = ''; SitePubKey = ''; ExtUrl = ''; VncCmd = '' }
     $cfgSource = ''
-    $oldCmd = Get-AgentCmdPath $InstallRoot
-    if (Test-Path -LiteralPath $oldCmd) {
-        $raw = Get-Content -LiteralPath $oldCmd -Raw
+    $secretPath = Get-AgentSecretPath $InstallRoot
+    if (Test-Path -LiteralPath $secretPath) {
+        $raw = Get-Content -LiteralPath $secretPath -Raw
         foreach ($pair in @(
             @('STELARITH_DEVICE_UID',    'DeviceUid'),
             @('STELARITH_AGENT_SECRET',  'Secret'),
@@ -196,17 +211,45 @@ if (-not (Test-Path -LiteralPath $srcAgentExe)) {
             $m = [regex]::Match($raw, ('set "' + $pair[0] + '=([^"]*)"'))
             if ($m.Success) { $agentCfg[$pair[1]] = $m.Groups[1].Value.Replace('%%', '%') }
         }
-        $cfgSource = '本机现有启动器'
+        $cfgSource = '本机受限密钥文件'
+        # 旧版明文启动器里的 DeviceUid/ExtUrl/VncCmd 也要带上（新文件只存密钥）
+        $oldCmd = Get-AgentCmdPath $InstallRoot
+        if (Test-Path -LiteralPath $oldCmd) {
+            $oraw = Get-Content -LiteralPath $oldCmd -Raw
+            foreach ($pair in @(
+                @('STELARITH_DEVICE_UID', 'DeviceUid'),
+                @('STELARITH_EXT_URL',    'ExtUrl'),
+                @('STELARITH_VNC_CMD',    'VncCmd'))) {
+                if ($agentCfg[$pair[1]]) { continue }
+                $m = [regex]::Match($oraw, ('set "' + $pair[0] + '=([^"]*)"'))
+                if ($m.Success) { $agentCfg[$pair[1]] = $m.Groups[1].Value.Replace('%%', '%') }
+            }
+        }
     } else {
-        $newCfgPath = Join-Path $From 'config\deployment.json'
-        if (Test-Path -LiteralPath $newCfgPath) {
-            $nc = Get-DeployConfig $newCfgPath
-            $agentCfg.DeviceUid  = [string]$nc.ClientUid
-            $agentCfg.Secret     = [string]$nc.Agent.Secret
-            $agentCfg.SitePubKey = [string]$nc.Agent.SitePubKey
-            $agentCfg.ExtUrl     = [string]$nc.Agent.ExtUrl
-            $agentCfg.VncCmd     = [string]$nc.Agent.VncCmd
-            $cfgSource = '新包 deployment.json'
+        $oldCmd = Get-AgentCmdPath $InstallRoot
+        if (Test-Path -LiteralPath $oldCmd) {
+            $raw = Get-Content -LiteralPath $oldCmd -Raw
+            foreach ($pair in @(
+                @('STELARITH_DEVICE_UID',    'DeviceUid'),
+                @('STELARITH_AGENT_SECRET',  'Secret'),
+                @('STELARITH_SITE_PUBKEY',   'SitePubKey'),
+                @('STELARITH_EXT_URL',       'ExtUrl'),
+                @('STELARITH_VNC_CMD',       'VncCmd'))) {
+                $m = [regex]::Match($raw, ('set "' + $pair[0] + '=([^"]*)"'))
+                if ($m.Success) { $agentCfg[$pair[1]] = $m.Groups[1].Value.Replace('%%', '%') }
+            }
+            $cfgSource = '本机现有启动器（旧版明文，将迁移到受限文件）'
+        } else {
+            $newCfgPath = Join-Path $From 'config\deployment.json'
+            if (Test-Path -LiteralPath $newCfgPath) {
+                $nc = Get-DeployConfig $newCfgPath
+                $agentCfg.DeviceUid  = [string]$nc.ClientUid
+                $agentCfg.Secret     = [string]$nc.Agent.Secret
+                $agentCfg.SitePubKey = [string]$nc.Agent.SitePubKey
+                $agentCfg.ExtUrl     = [string]$nc.Agent.ExtUrl
+                $agentCfg.VncCmd     = [string]$nc.Agent.VncCmd
+                $cfgSource = '新包 deployment.json'
+            }
         }
     }
 
