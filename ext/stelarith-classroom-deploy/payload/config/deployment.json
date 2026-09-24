@@ -1,11 +1,16 @@
 {
   "_readme": "教室端部署配置。部署前请改本文件（也可以不改，脚本会逐项询问）。",
   "_字段说明": {
+    "NetworkMode": "插件**当前**走哪套地址：wan=公网域名（默认）| lan=内网直连。插件设置页有「切到内网直连 / 切到公网域名」两个按钮，切换时会把对应那组地址**成对**写进 stelarith-sync.json。所以下面两组**都必须填对**——只要有一台机器被人点过切换，生效地址就跟着那一组走。",
+    "WanClientAppBase": "★公网模式下用的服务基址，一般等于 ServerBase（https://<slug>.<基域>）。留空则由 ServerBase 兜底。",
+    "WanBaseDomain": "★公网模式下用的租户基域，一般等于 BaseDomain。留空则由 BaseDomain 兜底。",
+    "LanClientAppBase": "★内网模式下用的服务基址，如 http://10.0.0.10:8096。**内网可以直接填 IP**：插件的每个请求都会显式带 Host: <Slug>.<BaseDomain> 头，租户识别不依赖 DNS 解析。留空会退回 127.0.0.1（只适合服务端与教室端同机自测）。",
+    "LanBaseDomain": "★内网模式下用的租户基域，必须等于服务端 .env 的 CIMS_BASE_DOMAIN（内网常为 localhost 或学校自定域）。这一项写错 = 全线 403，且现象完全看不出来。",
     "ServerBase": "★必填。学校集控服务端的 CIMS 客户端地址（不要带结尾斜杠）。公网部署填租户自己的子域名 https://<slug>.<基域>（详见 docs/07）；内网部署填 http://10.0.0.10:8096。留空时：公网会按 https://<Slug>.<BaseDomain> 自动推导，内网会交互询问。",
-    "ServerPanel": "电教委员面板地址。⚠️公网部署**必须显式填**（形如 https://<面板域名>/admin/console）。留空只会按 ServerBase 主机名推导成 https://<slug>.<基域>:8090/admin/console —— 那个地址在公网通常不通（面板与租户 API 常常不在同一域名上，本项目面板在 www 上）。",
+    "ServerPanel": "电教委员面板地址。⚠️公网部署**必须显式填**（形如 https://<面板域名>/admin/console）。留空只会按 ServerBase 主机名推导成 https://<slug>.<基域>:8090/admin/console —— 那个地址在公网通常不通（面板与租户 API 常常不在同一域名上，本项目面板在 www 上）。内网部署面板通常与服务端同机，推导即可。",
     "BaseDomain": "租户基域。必须等于服务端 .env 里的 CIMS_BASE_DOMAIN。公网部署填真实基域（本包默认为 245959623.xyz）；内网部署填 localhost。两种都填不通的原因几乎总是这一项与服务端不一致。",
     "Slug": "租户标识，必须等于服务端 CIMS 的账户 slug。星璃演示环境为 demo-class",
-    "ClientUid": "★本机唯一标识。留空则自动取计算机名（小写化）。同一租户下不可重复",
+    "ClientUid": "★本机唯一标识。留空则自动取计算机名（小写化）。同一租户下不可重复。⚠️**永远留空**：包如果带着某一台机器的 uid 出厂，所有教室会共用同一个身份，设备管理全乱。",
     "ClassName": "班级名（仅用于面板显示与运维识别，可留空）",
     "ClassPlanName": "班级课表资源名，如 cp_class02。留空则用 default_classplan（由面板按班级绑定后自动生效）",
     "NotificationSourceName": "广播在教室大屏上显示的发出来源名。默认「集控广播」",
@@ -24,35 +29,33 @@
     "Agent.VncCmd": "本机 VNC 服务的启动命令，默认 vncserver。**需先在本机装好真实 VNC 服务**，否则远程控制会启动失败（会返回明确错误，不是静默）",
     "OfficialManagement": "ClassIsland 自带的「集控」功能绑定设置（可选，独立于星璃插件）。详见 docs/03-官方集控与绑定设置.md"
   },
-
   "ServerBase": "https://demo-class.245959623.xyz",
   "ServerPanel": "https://www.245959623.xyz/admin/console",
-
   "BaseDomain": "245959623.xyz",
   "Slug": "demo-class",
   "ClientUid": "",
   "ClassName": "",
   "ClassPlanName": "",
-
+  "NetworkMode": "wan",
+  "WanClientAppBase": "https://demo-class.245959623.xyz",
+  "WanBaseDomain": "245959623.xyz",
+  "LanClientAppBase": "http://10.0.0.10:8096",
+  "LanBaseDomain": "localhost",
   "NotificationSourceName": "集控广播",
-
   "InstallDir": "C:\\ClassIsland",
   "AutoStart": true,
   "CreateDesktopShortcut": true,
   "ResourceWriteBack": true,
   "RefreshIntervalSeconds": 30,
-
   "VoiceHubBase": "",
   "VoiceHubKey": "",
-
   "Agent": {
     "Enabled": true,
     "Secret": "",
-    "SitePubKey": "",
+    "SitePubKey": "-----BEGIN PUBLIC KEY-----MCowBQYDK2VwAyEA+ANF5sMoA1Fe5BXlQKZHU5kTlgEAKFD4zRNWXIjMrOc=-----END PUBLIC KEY-----",
     "ExtUrl": "",
     "VncCmd": "vncserver"
   },
-
   "OfficialManagement": {
     "Enabled": false,
     "ManagementServerKind": 0,
