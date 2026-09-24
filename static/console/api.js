@@ -818,11 +818,30 @@
     denormSchedule,             // 面板课表形态 → 官方信封（回写方向）
   });
 
-  // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
-  // 与 ext/stelarith-agent 的 verify() 对齐：token = hex(HMAC_SHA256(action + "|" + ts, secret))。
-  // 生产环境：secret 为「网站—设备」共享密钥；更高安全用网站私钥 Ed25519 签名（见 sync/sign-task.mjs），
-  // 代理侧持网站公钥验签。未配置 secret 时退回时间戳占位（仅联调用，不可用于生产）。
+  // ---- stelarith_task 令牌签名 ----
+  // 双模（与 ext/stelarith-agent 的 verify() 对齐）：
+  //   ① 生产默认：POST /api/console/sign-task（服务端持 Ed25519 私钥，档案持久在
+  //      .env 的 SITE_TASK_PRIVATE_KEY），token = base64url(Ed25519_sign(action|ts))，
+  //      教室代理持**公钥**验签 —— 无需再往教室机手工配「指令密钥」；
+  //   ② 联调/降级：本地 HMAC-SHA256（state.taskSecret），token = hex(HMAC(action|ts))；
+  //   ③ 仍未配置 → 时间戳占位（仅联调用，不可用于生产）。
+  // 该端点同源（面板本就由网站伺服），fetch 自动带会话 cookie，靠服务端鉴权收口，
+  // 前端不做任何权限判断；端点要求设备控制档，避免绕过 UI 手工签发指令。
   async function signTask(action, ts) {
+    try {
+      const r = await fetch("/api/console/sign-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ts }),
+        credentials: "same-origin",
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.ok && j.token) return j.token;
+      }
+    } catch (_) {
+      /* 服务端签名端点不可达 → 回落 HMAC（联调路径） */
+    }
     if (!state.taskSecret) return String(Date.now());
     const data = action + "|" + ts;
     const enc = new TextEncoder();
