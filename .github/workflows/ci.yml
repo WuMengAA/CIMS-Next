@@ -12,6 +12,11 @@ name: ci
 # 历史教训：本文件初版把 continue-on-error 挂在 **job 级**，导致构建/测试失败时
 #   workflow 结论仍是 success —— 等同于没有反馈回路，比没有 CI 更有害
 #   （"CI 全绿"会被当成证据）。切勿再这样写。
+#
+# runs-on 为何钉 ubuntu-24.04 而不是 ubuntu-latest：
+#   run 页公告（2026-09-24 读到）："ubuntu-latest will migrate to Ubuntu 26
+#   beginning October 19, 2026"。镜像迁移会连带换掉 Node/glibc/预装工具版本，
+#   属于"没人改代码、构建却突然挂"的典型来源。钉住版本 = 把这类变化变成显式动作。
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -27,7 +32,7 @@ concurrency:
 jobs:
   website:
     name: 网站构建 + 类型检查
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +89,7 @@ jobs:
 
   static-gates:
     name: 静态门禁（脚本编码 / 面板缓存戳）
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +118,7 @@ jobs:
 
   agent-node:
     name: Node 代理链路自测
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
