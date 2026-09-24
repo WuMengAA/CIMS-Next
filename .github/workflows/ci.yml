@@ -1,0 +1,78 @@
+name: ci
+
+# 只读阶段：所有作业都标了 continue-on-error，**不阻断** push/PR。
+# 目的先把"有没有反馈回路"这件事补上（此前本仓库 CI = 0），
+# 观察一段时间确认稳定后，再把 continue-on-error 逐条摘掉转为阻断。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  website:
+    name: 网站构建 + 类型检查
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9          # 与 pnpm-lock.yaml 的 lockfileVersion 9.0 对齐
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --no-frozen-lockfile
+
+      - name: 构建（SvelteKit / vite）
+        env:
+          # 本机因内存紧张要限堆；CI 内存充裕，给足避免 OOM 误报
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm run build
+
+      - name: svelte-check（类型与语法）
+        continue-on-error: true     # 存量问题可能较多，先只报告
+        run: pnpm run check
+
+  agent-node:
+    name: Node 代理链路自测
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: ext/stelarith-agent-node
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 跑端到端自测（签名 → 验签 → 回执）
+        run: node test/end2end.mjs
+
+  # ── 以下两项暂不启用，原因记在这里，避免后人重复踩 ──────────────────────
+  #
+  # 1) C# 插件（ext/stelarith-classisland-plugin）
+  #    无法在 CI 构建：csproj 用**硬编码绝对路径**引用运行版 ClassIsland 的 Avalonia 程序集
+  #        <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Base.dll</HintPath>
+  #    即「插件只能在装了 ClassIsland 的那台机器上编译」。
+  #    修法（建议，需在 monorepo 工作副本改 ext/）：
+  #         <PropertyGroup>
+  #           <ClassIslandDir Condition="'$(ClassIslandDir)' == ''">D:\Classlsland\app-2.1.0.1-0</ClassIslandDir>
+  #         </PropertyGroup>
+  #      并把 HintPath 改成 $(ClassIslandDir)\Avalonia.Base.dll
+  #      → 本机行为不变，CI 可用 -p:ClassIslandDir=… 指向解包目录。
+  #
+  # 2) Rust 代理（ext/stelarith-agent）
+  #    可构建，但 webrtc 依赖体量大、构建时间长（本机实测约数十分钟），
+  #    作为每次 push 的门禁不划算。建议改为「仅在改动 ext/stelarith-agent/** 时触发」
+  #    之后再启用（用 paths 过滤）。
