@@ -1,0 +1,635 @@
+/// 星集控 · CIMS API 客户端（语义对齐 web 面板 admin-console/src/api.js）
+///
+/// 契约（已在 CIMS-backend 源码核实）：
+///   POST /user/auth                                     -> {token,...}
+///   GET  /account/list                                  -> [{id,...}]
+///   GET  /account/{acct}/client/list                    -> [uid,...]
+///   GET  /account/{acct}/client/{uid}                   -> {uid,name,status,...}
+///   POST /account/{acct}/client/{uid}/command/{restart|update-data|send-notification}
+///   POST /account/{acct}/Components/write?name=xxx      -> 资源写
+/// 任务链路：stelarith_task 经 send-notification 下发，设备侧插件验签执行本地动作。
+///
+/// 调试相关：
+///   * 每个请求都进 [Log]（方法/路径/耗时/状态码/响应摘要），调试面板可见；
+///   * 可注入 http.Client，便于单元测试打桩（见 test/api_client_test.dart）；
+///   * [selfCheck] 一键跑通「账户→设备列表→设备详情」链路。
+library;
+
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+
+import 'identity.dart';
+import 'log.dart';
+import 'models.dart';
+import 'oauth.dart';
+import 'probe.dart' as probe;
+import 'settings.dart';
+
+class ApiException implements Exception {
+  final String message;
+  ApiException(this.message);
+  @override
+  String toString() => message;
+}
+
+class CimsApi {
+  final SettingsNotifier _settings;
+  final http.Client _client;
+  final bool _ownsClient;
+
+  /// [client] 仅供测试注入打桩使用；生产留空（内部持有并在 dispose 时关闭）。
+  CimsApi(this._settings, {http.Client? client})
+      : _client = client ?? http.Client(),
+        _ownsClient = client == null;
+
+  Settings get s => _settings.current;
+
+  void dispose() {
+    if (_ownsClient) _client.close();
+  }
+
+  // ---- 基础请求 ----
+
+  /// 请求基址：website 模式走网站 `/api/console/cims` 代理（复用 RBAC），
+  /// cims 模式直连管理端口。两种模式后续 Authorization 头都带 token。
+  String get apiBase {
+    final s = this.s;
+    if (s.authMode == 'website' && s.siteHost.isNotEmpty) {
+      final host = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      return '$host/api/console/cims';
+    }
+    return s.mgmtHost;
+  }
+
+  Future<dynamic> reqTo(
+    String host,
+    String path, {
+    String method = 'GET',
+    Object? body,
+    Map<String, String>? headers,
+  }) async {
+    if (host.isEmpty) throw ApiException('未配置后端地址');
+    final uri = Uri.parse(host + path);
+    final req = http.Request(method, uri);
+    req.headers['Content-Type'] = 'application/json';
+    if (s.token.isNotEmpty) req.headers['Authorization'] = 'Bearer ${s.token}';
+    if (headers != null) req.headers.addAll(headers);
+    if (body != null) req.body = jsonEncode(body);
+
+    final sw = Stopwatch()..start();
+    Log.api('→ $method $uri ${safeBody(path, body)}');
+    try {
+      final streamed =
+          await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 8));
+      sw.stop();
+      if (res.statusCode == 401) {
+        _settings.clearAuth();
+        Log.api('← 401 ${sw.elapsedMilliseconds}ms 未授权，已清除登录态');
+        throw ApiException('未授权，请重新登录');
+      }
+      if (res.statusCode >= 400) {
+        Log.api('← ${res.statusCode} ${sw.elapsedMilliseconds}ms ${_clip(res.body, 300)}');
+        throw ApiException('HTTP ${res.statusCode}');
+      }
+      Log.api('← ${res.statusCode} ${sw.elapsedMilliseconds}ms ${_clip(res.body, 300)}');
+      if (res.bodyBytes.isEmpty) return <String, dynamic>{};
+      return jsonDecode(utf8.decode(res.bodyBytes));
+    } catch (e) {
+      sw.stop();
+      if (e is ApiException) rethrow;
+      // 连接层失败也要留痕，否则「面板看起来正常但一条命令都没发出去」无法定位
+      Log.e('× $method $uri 失败（${sw.elapsedMilliseconds}ms）：$e', 'api');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> reqToManagement(
+    String path, {
+    String method = 'GET',
+    Object? body,
+  }) =>
+      reqTo(apiBase, path, method: method, body: body);
+
+  /// 请求体脱敏 + 截断（password 永远不进日志）
+  /// 公开而非私有：单元测试要直接断言「密码没被写进日志」。
+  static String safeBody(String path, Object? body) {
+    if (body == null) return '';
+    if (body is Map && body.containsKey('password')) {
+      final m = Map<String, dynamic>.from(body);
+      m['password'] = '***';
+      return _clip(jsonEncode(m), 300);
+    }
+    return _clip(body.toString(), 300);
+  }
+
+  static String _clip(String s, [int n = 300]) =>
+      s.length <= n ? s : '${s.substring(0, n)}…（共 ${s.length} 字符）';
+
+  // ---- 认证 ----
+  Future<Map<String, dynamic>> login(String host, String email, String password) async {
+    _settings.setMgmtHost(host);
+    if (host.isEmpty) {
+      _settings.setDemo(true);
+      Log.w('未填后端地址 → 进入演示模式', 'auth');
+      return {'token': 'demo'};
+    }
+    _settings.setDemo(false);
+    final r = await reqToManagement('/user/auth',
+        method: 'POST', body: {'email': email, 'password': password});
+    final map = r is Map<String, dynamic> ? r : <String, dynamic>{};
+    if (map['requires_2fa'] == true) {
+      throw ApiException('后端启用了 2FA，当前客户端未支持，请用非 2FA 账户');
+    }
+    _settings.setToken(map['token']?.toString() ?? '');
+    _settings.setAuthMode('cims');
+    await _pullAccountContext();
+    return map;
+  }
+
+  /// 网站 OAuth 登录：拉起浏览器走「网站授权」，拿到网站会话令牌后走代理模式。
+  /// 与 login() 互斥——一旦 OAuth 成功，apiBase 自动切到网站代理，不再直连 CIMS。
+  Future<void> loginWithOAuth(String siteHost) async {
+    final site = siteHost.trim();
+    if (site.isEmpty) {
+      _settings.setDemo(true);
+      Log.w('未填网站地址 → 进入演示模式', 'auth');
+      return;
+    }
+    _settings.setSiteHost(site);
+    final result = await performOAuth(site);
+    _settings.setToken(result.token);
+    _settings.setAuthMode('website');
+    Log.i('网站 OAuth 登录成功，已切换至代理模式', 'auth');
+    await _pullAccountContext();
+    // 紧接着取身份：界面要按身份摆功能（老师/电教委员/管理员各不相同）。
+    await fetchIdentity();
+  }
+
+  /// 拉取使用者身份快照（网站 `GET /api/me` 的 `identity` 字段），用于界面适配。
+  ///
+  /// 三条原则：
+  ///   · 只有 website 模式（有网站地址 + 令牌）才谈得上身份；直连 CIMS 返回 null；
+  ///   · 拿不到就**保持 null**（界面不收敛、全量平铺）——绝不自己用 role 推权限，
+  ///     否则迟早与服务端分叉，出现「界面点得了、服务端拒绝」；
+  ///   · 失败只记日志、不抛错：身份是"锦上添花"，不该挡住登录后的主流程。
+  Future<Identity?> fetchIdentity() async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty) return null;
+    try {
+      final r = await reqTo(site, '/api/me');
+      if (r is! Map) return null;
+      final raw = r['identity'];
+      if (raw is! Map) {
+        // 后端还没升级到带身份快照的版本：不是错误，只是没有身份可用。
+        Log.w('/api/me 未返回 identity（后端版本较旧）→ 界面按全量入口展示', 'auth');
+        return null;
+      }
+      final id = Identity.fromJson({
+        ...Map<String, dynamic>.from(raw),
+        'displayName': (r['displayName'] ?? r['username'] ?? '').toString(),
+      });
+      if (id.role.isEmpty) return null;
+      _settings.setIdentity(id);
+      return id;
+    } catch (e) {
+      Log.w('身份拉取失败（不影响登录）：$e', 'auth');
+      return null;
+    }
+  }
+
+  /// 登录后拉取账户列表并选定首个账户（刷新后 accountId 不归零，避免真实调用降级）。
+  Future<void> _pullAccountContext() async {
+    try {
+      final accts = await reqToManagement('/account/list');
+      if (accts is List && accts.isNotEmpty) {
+        final first = accts.first;
+        final id = first is Map ? (first['id'] ?? '').toString() : first.toString();
+        if (id.isNotEmpty) {
+          _settings.setAccountId(id);
+        } else {
+          Log.w('/account/list 首项没有 id 字段，账户上下文未建立', 'auth');
+        }
+      } else {
+        Log.w('/account/list 返回空数组：该账号无归属账户，后续设备接口会全部哑火', 'auth');
+      }
+    } catch (e) {
+      Log.w('登录后拉取账户列表失败：$e', 'auth');
+    }
+  }
+
+  /// 是否具备真实后端（供 UI 空状态/离线提示）
+  bool get canUseBackend => s.canUseBackend;
+
+  /// 连通性探活（不进日志、不打授权头）。返回 HTTP 状态码，失败/超时返回 -1。
+  /// 用于调试页端口检查与启动自动探测的语义对齐。
+  static Future<int> probeHost(String host,
+          {Duration timeout = const Duration(seconds: 2)}) =>
+      probe.probeHost(host, timeout: timeout);
+
+  // ---- 设备 ----
+  Future<List<CimsDevice>> listDevices() async {
+    if (!s.canUseBackend) return const [];
+    try {
+      final uids = await reqToManagement('/account/${s.accountId}/client/list');
+      if (uids is! List) return const [];
+      final details = await Future.wait(uids.map((u) async {
+        final uid = u.toString();
+        try {
+          final d = await reqToManagement('/account/${s.accountId}/client/$uid');
+          return d is Map<String, dynamic>
+              ? CimsDevice.fromJson({...d, 'uid': uid})
+              : CimsDevice(uid: uid, name: uid, online: false, ip: '', last: '');
+        } catch (_) {
+          return CimsDevice(uid: uid, name: uid, online: false, ip: '', last: '');
+        }
+      }));
+      return details;
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // ---- 设备动作 ----
+  /// CIMS 原生指令端点（restart / refresh→update-data / notify→send-notification）
+  Future<dynamic> deviceAction(String uid, String action) async {
+    if (!s.canUseBackend) return {'status': 'success', 'message': '（演示）指令已模拟下发'};
+    final ep = {
+      'restart': 'restart',
+      'refresh': 'update-data',
+      'sync': 'update-data',
+      'notify': 'send-notification',
+    }[action];
+    if (ep != null) {
+      final body = action == 'notify' ? {'MessageContent': '来自集控客户端的提醒'} : null;
+      return reqToManagement(
+          '/account/${s.accountId}/client/$uid/command/$ep',
+          method: 'POST',
+          body: body);
+    }
+    // lock / screenshot / 音量 / 文件：统一走 stelarith_task 通知链路
+    if (action == 'lock' || action == 'screenshot') {
+      return sendTask(uid, action, scope: 'device');
+    }
+    throw ApiException('不支持的动作：$action');
+  }
+
+  /// 下发 stelarith_task（HMAC 签名，设备侧插件验签后执行本地动作）
+  Future<dynamic> sendTask(
+    String uid,
+    String action, {
+    String scope = 'device',
+    Map<String, dynamic>? payload,
+  }) async {
+    if (!s.canUseBackend) return {'status': 'demo', 'message': '（演示）已模拟下发任务'};
+    final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final token = await signTask(action, ts);
+    final task = <String, dynamic>{
+      'action': action,
+      'token': token,
+      'scope': scope,
+      'ts': ts,
+      'payload': ?payload,
+    };
+    final body = {'MessageContent': jsonEncode({'stelarith_task': task})};
+    return reqToManagement(
+        '/account/${s.accountId}/client/$uid/command/send-notification',
+        method: 'POST',
+        body: body);
+  }
+
+  /// HMAC-SHA256 任务令牌：hex(HMAC_SHA256(action + "|" + ts, secret))
+  /// 未配置 secret 时退回时间戳占位（仅联调用，不可用于生产）。
+  Future<String> signTask(String action, int ts) async {
+    if (s.taskSecret.isEmpty) {
+      Log.w('未配置任务密钥：stelarith_task 使用占位令牌，设备侧验签会失败', 'task');
+      return DateTime.now().millisecondsSinceEpoch.toString();
+    }
+    final data = utf8.encode('$action|$ts');
+    final key = utf8.encode(s.taskSecret);
+    return sha256.convert(Hmac(sha256, key).convert(data).bytes).toString();
+  }
+
+  // ---- 广播通知 ----
+  /// 下发通知；返回实际送达台数。
+  ///
+  /// [scope] 只用于留痕文案（「全校」「八年级 3 班」），是给人看的。
+  /// [onlyUids] 非空时只发给这些设备（按班级筛选时用）；为空即全校。
+  Future<int> sendNotice(
+    String title, {
+    String scope = '全校',
+    List<String>? onlyUids,
+  }) async {
+    if (!s.canUseBackend) return 0;
+    final all = await reqToManagement('/account/${s.accountId}/client/list');
+    if (all is! List) return 0;
+    final uids = onlyUids == null
+        ? all
+        : all.where((u) => onlyUids.contains(u.toString())).toList();
+    var sent = 0;
+    for (final u in uids) {
+      try {
+        await reqToManagement(
+            '/account/${s.accountId}/client/${u.toString()}/command/send-notification',
+            method: 'POST',
+            body: {'MessageContent': title});
+        sent++;
+      } catch (_) {}
+    }
+    Log.i('广播「$title」送达 $sent/${uids.length} 台', 'notice');
+    // 留痕到扩展网关（失败不阻断下发结果）
+    try {
+      await reqTo(s.extHost, '/notices',
+          method: 'POST', body: {'title': title, 'scope': scope, 'sent': sent});
+    } catch (_) {}
+    return sent;
+  }
+
+  // ---- 设备截图回传（#T07.7 步骤 4）----
+  /// 拉取设备回传的截图：GET `{site}/api/console/ext/captures?uid=xxx`（Bearer 会话）。
+  /// 返回 `{at, bytes, image_base64}`；没报过/已过期/失败一律返回 null（**不抛**——
+  /// 这是轮询语义：控制侧点「远程截图」后要反复问直到出图或超时）。
+  Future<Map<String, dynamic>?> getCapture(String uid) async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty || uid.isEmpty) return null;
+    try {
+      final r = await reqTo(
+          site, '/api/console/ext/captures?uid=${Uri.encodeComponent(uid)}');
+      if (r is! Map) return null;
+      final c = r['capture'];
+      return c is Map<String, dynamic> ? c : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ---- 扩展网关（协作/上报，可选）----
+  Future<List<NoticeItem>> listNotices() async {
+    if (s.demo || s.extHost.isEmpty) return const [];
+    try {
+      final r = await reqTo(s.extHost, '/notices');
+      if (r is! List) return const [];
+      return r.map((e) {
+        final m = e is Map<String, dynamic> ? e : <String, dynamic>{};
+        return NoticeItem(
+          id: (m['id'] ?? '').toString(),
+          title: (m['title'] ?? '').toString(),
+          scope: (m['scope'] ?? '').toString(),
+          at: (m['at'] ?? m['createdAt'] ?? '').toString(),
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // ---- 远程控制（#T07.7 步骤 5：桌面端远控入口）----
+  /// 下发远程控制指令：POST stelarith_task `remote_control_start`（HMAC 签名），
+  /// 教室端代理按需启 VNC 后会把 {ip,port,token} 回报到网站 ext 网关。
+  Future<dynamic> deviceRemoteStart(String uid) =>
+      sendTask(uid, 'remote_control_start', scope: 'class');
+
+  /// 结束远程控制会话：下发 stop + 顺手清掉网关里的会话回执（与 web 面板一致）。
+  Future<dynamic> deviceRemoteStop(String uid) async {
+    try {
+      final r = await sendTask(uid, 'remote_control_stop', scope: 'class');
+      try {
+        await reqTo(
+            s.siteHost,
+            '/api/console/ext/vnc-session?uid=${Uri.encodeComponent(uid)}',
+            method: 'DELETE');
+      } catch (_) {}
+      return r;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// 轮询扩展网关取设备最新 VNC 会话回执：`{ip, port, token}` 或 null（**不抛**——
+  /// 轮询语义：远控下发后要反复问直到出会话或超时）。
+  ///
+  /// ⚠️ 双 key（#T07.7 步骤 5 脱节修复）：CIMS 下发指令用 client_id（lab-pc-001），
+  /// 教室端代理回报用 device_uid（主机名 n7-20091211）——是不同的串，只查 uid
+  /// 会永远拿不到回执。先按 uid 查，miss 再按 host 查；服务端 key 已小写归一化，
+  /// host 传大写也能命中。与 web 面板 deviceRemoteStatus 同一套语义。
+  Future<Map<String, dynamic>?> deviceRemoteStatus(String uid, {String? host}) async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty || uid.isEmpty) return null;
+    try {
+      final q = '/api/console/ext/vnc-session?uid=${Uri.encodeComponent(uid)}'
+          '${host != null && host != uid ? '&host=${Uri.encodeComponent(host)}' : ''}';
+      final r = await reqTo(site, q);
+      if (r is! Map) return null;
+      final sess = r['session'];
+      return sess is Map<String, dynamic> ? sess : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ---- 自助切班（T07.8 棒 3：class_swap_routes 直连）----
+  /// 班级实体目录（/class/list）：发起互换的 A/B 下拉选项。
+  /// CIMS 返回**数组**（[{class_id, name, ...}]）；代理原样透传。
+  /// 拿不到返回空列表，调用方给出加载失败提示。
+  Future<List<Map<String, dynamic>>> listClassEntities() async {
+    if (!s.canUseBackend) return const [];
+    try {
+      final r = await reqToManagement('/class/list');
+      if (r is List) {
+        return r
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      if (r is Map) {
+        final items = r['classes'];
+        if (items is List) {
+          return items
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+      }
+      return const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 互换申请列表（GET /class/swap）。status 留空 = 全部。
+  Future<List<Map<String, dynamic>>> swapList({String status = ''}) async {
+    if (!s.canUseBackend) return const [];
+    try {
+      final q = status.isEmpty
+          ? '/class/swap'
+          : '/class/swap?status=${Uri.encodeComponent(status)}';
+      final r = await reqToManagement(q);
+      if (r is! Map) return const [];
+      final items = r['items'];
+      if (items is! List) return const [];
+      return items
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 发起互换申请（POST /class/swap）。
+  /// [swapType] swap=互换 / oneway=单切；[start]/[end] 为 ISO8601 或 null（永久）。
+  /// 返回服务端响应 Map；抛 ApiException = 被拒（422 冲突 / 403 无权限等）。
+  Future<Map<String, dynamic>> swapCreate({
+    required String fromClassId,
+    required String toClassId,
+    String swapType = 'swap',
+    String reason = '',
+    String? effectiveStartAt,
+    String? effectiveEndAt,
+  }) async {
+    final body = <String, dynamic>{
+      'from_class_id': fromClassId,
+      'to_class_id': toClassId,
+      'swap_type': swapType,
+      'reason': reason,
+      'effective_start_at': ?effectiveStartAt,
+      'effective_end_at': ?effectiveEndAt,
+    };
+    final r = await reqToManagement('/class/swap',
+        method: 'POST', body: body);
+    if (r is! Map) return <String, dynamic>{};
+    return Map<String, dynamic>.from(r);
+  }
+
+  /// 审批/驳回/撤销/回退（manage 档 approve/reject，control 档 cancel/rollback）。
+  Future<Map<String, dynamic>> swapAct(
+    String swapId,
+    String action, {
+    String reason = '',
+  }) async {
+    final r = await reqToManagement('/class/swap/$swapId/$action',
+        method: 'POST',
+        body: action == 'reject' ? {'reason': reason} : <String, dynamic>{});
+    if (r is! Map) return <String, dynamic>{};
+    return Map<String, dynamic>.from(r);
+  }
+
+  /// 读审批开关（requires_approval）。
+  Future<bool> swapRequiresApproval() async {
+    if (!s.canUseBackend) return false;
+    try {
+      final r = await reqToManagement('/class/swap/config');
+      if (r is Map && r['requires_approval'] == true) return true;
+    } catch (_) {}
+    return false;
+  }
+
+  /// 读面板持久化设置（网站 ext settings 端点，viewConsole 即可读）：远程/媒体参数。
+  /// 返回 null = 拿不到（后端旧版/未登录/网络问题）——调用方按缺省处理，不抛。
+  Future<Map<String, dynamic>?> fetchExtSettings() async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty) return null;
+    try {
+      final r = await reqTo(site, '/api/console/ext/settings');
+      if (r is! Map) return null;
+      final st = r['settings'];
+      return st is Map<String, dynamic> ? st : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ---- 调试自检 ----
+  /// 依次验证：账户列表 → 设备列表 → 首个设备详情 → 扩展网关（若配置）。
+  /// 每步独立计时、失败不中断，供调试面板与 CLI 自检脚本展示。
+  Future<List<CheckStep>> selfCheck() async {
+    final steps = <CheckStep>[];
+    if (s.mgmtHost.isEmpty) {
+      steps.add(const CheckStep(
+          name: '管理端口连通性',
+          ok: false,
+          ms: 0,
+          detail: '未配置管理端口地址（设置页填 8097）'));
+      return steps;
+    }
+    steps.add(await _step('GET /account/list', () => reqToManagement('/account/list')));
+    if (!s.canUseBackend) {
+      steps.add(const CheckStep(
+          name: '账户上下文',
+          ok: false,
+          ms: 0,
+          detail: '缺少 token 或 accountId —— /account/{id}/... 会是畸形路径'));
+      return steps;
+    }
+    final listStep = await _step('GET /account/{id}/client/list',
+        () => reqToManagement('/account/${s.accountId}/client/list'));
+    steps.add(listStep);
+    if (listStep.ok) {
+      final uids = await _uidsOrEmpty();
+      if (uids.isEmpty) {
+        steps.add(const CheckStep(
+            name: '设备详情', ok: false, ms: 0, detail: '账户下没有注册设备（0 台）'));
+      } else {
+        steps.add(await _step('GET client/${uids.first} 详情',
+            () => reqToManagement('/account/${s.accountId}/client/${uids.first}')));
+      }
+    }
+    if (s.extHost.isNotEmpty) {
+      steps.add(await _step('扩展网关 GET /notices', () => reqTo(s.extHost, '/notices')));
+    }
+    return steps;
+  }
+
+  Future<List<String>> _uidsOrEmpty() async {
+    try {
+      final uids = await reqToManagement('/account/${s.accountId}/client/list');
+      return uids is List ? uids.map((e) => e.toString()).toList() : <String>[];
+    } catch (_) {
+      return <String>[];
+    }
+  }
+
+  Future<CheckStep> _step(String name, Future<dynamic> Function() fn) async {
+    final sw = Stopwatch()..start();
+    try {
+      final r = await fn();
+      sw.stop();
+      return CheckStep(name: name, ok: true, ms: sw.elapsedMilliseconds, detail: _brief(r));
+    } catch (e) {
+      sw.stop();
+      return CheckStep(
+          name: name, ok: false, ms: sw.elapsedMilliseconds, detail: e.toString());
+    }
+  }
+
+  static String _brief(dynamic r) {
+    if (r is List) return '数组 ${r.length} 项';
+    if (r is Map) return _clip(jsonEncode(r), 200);
+    return _clip(r.toString(), 200);
+  }
+
+  /// 计算文件 SHA-256（文件传输任务签名用）
+  static Future<String> sha256OfBytes(Uint8List bytes) async {
+    return sha256.convert(bytes).toString();
+  }
+
+  /// 流式计算文件 SHA-256：**不把整个文件读进内存**，大文件/多文件也不会爆 RAM。
+  /// V1 文件传输只需 name/size/sha256 元数据下发，实体由设备侧拉取，故绝不该 withData 全量读入。
+  static Future<String> sha256OfFile(String path) async {
+    final digest = await sha256.bind(File(path).openRead()).first;
+    return digest.toString();
+  }
+}
+
+final apiProvider = Provider<CimsApi>((ref) {
+  final settings = ref.watch(settingsProvider.notifier);
+  return CimsApi(settings);
+});
