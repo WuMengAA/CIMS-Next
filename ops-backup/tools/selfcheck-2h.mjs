@@ -506,12 +506,20 @@ function checkToolsSnapshot() {
   }
   for (const rel of snap) if (!liveSet.has(rel)) drift.push(`${rel}（只存在于快照）`);
 
-  // (b) loadenv.cjs（单独一个文件，不在 _tools/ 下，但同为计划任务载重件）
-  for (const f of ["loadenv.cjs"]) {
-    const a = digest(path.join(ROOT, f));
-    const b = digest(path.join(SITE, "ops-backup", f));
-    if (!a || !b) drift.push(`${f}（真源或快照缺失）`);
-    else if (a !== b) drift.push(`${f}（内容不一致）`);
+  // (b) 单个「载重件」（不在 _tools/ 下，但同样被计划任务/启动链路直接调用）
+  //     ⚠️ run-prod.bat 是**被 .gitignore 有意排除**的机器本地文件（.gitignore:85 `/run-prod.bat`），
+  //        它不在版本控制里、磁盘上也没有任何旧版备份 —— 2026-09-24 给它加崩溃护栏时才发现
+  //        「以为能 git checkout 回退，其实不能」。所以必须像 _tools/ 一样纳入本快照，
+  //        否则改坏了没有任何退路。
+  const singles = [
+    { name: "loadenv.cjs", live: path.join(ROOT, "loadenv.cjs"), snap: path.join(SITE, "ops-backup", "loadenv.cjs") },
+    { name: "run-prod.bat", live: path.join(SITE, "run-prod.bat"), snap: path.join(SITE, "ops-backup", "run-prod.bat") },
+  ];
+  for (const s of singles) {
+    const a = digest(s.live);
+    const b = digest(s.snap);
+    if (!a || !b) drift.push(`${s.name}（真源或快照缺失）`);
+    else if (a !== b) drift.push(`${s.name}（内容不一致）`);
   }
 
   if (drift.length) {
@@ -522,7 +530,8 @@ function checkToolsSnapshot() {
       drift.join(", "),
       "刷新快照并提交：cp -r /d/Stelarith/_tools/. ops-backup/tools/ && " +
         "rm -rf ops-backup/tools/mdump/bin ops-backup/tools/mdump/obj && " +
-        "cp /d/Stelarith/loadenv.cjs ops-backup/loadenv.cjs"
+        "cp /d/Stelarith/loadenv.cjs ops-backup/loadenv.cjs && " +
+        "cp run-prod.bat ops-backup/run-prod.bat"
     );
     return false;
   }
@@ -530,7 +539,7 @@ function checkToolsSnapshot() {
     "tool-snapshot",
     "ok",
     "运维脚本快照与真源一致",
-    `${live.length} 个脚本 + loadenv.cjs 逐文件一致（行尾归一化后 md5 相同）`
+    `${live.length} 个脚本 + ${singles.length} 个载重件（loadenv.cjs / run-prod.bat）逐文件一致（行尾归一化后 md5 相同）`
   );
   return true;
 }

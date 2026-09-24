@@ -14,13 +14,15 @@
 | `tools/sync-console.mjs` | 面板静态件同步（改完 `static/console` 必跑） |
 | `tools/run-cloudflared.cmd` | 计划任务 `Cloudflared-Stelarith-Tunnel` |
 | `loadenv.cjs` | 网站 8090 启动：`node -r D:\Stelarith\loadenv.cjs build/index.js` |
+| `run-prod.bat` ⚠️ | 计划任务 `StelarithServer` 的动作本体（网站 8090 启动器 + 自愈循环） |
 
 丢一块磁盘 = 整套自检/隧道/同步链路归零。所以在这里放一份**只读快照**。
 
 ## 真源与同步
 
-- **真源**：`D:\Stelarith\_tools\` 与 `D:\Stelarith\loadenv.cjs`（计划任务里写的是绝对路径，**不能移动**）
-- **本快照**：`ops-backup/tools/` 与 `ops-backup/loadenv.cjs`
+- **真源**：`D:\Stelarith\_tools\`、`D:\Stelarith\loadenv.cjs`，以及**仓库根**的 `stelarith\run-prod.bat`
+  （计划任务里写的是绝对路径，**不能移动**）
+- **本快照**：`ops-backup/tools/`、`ops-backup/loadenv.cjs`、`ops-backup/run-prod.bat`
 
 从真源刷新快照（在本仓库根目录执行）：
 
@@ -29,7 +31,13 @@ S=/d/Stelarith; D=.  ; # 或 D 指向本目录
 cp -r "$S/_tools/." ops-backup/tools/
 rm -rf ops-backup/tools/mdump/bin ops-backup/tools/mdump/obj   # 排除构建产物
 cp "$S/loadenv.cjs" ops-backup/loadenv.cjs
+cp run-prod.bat ops-backup/run-prod.bat
 ```
+
+> ⚠️ **`run-prod.bat` 为什么也要进快照**：它被 `.gitignore:85`（`/run-prod.bat`）**有意排除**，
+> 既是机器本地文件、又没有版本历史。2026-09-24 给它加崩溃护栏时才发现：
+> 「以为改坏了能 `git checkout` 回退，其实根本不能」——磁盘上也没有任何旧版备份。
+> 它与 `_tools/` 属于**同一类零版本控制载重件**，所以用同一套办法兜住。
 
 **改动过 `_tools/` 里任何脚本后，请重跑上面的命令并提交**，否则快照会静默过期。
 （本目录**未**纳入任何自动化**同步**，这是有意的：避免再制造一个"看起来会自动同步、其实会漂移"的假象。）
@@ -64,6 +72,7 @@ cp "$S/loadenv.cjs" ops-backup/loadenv.cjs
 - `tools/` —— `D:\Stelarith\_tools\` 的镜像（**已排除** `mdump/bin`、`mdump/obj` 等构建产物）
 - `tools/mdump/` —— 只保留 `Program.cs` 与 `mdump.csproj`（C# 调试小工具）
 - `loadenv.cjs` —— 网站启动用的环境加载器（读 `.env` 注入 `process.env`）
+- `run-prod.bat` —— 网站 8090 的启动器与自愈循环（`.gitignore` 排除了原文件，故此处为其唯一留档）
 
 ## 安全说明
 

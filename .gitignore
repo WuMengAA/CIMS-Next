@@ -53,6 +53,8 @@ vite.config.ts.timestamp-*
 /uicheck.log
 # 本地运行/调试日志（dev / prod 运行时产生）
 *.log
+# 日志轮转出来的第二代（stelarith-crashguard.log.1 这类，不被 *.log 覆盖）
+*.log.[0-9]
 .rebuild-log.txt
 .prod-run.log
 /*.mjs
