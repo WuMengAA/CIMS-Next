@@ -215,10 +215,17 @@ export async function GET(event: RequestEvent) {
 		}
 		case "captures": {
 			// 设备截图回传：面板点「截图」下发指令后按 uid 轮询这里，拿到教室端回报的 PNG。
-			// 语义与 vnc/media 会话一致：明确区分「没报过」与「报过但已过期/已取走」。
+			// ⚠️ 双 key（#T09 老师页修复，与 vnc/media-session 同款）：面板/老师页下发指令
+			// 用的是 CIMS 的 `client_id`（lab-pc-001），而教室端 agent 上报用的是自己的
+			// `device_uid`（主机名 n7-20091211）——只按 client_id 查会永远
+			// `no_capture_reported`，即使代理早就报过（截图的 uid 归一化在
+			// console-ext.ts sKey 层完成，host 传大写 N7-20091211 也能命中）。
+			// 修复前调用方只能分两次单 key 请求（面板 waitForCapture 即如此）；
+			// 本修复让一次请求带 uid+host 也能命中。
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-			if (!uid) return json({ capture: null, reason: "missing_uid" });
-			const c = getDeviceCapture(uid);
+			const host = String(event.url.searchParams.get("host") ?? "").trim();
+			if (!uid && !host) return json({ capture: null, reason: "missing_uid" });
+			const c = getDeviceCapture(uid) || (host ? getDeviceCapture(host) : null);
 			if (!c) return json({ capture: null, reason: "no_capture_reported" });
 			return json({
 				capture: {
