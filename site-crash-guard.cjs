@@ -161,6 +161,22 @@ try {
     process.exit(1);
   });
 
+  // ── 记录「被杀」来源（2026-09-25）──────────────────────────────────────────
+  // 启动器日志里 `RC=-1` 曾是个黑盒（stelarith-launcher.log 里 6 次、out.log 里都有 `^C`）：
+  // `RC=-1` 不是崩溃，是**外部信号/手动结束**。这里把 SIGINT/SIGTERM 记一笔再退出——
+  // 否则一旦注册了处理器，Node 就**不再默认退出**，必须自己按信号码退出。
+  // 覆盖范围：Ctrl+C（控制台关闭/手动中断，^C 案例）与 process.kill(<pid>)；
+  // taskkill /F 是硬杀，不进处理器，仍无痕——这是系统限制，记不了。
+  // ⚠️ 必须在 `log()` 定义之后、try 块之内注册；加载期不得抛异常。
+  function onSignal(sig) {
+    try {
+      log("[guard] 收到外部信号 " + sig + "（非崩溃，是「被杀」）· pid=" + process.pid + " · 按信号码退出");
+    } catch (_) {}
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  }
+  process.on("SIGINT", function () { onSignal("SIGINT"); });
+  process.on("SIGTERM", function () { onSignal("SIGTERM"); });
+
   log("[guard] 已加载 pid=" + process.pid + " · 静态根=" + CLIENT_DIR + " · 日志=" + LOG);
 } catch (e) {
   // 加载期出错也不能让站点起不来：放弃护栏，仅尽可能留个痕迹
