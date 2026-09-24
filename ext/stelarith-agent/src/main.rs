@@ -466,11 +466,17 @@ fn parse_spki_pubkey(pem: &str) -> Result<VerifyingKey, ()> {
 }
 
 fn pem_to_der(pem: &str) -> Result<Vec<u8>, ()> {
-    let b64 = pem
-        .lines()
-        .filter(|l| !l.contains("-----"))
-        .collect::<String>()
-        .replace(char::is_whitespace, "");
+    // 兼容两种形态（2026-09-24：旧实现按 lines() 过滤会把无换行的 PEM 整行滤掉）：
+    //   · 标准多行 PEM（-----BEGIN …-----\nbase64\n-----END …-----）
+    //   · 无换行的单行 PEM —— cmd 的 `set "STELARITH_SITE_PUBKEY=…"` 注入环境变量时，
+    //     set 语句在换行处截断，多行 PEM 会碎掉，所以部署配置必须给单行。
+    // 统一做法：剥掉 BEGIN/END 标记，再对所有剩余字符去掉空白后 base64 解码。
+    let b64: String = pem
+        .replace("-----BEGIN PUBLIC KEY-----", "")
+        .replace("-----END PUBLIC KEY-----", "")
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     base64::engine::general_purpose::STANDARD.decode(b64).map_err(|_| ())
 }
 
