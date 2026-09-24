@@ -51,6 +51,10 @@
       <option value="low" data-page-node-id="7LGToAEltg5daC7ZnSiGHY">画质：流畅</option>
     </select>
   </footer>
-  <script type="module" src="./remote-webrtc.js"></script>
+  <!-- 同 index.html 的约定：资源引用必须带 ?v=<版本>。
+       原因：Cloudflare 对本域 .js/.css 边缘缓存 4 小时（2026-09-19 线上事故），
+       token 不变得不到新文件。本行此前**漏了 ?v=**（2026-09-24 补）——
+       该页无人以代码引用、靠直输地址打开，所以一直没被发现，但隐患与主面板完全相同。 -->
+  <script type="module" src="./remote-webrtc.js?v=20260924g"></script>
 </body>
 </html>
