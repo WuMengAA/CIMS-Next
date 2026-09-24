@@ -1,8 +1,18 @@
 name: ci
 
-# 只读阶段：所有作业都标了 continue-on-error，**不阻断** push/PR。
-# 目的先把"有没有反馈回路"这件事补上（此前本仓库 CI = 0），
-# 观察一段时间确认稳定后，再把 continue-on-error 逐条摘掉转为阻断。
+# ──────────────────────────────────────────────────────────────────────────────
+# 反馈回路分两级，别再把 continue-on-error 挂在 job 级（那是自欺）：
+#
+#   ① 阻断级（默认，什么都不加）：构建、Node 代理端到端自测、静态门禁。
+#      它们稳定通过，一旦失败**必须让 workflow 变红**。
+#   ② 报告级（step 级 continue-on-error）：svelte-check 存量问题未清完，暂不阻断，
+#      但**必须可见** —— 用 steps.<id>.outcome（豁免生效前的真实结论）+ 步骤摘要穿透，
+#      避免"界面全绿、其实一直在报错"。
+#
+# 历史教训：本文件初版把 continue-on-error 挂在 **job 级**，导致构建/测试失败时
+#   workflow 结论仍是 success —— 等同于没有反馈回路，比没有 CI 更有害
+#   （"CI 全绿"会被当成证据）。切勿再这样写。
+# ──────────────────────────────────────────────────────────────────────────────
 
 on:
   push:
@@ -18,7 +28,7 @@ jobs:
   website:
     name: 网站构建 + 类型检查
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -34,20 +44,77 @@ jobs:
       - name: 安装依赖
         run: pnpm install --no-frozen-lockfile
 
+      # 阻断级：构建失败必须变红
       - name: 构建（SvelteKit / vite）
         env:
           # 本机因内存紧张要限堆；CI 内存充裕，给足避免 OOM 误报
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run build
 
+      # 报告级：存量问题未清完，不阻断；但真实结论要能被看见
       - name: svelte-check（类型与语法）
-        continue-on-error: true     # 存量问题可能较多，先只报告
-        run: pnpm run check
+        id: sveltecheck
+        continue-on-error: true
+        run: |
+          set +e
+          pnpm run check > /tmp/svelte-check.log 2>&1
+          code=$?
+          cat /tmp/svelte-check.log
+          echo "svelte-check 退出码: $code"
+          exit $code
+
+      # 穿透汇报：outcome 是 continue-on-error 生效**之前**的真实结论
+      - name: 汇报 svelte-check 真实结论（穿透 continue-on-error）
+        if: always()
+        run: |
+          summary=$(grep -E 'svelte-check found|Error:|Warn' /tmp/svelte-check.log 2>/dev/null | tail -5 || true)
+          if [ -z "$summary" ]; then summary="（未匹配到摘要行，见上方步骤日志）"; fi
+          echo "::warning::svelte-check 真实结论 outcome=${{ steps.sveltecheck.outcome }}（步骤显示 conclusion=${{ steps.sveltecheck.conclusion }}）—— 存量问题，暂不阻断"
+          {
+            echo "### svelte-check（报告级 / 不阻断）"
+            echo ""
+            echo "| 真实结论 outcome | 步骤显示 conclusion |"
+            echo "|---|---|"
+            echo "| \`${{ steps.sveltecheck.outcome }}\` | \`${{ steps.sveltecheck.conclusion }}\` |"
+            echo ""
+            echo '```'
+            echo "$summary"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  static-gates:
+    name: 静态门禁（脚本编码 / 面板缓存戳）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 面板缓存戳检查需要 base..head 两个 commit 都在本地。
+          # 本仓库全量历史仅约 2 MB，全量克隆成本可忽略。
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 阻断级：.ps1 含中文必须有 UTF-8 BOM（无 BOM → PS5.1 按 ANSI 解析，解析期崩、
+      # 计划任务返 4294967295 且日志零行）；.bat/.cmd 必须纯 ASCII。
+      - name: 启动器脚本编码
+        run: node scripts/check-script-encoding.mjs
+
+      # 阻断级：改了 static/console 下被 ?v= 引用的资源，就必须同提交递增 ?v=，
+      # 否则 Cloudflare 边缘缓存 4 小时 → 代码改了、用户端仍是旧版（2026-09-19 事故）。
+      # 非 push 事件（PR / 手动触发）无比对范围，脚本会自动跳过并说明。
+      - name: 面板资源缓存戳（?v=）
+        env:
+          V_BASE: ${{ github.event.before }}
+          V_HEAD: ${{ github.sha }}
+        run: node scripts/check-console-asset-version.mjs
 
   agent-node:
     name: Node 代理链路自测
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ext/stelarith-agent-node
@@ -56,6 +123,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # 阻断级：签名 → 验签 → 回执 全链路自测
       - name: 跑端到端自测（签名 → 验签 → 回执）
         run: node test/end2end.mjs
 
