@@ -21,6 +21,10 @@ use std::sync::{Mutex, OnceLock};
 // （ffmpeg 缺失即报错、录像必须分段、停止必须优雅收尾）——分出去才有地方写清这些理由。
 mod media;
 
+// 被控端 WebRTC（#247-A）：真 WebRTC 远控，与面板 p2p-connector.js 对齐。
+// 仅新增能力，绝不替换 VNC / 媒体直连；信令地址为空时完全不启用。
+// mod rtc; // TODO(2026-09-23): 适配 webrtc 0.21 新版 API 后恢复
+
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -566,6 +570,41 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
                 out.insert("result".into(), "no_active_session".into());
             }
         }
+        // ═══ 教室端屏幕截图（#T07.7）：Windows 全屏 → PNG 落盘，回执带 path/bytes ═══
+        // 与传统"摄像头快照"区分：这里是**桌面**截屏（看屏幕上有啥），走 PowerShell
+        // 系统自带 System.Drawing（区别于 media::take_snapshot 的 ffmpeg 摄像头拍照）。
+        // 脚本刻意纯 ASCII：PS 5.1 对无 BOM 的 UTF-8 中文按 ANSI 解析会崩（同桌面端
+        // screen_shot.dart 的 PS 兜底脚本约束）。不引第三方截图 crate —— 代理保持
+        // 数 MB 单二进制体量，且教室 Windows 必有 powershell.exe。
+        "screenshot" => {
+            let shots_dir = "C:/ProgramData/Stelarith/shots";
+            let _ = std::fs::create_dir_all(shots_dir);
+            let ts = Utc::now().format("%Y%m%d-%H%M%S");
+            let out_path = format!("{shots_dir}/shot-{ts}.png");
+            match run_powershell_shot(&out_path) {
+                Ok(Some(size)) => {
+                    let _ = write_status(&format!("screenshot ok {out_path} ({size} bytes)"));
+                    out.insert("result".into(), "captured".into());
+                    out.insert("path".into(), out_path.clone());
+                    out.insert("bytes".into(), size.to_string());
+                    // #T07.7 步骤 2：把 PNG 回传到扩展网关，面板按 uid 轮询取图。
+                    // 上传是后台线程（独立于回执），失败只记日志不影响本次命令结果。
+                    match std::fs::read(&out_path) {
+                        Ok(png) => media::report_capture(&png),
+                        Err(e) => {
+                            let _ = write_status(&format!("[warn] screenshot 回传读 PNG 失败：{e}"));
+                        }
+                    }
+                }
+                Ok(None) => {
+                    out.insert("error".into(), "screenshot 落盘为空（PNG 0 字节？）".into());
+                }
+                Err(e) => {
+                    let _ = write_status(&format!("[error] screenshot failed: {e}"));
+                    out.insert("error".into(), e);
+                }
+            }
+        }
         "shell" => {
             // ⚠️ 默认拒绝（2026-09-17 收紧）。
             //
@@ -647,6 +686,86 @@ pub(crate) fn write_status(line: &str) -> std::io::Result<()> {
     writeln!(f, "{} {}", Utc::now().to_rfc3339(), line)
 }
 
+/// 执行 PowerShell 截全屏脚本，返回 PNG 落盘字节数。
+///
+/// 脚本内容与桌面端 `admin-console-native/lib/core/screen_shot.dart` 的 PS 兜底
+/// 完全同源（System.Windows.Forms 虚拟屏 + System.Drawing.Bitmap + CopyFromScreen），
+/// 该脚本在本机（学校机器组策略限制脚本执行的环境里）可被 `-ExecutionPolicy Bypass`
+/// 绕过；且刻意**纯 ASCII**（PS 5.1 无 BOM 时按 ANSI 解析）。
+///
+/// 返回约定：
+///  - `Ok(Some(n))` 成功，n>0 为 PNG 字节数；
+///  - `Ok(None)` 脚本声称成功但文件为空（诚实原则：不把 0 字节当成功，与
+///    screen_shot.dart 的 CaptureResult 语义一致）；
+///  - `Err(msg)` 失败，msg 为可读原因（会进 agent.status.log 与面板回执）。
+fn run_powershell_shot(out_path: &str) -> Result<Option<u64>, String> {
+    const PS_SCRIPT: &str = r#"
+param([Parameter(Mandatory=$true)][string]$Out)
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $bmp = New-Object -TypeName System.Drawing.Bitmap -ArgumentList ([int]$b.Width), ([int]$b.Height)
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen([int]$b.Left, [int]$b.Top, 0, 0, $bmp.Size)
+  $dir = Split-Path -Parent $Out
+  if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+  $bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+  $g.Dispose(); $bmp.Dispose()
+  $fi = Get-Item $Out
+  if ($fi.Length -le 0) { Write-Output "ERR empty file"; exit 1 }
+  Write-Output ("OK " + $fi.Length)
+} catch {
+  Write-Output ("ERR " + $_.Exception.Message)
+  exit 1
+}
+"#;
+
+    let script_path = format!(
+        "{}\\stelarith-shot-{}.ps1",
+        std::env::var("TEMP").unwrap_or_else(|_| "C:/Windows/Temp".into()),
+        Utc::now().timestamp_millis()
+    );
+    std::fs::write(&script_path, PS_SCRIPT)
+        .map_err(|e| format!("无法写入 PS 脚本 {}: {e}", script_path))?;
+
+    let out = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &script_path,
+            "-Out",
+            out_path,
+        ])
+        .output()
+        .map_err(|e| format!("无法启动 powershell.exe: {e}"))?;
+
+    let _ = std::fs::remove_file(&script_path);
+
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if !out.status.success() || !stdout.starts_with("OK ") {
+        let detail = if stdout.starts_with("ERR ") {
+            stdout[4..].to_string()
+        } else if !stderr.is_empty() {
+            stderr
+        } else {
+            format!("exit={:?}", out.status.code())
+        };
+        return Err(detail);
+    }
+
+    match std::fs::metadata(out_path) {
+        Ok(md) if md.len() > 0 => Ok(Some(md.len())),
+        Ok(_) => Ok(None),
+        Err(e) => Err(format!("PNG 未落盘 {}: {e}", e)),
+    }
+}
+
 /// 取本机首个非回环 IPv4（用于告诉面板从哪连 VNC）。失败回退 127.0.0.1。
 pub(crate) fn local_lan_ip() -> Option<String> {
     use std::net::UdpSocket;
@@ -699,6 +818,10 @@ async fn status_handler(
     for (k, v) in media::status_lines() {
         m.insert(k, v);
     }
+    // TODO(2026-09-23): rtc（WebRTC 远控）待适配 webrtc 0.21 新版 API 后恢复
+    // for (k, v) in rtc::status_lines() {
+    //     m.insert(k, v);
+    // }
     Json(m)
 }
 
@@ -726,6 +849,14 @@ async fn main() {
 
     // 定时关机调度线程（每 30s 检查，到点执行 shutdown /s /t 60）
     spawn_scheduler(&st);
+
+    // 被控端 WebRTC（#247-A）：按需起一个被控 peer。
+    // ⚠️ TODO(2026-09-23)：webrtc crate 镜像版为 0.21 重写版（Sans-I/O 架构），
+    // rtc.rs 仍按旧版 API 编写，编不过 → 本条链路**暂时禁用**，VNC + 媒体直连不受影响。
+    // STELARITH_P2P_SIGNAL 为空时 rtc::start_p2p 内部直接返回；恢复适配后再启用。
+    // if rtc::p2p_enabled() {
+    //     rtc::start_p2p(media::device_uid());
+    // }
 
     // 仅绑 localhost：外部不可直接访问，符合"占用少 + 默认安全"。
     // （媒体直连服务是**另一个**监听器，由 media 模块在真的发生媒体动作时才按需启动，

@@ -734,6 +734,66 @@ pub(crate) fn report_session(proto: &str, ip: &str, port: u16, token: &str, stat
     });
 }
 
+/// 把教室端截屏 PNG 回传到扩展网关（#T07.7 步骤 2）。
+///
+/// 与 [`report_session`] 同一鉴权通道（`STELARITH_EXT_SECRET` ↔ 站点
+/// `CONSOLE_DEVICE_REPORT_SECRET`），面板按 uid 轮询 `GET /captures` 取图。
+/// 失败只记日志、不重试 —— 重试解决不了"两边密钥不一致"或"网关没配密钥"。
+pub(crate) fn report_capture(bytes: &[u8]) {
+    use base64::Engine;
+    let ext = match std::env::var("STELARITH_EXT_URL") {
+        Ok(v) if !v.trim().is_empty() => v.trim().trim_end_matches('/').to_string(),
+        _ => {
+            let _ = write_status(
+                "[warn] 未配置 STELARITH_EXT_URL —— 截图无法回传，面板将看不到图",
+            );
+            return;
+        }
+    };
+    let secret = std::env::var("STELARITH_EXT_SECRET").unwrap_or_default();
+    if secret.trim().is_empty() {
+        let _ = write_status("[warn] 未配置 STELARITH_EXT_SECRET —— 网关会拒绝本次截图回传");
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let body = serde_json::json!({
+        "uid": device_uid(),
+        "image_base64": b64,
+    });
+    let url = format!("{ext}/captures");
+    let n = bytes.len();
+    std::thread::spawn(move || {
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        match client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("x-stelarith-device-secret", secret)
+            .json(&body)
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                let _ = write_status(&format!("capture upload ok ({n} bytes)"));
+            }
+            Ok(r) => {
+                let code = r.status().as_u16();
+                let txt = r.text().unwrap_or_default();
+                let _ = write_status(&format!(
+                    "[error] capture upload 被拒 HTTP {code}: {}",
+                    txt.chars().take(200).collect::<String>()
+                ));
+            }
+            Err(e) => {
+                let _ = write_status(&format!("[error] capture upload 失败：{e}"));
+            }
+        }
+    });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 媒体直连服务（高带宽操作绕开服务器中转）
 // ═══════════════════════════════════════════════════════════════════════════
