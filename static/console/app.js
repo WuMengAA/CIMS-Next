@@ -311,7 +311,7 @@
     if (PERM.remote) parts.push("远程控制");
     if (PERM.broadcast) parts.push("通知广播");
     if (PERM.issue) parts.push("上报");
-    // 等级标签（L1–L5）单独前置：它属于内容轴，与后面的设备档位是两个维度。
+    // 经验等级标签（#248：xp→Lv，纯展示）单独前置：与后面的设备档位是两个维度。
     const level = PERM.levelLabel ? PERM.levelLabel + " · " : "";
     el.textContent = level + (PERM.roleLabel || PERM.role || "只读") + " · " + (parts.length ? parts.join(" / ") : "仅查看");
     el.classList.toggle("readonly", !!PERM.readonly);
@@ -1118,7 +1118,7 @@
     const me = m.me || {};
     const rows = (m.roles || []).map((r) => `<tr>
         <td><b>${esc(r.label)}</b></td>
-        <td>${esc(r.levelLabel)}</td>
+        <td>${(r.titleLabels || []).map((t) => esc(t)).join(" / ") || '<span class="muted">—</span>'}</td>
         <td>${esc(r.managementTierLabel)}</td>
         <td>${(r.deviceTiers || []).map((t) => `<span class="tag">${esc(t)}</span>`).join(" ") || '<span class="muted">—</span>'}</td>
         <td>${esc(r.broadcastScopeLabel)}</td>
@@ -1166,15 +1166,18 @@
       </div>
 
       <div class="card"><h3>角色 → 能力对照</h3>
-        <table><thead><tr><th>角色</th><th>内容等级</th><th>管理分级</th><th>设备能力</th><th>广播范围</th></tr></thead><tbody>${rows}</tbody></table>
+        <table><thead><tr><th>角色</th><th>称号（权限来源）</th><th>管理分级</th><th>设备能力</th><th>广播范围</th></tr></thead><tbody>${rows}</tbody></table>
       </div>
 
-      <div class="card"><h3>内容等级轴（L1–L5）</h3>
-        <p class="muted">纵向：等级高的自动继承低等级的全部能力。这是「在一个个叠加」，不是另起一类。</p>
-        ${(m.levels || []).map((g) => `
+      <div class="card"><h3>称号轴（权限只来自称号）</h3>
+        <p class="muted">
+          等级（经验值 Lv）只是显示「参与程度」，与权限、与角色都<b>零耦合</b>——Lv.6 传奇的游客
+          也只是游客。权限只来自称号：每个称号显式授予一组动作，角色等于若干称号的并集。
+        </p>
+        ${(m.titles || []).map((t) => `
           <div style="margin-bottom:10px">
-            <b>${esc(g.label)}</b> <span class="muted">— ${esc(g.description)}</span><br>
-            ${(g.actions || []).map((a) => `<span class="tag">${esc(a.label)}</span>`).join(" ")}
+            <b>${esc(t.label)}</b> <span class="muted">— ${esc(t.description)}</span><br>
+            ${(t.actions || []).map((a) => `<span class="tag">${esc(a.label)}</span>`).join(" ") || '<span class="muted">无动作</span>'}
           </div>`).join("")}
       </div>
 
