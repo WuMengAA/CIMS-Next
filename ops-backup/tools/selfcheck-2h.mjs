@@ -48,13 +48,23 @@ const ROOT = "D:\\Stelarith";
 const SITE = path.join(ROOT, "Stelarith-website", "stelarith");
 const CONSOLE_SRC = path.join(SITE, "static", "console");
 const CONSOLE_DST = path.join(SITE, "build", "client", "console");
-const LOG_DIR = path.join(ROOT, "_logs");
+// 报表目录可被环境变量重定向。加这个开关的**唯一**理由是让自检能被测试：
+// 否则想验证一个检查项（比如故意制造一次漂移看它报不报）就必然往生产遥测
+// （selfcheck-latest.json / selfcheck-2h.jsonl）里灌进**假告警**，日后被人当成真事故。
+// 不设变量时行为与原先完全一致。
+const LOG_DIR = process.env.STELARITH_SELFCHECK_LOG_DIR
+  ? path.resolve(process.env.STELARITH_SELFCHECK_LOG_DIR)
+  : path.join(ROOT, "_logs");
 // ⚠️ CIMS 的日志不在根 _logs（那是自检报告的地盘），而在后端工程自己的 _logs 下。
 // 曾经这里写成同一个目录 → 日志膨胀检查恒为「0B」，等于没查。
 const CIMS_LOG_DIR = path.join(ROOT, "Stelarith-cims-eval", "_logs");
 const REPORT_JSONL = path.join(LOG_DIR, "selfcheck-2h.jsonl");
 const LATEST_JSON = path.join(LOG_DIR, "selfcheck-latest.json");
-const SYNC_SCRIPT = path.join(ROOT, "_tools", "sync-console.mjs");
+// 真源目录与仓库快照目录：_tools/ 是**未纳入版本控制**的运行副本（计划任务里写绝对路径，不能搬），
+// 仓库里的 ops-backup/tools/ 只是它的异地快照。两者必须逐字节一致，见下面的 checkToolsSnapshot。
+const TOOLS_DIR = path.join(ROOT, "_tools");
+const TOOLS_SNAPSHOT_DIR = path.join(SITE, "ops-backup", "tools");
+const SYNC_SCRIPT = path.join(TOOLS_DIR, "sync-console.mjs");
 
 const FIX = process.argv.includes("--fix");
 const TIMEOUT_MS = 6000;
@@ -432,6 +442,99 @@ function checkLogSize() {
   return true;
 }
 
+// 8) 运维脚本快照漂移：真源(_tools/、loadenv.cjs) vs 仓库快照(ops-backup/)
+//
+// 为什么必须**自动**查，而不是像 README 那样写一句"请记得重跑刷新命令"：
+//   1. 真源 `D:\Stelarith\_tools\` **不在任何 git 仓库内** —— 磁盘上只此一份，
+//      而其中 selfcheck/sync-console/run-cloudflared 都是**被计划任务直接调用**的载重件。
+//   2. 仓库里的 `ops-backup/tools/` 是为防"丢一块磁盘整套链路归零"而放进去的**只读快照**。
+//   3. ⚠️ 要命的一点：CI 门禁 `scripts/check-console-assets.mjs` 验证的**正是这份快照**的
+//      同步逻辑（因为 CI 在 Linux 上，根本看不到 `_tools/`）。所以快照一旦悄悄过期，
+//      门禁就会**去校验一份生产根本没在跑的逻辑**并判绿 —— 又是一张"空头支票"，
+//      和这套整改一直在打的"假证据"是同一形态。
+//   4. 而 README 目前的约束方式恰恰是"请记得" —— 本项目的教训是：
+//      **靠记性的约束必然再犯第三次**（见 sync-console.mjs 里允许列表踩的两次）。
+// 所以这里每 2 小时自动逐文件比 md5，漂移即报 warn，并附上可直接照做的刷新命令。
+//
+// 为什么**故意不**放进 `--fix` 自动修：--fix 由计划任务以服务账户跑，
+//   擅自改写 git 工作区会和并行开发（本项目常态）互相打架、制造更大的乱子。
+//   漂移是"人忘了提交"，不是"服务坏了" —— 归**警告**，退出码仍为 0，与文件既有哲学一致。
+function checkToolsSnapshot() {
+  // 与 README 的刷新命令保持一致：排除 C# 构建产物、编辑器/手工备份（.bak-*、~、.开头的隐藏文件）
+  const skipRel = (rel) => /(^|\/)(bin|obj)(\/|$)/.test(rel);
+  const skipName = (n) => /^\./.test(n) || /\.bak-|\.tmp$|~$/.test(n);
+
+  const listFiles = (root, base = root, out = []) => {
+    let es;
+    try { es = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { return out; }
+    for (const e of es) {
+      const abs = path.join(root, e.name);
+      const rel = path.relative(base, abs).replace(/\\/g, "/");
+      if (skipRel(rel)) continue;
+      if (e.isDirectory()) listFiles(abs, base, out);
+      else if (!skipName(e.name)) out.push(rel);
+    }
+    return out;
+  };
+  const digest = (abs) => {
+    try {
+      const b = fs.readFileSync(abs);
+      // ⚠️ 比对前必须统一行尾，否则会**误报**漂移。
+      //   本仓 `core.autocrlf=true`：git 在索引侧把 CRLF 归一成 LF 存储、**检出时再还原成 CRLF**。
+      //   所以任何一次 `git checkout -- <文件>`（或全新 clone）都会让工作区里的快照变回 CRLF，
+      //   而真源 `_tools/`（从不经 git）仍是 LF —— 逐字节比 md5 就会把**同一份脚本**报成"漂移"。
+      //   这个坑 2026-09-24 在做反向验证后的清理步骤里被自己抓到（`git checkout --` 之后
+      //   `stelarith_task.pub` 的 md5 突然对不上），不是推演出来的。
+      //   含 NUL 的真二进制不做归一化，避免破坏内容（当前 _tools/ 无二进制，属防御性写法）。
+      const isBinary = b.includes(0);
+      const norm = isBinary ? b : Buffer.from(b.toString("utf8").replace(/\r\n?/g, "\n"), "utf8");
+      return md5(norm);
+    } catch (_) { return null; }
+  };
+
+  const drift = [];
+
+  // (a) _tools/ 整棵树
+  const live = listFiles(TOOLS_DIR);
+  const snap = listFiles(TOOLS_SNAPSHOT_DIR);
+  const liveSet = new Set(live), snapSet = new Set(snap);
+  for (const rel of live) {
+    if (!snapSet.has(rel)) { drift.push(`${rel}（快照缺失）`); continue; }
+    if (digest(path.join(TOOLS_DIR, rel)) !== digest(path.join(TOOLS_SNAPSHOT_DIR, rel))) {
+      drift.push(`${rel}（内容不一致）`);
+    }
+  }
+  for (const rel of snap) if (!liveSet.has(rel)) drift.push(`${rel}（只存在于快照）`);
+
+  // (b) loadenv.cjs（单独一个文件，不在 _tools/ 下，但同为计划任务载重件）
+  for (const f of ["loadenv.cjs"]) {
+    const a = digest(path.join(ROOT, f));
+    const b = digest(path.join(SITE, "ops-backup", f));
+    if (!a || !b) drift.push(`${f}（真源或快照缺失）`);
+    else if (a !== b) drift.push(`${f}（内容不一致）`);
+  }
+
+  if (drift.length) {
+    record(
+      "tool-snapshot",
+      "warn",
+      "运维脚本快照已漂移（CI 门禁会去校验一份生产没在跑的脚本）",
+      drift.join(", "),
+      "刷新快照并提交：cp -r /d/Stelarith/_tools/. ops-backup/tools/ && " +
+        "rm -rf ops-backup/tools/mdump/bin ops-backup/tools/mdump/obj && " +
+        "cp /d/Stelarith/loadenv.cjs ops-backup/loadenv.cjs"
+    );
+    return false;
+  }
+  record(
+    "tool-snapshot",
+    "ok",
+    "运维脚本快照与真源一致",
+    `${live.length} 个脚本 + loadenv.cjs 逐文件一致（行尾归一化后 md5 相同）`
+  );
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -449,6 +552,7 @@ async function main() {
   checkSrcSync();
   await checkDisk();
   checkLogSize();
+  checkToolsSnapshot();
 
   const fails = results.filter((r) => r.level === "fail");
   const warns = results.filter((r) => r.level === "warn");
