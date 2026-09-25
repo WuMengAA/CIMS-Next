@@ -67,6 +67,10 @@ class Settings {
   /// 开机自动启动（被控机器必须自己回来，否则"人走了就管不了"）。
   final bool startWithWindows;
 
+  /// 收到集控通知时**不弹窗**（横幅/气泡全关，只记录日志与状态）。
+  /// 教室里要展示公告/弹窗时再打开；老师在自己电脑上测试/日常常驻时不被打扰。
+  final bool agentNotifyQuiet;
+
   /// 自动更新检查接口地址（可选，覆盖默认/站点地址）。
   ///
   /// 留空 = 用登录站点或内置默认站点的 `/api/version`；填了就直接向这个地址问版本。
@@ -95,6 +99,7 @@ class Settings {
     this.deviceUid = '',
     this.deviceName = '',
     this.startWithWindows = false,
+    this.agentNotifyQuiet = false,
     this.updateUrl = '',
     this.identity,
   });
@@ -116,6 +121,7 @@ class Settings {
     String? deviceUid,
     String? deviceName,
     bool? startWithWindows,
+    bool? agentNotifyQuiet,
     String? updateUrl,
     /// 传 `null` 表示**显式清空**身份（退出登录）；不传则保持原值。
     Object? identity = _unset,
@@ -137,6 +143,7 @@ class Settings {
       deviceUid: deviceUid ?? this.deviceUid,
       deviceName: deviceName ?? this.deviceName,
       startWithWindows: startWithWindows ?? this.startWithWindows,
+      agentNotifyQuiet: agentNotifyQuiet ?? this.agentNotifyQuiet,
       updateUrl: updateUrl ?? this.updateUrl,
       identity: identical(identity, _unset) ? this.identity : identity as Identity?,
     );
@@ -215,6 +222,7 @@ class SettingsNotifier extends StateNotifier<Settings> {
       deviceUid: uid,
       deviceName: name,
       startWithWindows: _prefs.getBool('cims_agent_startup') ?? false,
+      agentNotifyQuiet: _prefs.getBool('xjk_notify_quiet') ?? false,
       updateUrl: _prefs.getString('cims_update_url') ?? '',
       identity: _readIdentity(_prefs.getString('cims_identity')),
     );
@@ -348,6 +356,13 @@ class SettingsNotifier extends StateNotifier<Settings> {
   void setStartWithWindows(bool v) {
     state = state.copyWith(startWithWindows: v);
     _prefs.setBool('cims_agent_startup', v);
+  }
+
+  /// 收到集控通知是否不弹窗（横幅/气泡全关，只记录日志与状态）。
+  void setAgentNotifyQuiet(bool v) {
+    state = state.copyWith(agentNotifyQuiet: v);
+    _prefs.setBool('xjk_notify_quiet', v);
+    Log.i('通知弹窗已${v ? "关闭" : "开启"}（静默模式）', 'agent');
   }
 
   /// 设更新检查接口地址（空 = 回落站点/默认站点）。持久化，方便远程运维换源。

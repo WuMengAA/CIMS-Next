@@ -362,6 +362,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     onChanged: (v) =>
                         ref.read(settingsProvider.notifier).setDemo(v),
                   ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('收到集控通知不弹窗'),
+                    subtitle: const Text(
+                        '通知只记日志不弹横幅，测试/日常办公不被打扰（演练模式本就静默）'),
+                    value: s.agentNotifyQuiet,
+                    onChanged: (v) => ref
+                        .read(settingsProvider.notifier)
+                        .setAgentNotifyQuiet(v),
+                  ),
                 ],
               ),
             ),

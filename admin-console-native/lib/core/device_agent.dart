@@ -797,7 +797,7 @@ class DeviceAgent {
         );
         final r = await Process.run(
           'powershell.exe',
-          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f.path, tmp.path],
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', f.path, tmp.path],
         ).timeout(const Duration(minutes: 5));
         try { await tmp.delete(); } catch (_) {}
         if (r.exitCode != 0 || !'${r.stdout}'.contains('OK')) {
@@ -810,8 +810,11 @@ class DeviceAgent {
         try { await f.delete(); } catch (_) {}
       }
     }
+    // 非 wav：交给系统默认播放器。`start /B` = 后台启动**不新建窗口**——
+    // 旧写法 `start /min` 会先弹出一个最小化 cmd 黑窗（用户点名不要的闪窗），
+    // `/B` 从根上不产生窗口。
     try {
-      await Process.run('cmd.exe', ['/c', 'start', '', '/min', path]).timeout(const Duration(seconds: 10));
+      await Process.run('cmd.exe', ['/c', 'start', '', '/B', path]).timeout(const Duration(seconds: 10));
       return '';
     } catch (e) {
       return '$e';
@@ -827,6 +830,15 @@ class DeviceAgent {
 
   Future<ActionResult> _notify(String title, String body,
       {bool urgent = false}) async {
+    // ⓪ 静默（不弹任何窗口，只记日志）：设置里关了通知弹窗（agentNotifyQuiet），
+    //    或处于演练模式（dryRun——装样子不打扰）。教室里要展示公告时把开关打开。
+    //    ⚠️ 用户 2026-09-25 明令：「agent 弹窗不要弹出来，弹出最小化也不行」——
+    //    不仅气泡，界内横幅也不投递；信息仍留在日志与状态里，绝不静默吞掉。
+    final s0 = _read();
+    if (s0.agentNotifyQuiet || dryRun) {
+      Log.i('通知（静默${dryRun ? "·演练" : ""}）：$title - ${_clip(body)}', 'agent');
+      return ActionResult.yes('通知已收到（静默模式，未弹窗）');
+    }
     // ① 界面在跑 → 交给界面弹（大字体、置顶、可留痕），**不**再起 PowerShell。
     //
     //    以前这里一律走 PowerShell 气泡，实测有两个硬伤：
@@ -880,7 +892,7 @@ class DeviceAgent {
       await f.writeAsString(script, flush: true, encoding: const SystemEncoding());
       final r = await Process.run(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f.path, ...args],
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', f.path, ...args],
       ).timeout(const Duration(seconds: 20));
       final out = '${r.stdout}'.trim();
       final err = '${r.stderr}'.trim();
