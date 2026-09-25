@@ -1424,7 +1424,13 @@
     // 只有「独立打开面板且未配站点后端」时才退化为直连 CIMS 的旧路径。
     listNotices: async (classId) =>
       NORM.notices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
-    sendNotice: async (title, scope, classes, content, seconds) => {
+    // v2.1 类型化通知的逐台回执（谁看了 / 谁没看；需登录）。
+    noticeDeliveries: async (noticeId) => {
+      const r = await ext(`/notice-deliveries?notice=${encodeURIComponent(noticeId)}`);
+      if (r && r.error) throw new Error(r.error);
+      return r || { notice: null, deliveries: [] };
+    },
+    sendNotice: async (title, scope, classes, content, seconds, opts = {}) => {
       const body = {
         title,
         scope: scope || "本班",
@@ -1435,6 +1441,16 @@
       // CIMS 侧 NotificationPayload.DurationSeconds 本就存在（0~3600），一路透传即可。
       const sec = Number(seconds);
       if (Number.isFinite(sec) && sec > 0) body.duration_seconds = sec;
+      // v2.1 通知类型与旗标（服务端按角色矩阵强制；传了不支持的会被 403 拒）。
+      //   type: notice | island | popup | fullscreen
+      //   popup 额外：reply_presets（预设回复短语 1~6 条）、emergency_confirm（需确认）
+      //   popup/fullscreen：auto_dismiss_seconds（自动关屏，1~300）
+      const tp = String(opts.type || "");
+      if (["island", "popup", "fullscreen"].includes(tp)) body.type = tp;
+      if (Array.isArray(opts.reply_presets) && opts.reply_presets.length) body.reply_presets = opts.reply_presets;
+      if (opts.emergency_confirm === true) body.emergency_confirm = true;
+      const ads = Number(opts.auto_dismiss_seconds);
+      if (Number.isFinite(ads) && ads > 0 && ads <= 300) body.auto_dismiss_seconds = Math.round(ads);
       // ① 内嵌网站 / 配了站点后端：走服务端（推荐路径，含定向与去重）
       if (state.embedded || state.siteHost) {
         return ext("/notices", { method: "POST", body: JSON.stringify(body) }, "notices");

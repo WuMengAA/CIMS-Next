@@ -1,6 +1,6 @@
 import { env } from "$env/dynamic/private";
 import { getCimsAccount } from "./cims-account.js";
-import { addNotice, addAudit, type ConsoleNotice } from "./console-ext.js";
+import { addNotice, addAudit, setNoticeSent, type ConsoleNotice } from "./console-ext.js";
 
 // ── 广播下发（把站内公告/消息推送到 CIMS 教室端大屏）────────────────────────
 //
@@ -38,6 +38,8 @@ export interface BroadcastResult {
 	total: number;
 	/** 本次留痕记录（唯一样本）。被去重抑制时为 undefined —— 因为它没有产生新通知。 */
 	notice?: ConsoleNotice;
+	/** 收到推送的目标设备（建档回执用；类型化通知才有，普通 notice 通常不需要）。 */
+	uids?: string[];
 	/** true = 命中了短时去重窗口，未重复下发、未重复留痕。 */
 	deduped?: boolean;
 	error?: string;
@@ -165,6 +167,10 @@ export async function broadcastToClassrooms(
 		author?: string;
 		force?: boolean;
 		seconds?: number;
+		/** v2.1 通知类型：island / popup / fullscreen 走 stelarith_task 结构化信封；否则普通字符串。 */
+		type?: string;
+		/** 类型化旗标（解析渲染参数用）。 */
+		flags?: Record<string, unknown>;
 	} = {}
 ): Promise<BroadcastResult> {
 	const cleanTitle = (title || "").trim();
@@ -246,9 +252,59 @@ export async function broadcastToClassrooms(
 		return { ok: false, delivered: 0, total: uids.length, notice, error: "CIMS 不可达" };
 	}
 
+	// ── v2.1 类型化通知（island/popup/fullscreen）：先建档拿 notice_id ────────
+	// 指令里携带 notice_id（设备端回执对账），下发完成后回填 sent。
+	// 普通 notice 保持旧字符串信封与旧留痕时机，历史行为零变化。
+	const typed = ["island", "popup", "fullscreen"].includes(opts.type || "")
+		? (opts.type as "island" | "popup" | "fullscreen")
+		: null;
+	const TASK_ACTION = { island: "island_notice", popup: "popup_notice", fullscreen: "fullscreen_notice" } as const;
+	let typingNotice: ConsoleNotice | null = null;
+	if (typed) {
+		typingNotice = addNotice({
+			title: cleanTitle,
+			scope: opts.scope || (classes.length ? classes.join("、") : "全校"),
+			author: opts.author,
+			sent: 0,
+			classes,
+			channel: opts.source || "manual",
+			type: typed,
+			flags: opts.flags
+		});
+	}
+
 	let delivered = 0;
+	const ts = Math.floor(Date.now() / 1000);
 	for (const uid of uids) {
 		try {
+			let channelBody: Record<string, unknown>;
+			if (typed && typingNotice) {
+				channelBody = {
+					MessageContent: JSON.stringify({
+						stelarith_task: {
+							action: TASK_ACTION[typed],
+							token: ts.toString(36),
+							scope: "class",
+							ts,
+							payload: {
+								notice_id: typingNotice.id,
+								title: cleanTitle,
+								content,
+								flags: opts.flags ?? {}
+							}
+						}
+					})
+				};
+			} else {
+				channelBody = {
+					MessageContent: content ? `${cleanTitle}\n${content}` : cleanTitle,
+					// 显示时长：只在显式指定时下发（0~3600，与 CIMS NotificationPayload 约束一致）。
+					// 不发该字段 = CIMS 取默认值 → 教室端插件按正文字数自适应（3~20s）。
+					...(typeof opts.seconds === "number" && opts.seconds > 0
+						? { DurationSeconds: Math.min(Math.max(opts.seconds, 0), 3600) }
+						: {})
+				};
+			}
 			const r = await fetch(
 				`${auth.mgmt}/account/${acct.id}/client/${encodeURIComponent(uid)}/command/send-notification`,
 				{
@@ -257,14 +313,7 @@ export async function broadcastToClassrooms(
 						"content-type": "application/json",
 						Authorization: `Bearer ${auth.token}`
 					},
-					body: JSON.stringify({
-						MessageContent: content ? `${cleanTitle}\n${content}` : cleanTitle,
-						// 显示时长：只在显式指定时下发（0~3600，与 CIMS NotificationPayload 约束一致）。
-						// 不发该字段 = CIMS 取默认值 → 教室端插件按正文字数自适应（3~20s）。
-						...(typeof opts.seconds === "number" && opts.seconds > 0
-							? { DurationSeconds: Math.min(Math.max(opts.seconds, 0), 3600) }
-							: {})
-					}),
+					body: JSON.stringify(channelBody),
 					signal: AbortSignal.timeout(5000)
 				}
 			);
@@ -275,18 +324,22 @@ export async function broadcastToClassrooms(
 	}
 
 	// 留痕（唯一收口 —— 调用方请用返回值，不要再自己写一条）
-	const notice = addNotice({
-		title: cleanTitle,
-		scope: opts.scope || (classes.length ? classes.join("、") : "全校"),
-		author: opts.author,
-		sent: delivered,
-		classes,
-		channel: opts.source || "manual"
-	});
+	// 类型化通知已提前建档，这里只回填送达数；普通通知走原逻辑。
+	const notice =
+		typed && typingNotice
+			? (setNoticeSent(typingNotice.id, delivered), { ...typingNotice, sent: delivered })
+			: addNotice({
+					title: cleanTitle,
+					scope: opts.scope || (classes.length ? classes.join("、") : "全校"),
+					author: opts.author,
+					sent: delivered,
+					classes,
+					channel: opts.source || "manual"
+				});
 	addAudit({
 		action: "broadcast_" + (opts.source || "manual"),
 		target: opts.scope || (classes.length ? classes.join("、") : "全校"),
-		detail: `推送到 ${delivered}/${uids.length} 台设备${classNote ? "（" + classNote + "）" : ""}：${cleanTitle}`.slice(0, 200)
+		detail: `推送到 ${delivered}/${uids.length} 台设备${classNote ? "（" + classNote + "）" : ""}${typed ? `（${typed}）` : ""}：${cleanTitle}`.slice(0, 200)
 	});
-	return { ok: delivered > 0, delivered, total: uids.length, notice };
+	return { ok: delivered > 0, delivered, total: uids.length, notice, uids };
 }

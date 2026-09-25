@@ -4,7 +4,7 @@ import { verifyToken, type User } from "$lib/server/auth.js";
 import { can, userCan, canDevice, broadcastScope, canBroadcastTo, clampBroadcastScope, scopeFromLabel, BROADCAST_SCOPE_LABELS, type BroadcastScope, // 权限矩阵（等级轴 / 设备轴 / 分级轴 / 广播范围轴 + 当前账号快照）
 	// 全部由 permissions.ts 的 permissionMatrix() 计算，本路由只做透传 ——
 	// 因此不再逐个导入各轴的中文标签常量（它们只在 permissionMatrix 内部使用）。
-	permissionMatrix, canDeviceAction, deviceActionsOf, type Action, type DeviceTier, type DeviceAction } from "$lib/permissions.js";
+	permissionMatrix, canDeviceAction, deviceActionsOf, canSendNoticeType, NOTICE_TYPE_LABELS, type Action, type DeviceTier, type DeviceAction, type NoticeType } from "$lib/permissions.js";
 import { broadcastToClassrooms } from "$lib/server/broadcast.js";
 import { classScopeOf, scopeCovers, listBindings } from "$lib/server/class-scope.js";
 import { fetchClassList, fetchDeviceClassMap, classOfDevice } from "$lib/server/cims-client.js";
@@ -61,7 +61,13 @@ import {
 	getDeviceCapture,
 	clearDeviceCapture,
 	listDeviceCaptures,
-	getDeviceCaptureById
+	getDeviceCaptureById,
+	// ── 通知回执（v2.1 类型化通知：建档 / 明细 / 设备 catch-up）────────────
+	getNoticeById,
+	listNoticeDeliveries,
+	ensureNoticeDeliveries,
+	markNoticeDelivery,
+	listPendingTypedNotices
 } from "$lib/server/console-ext.js";
 
 /**
@@ -175,10 +181,12 @@ export async function GET(event: RequestEvent) {
 
 	// ── 设备密钥早分派（先于用户鉴权）──────────────────────────────────────
 	// 设备（教室端代理 / 星集控被控循环）没有用户会话，走不了 viewConsole。
-	// 它们只被允许做一件事：按 id 下载推送文件（file_push 指令的下半场）。
+	// 它们只被允许做两类事：① 按 id 下载推送文件（file_push 指令的下半场）；
+	// ② 拉取发给自己的类型化通知（island/popup/fullscreen 的 catch-up），
+	//    以及回报阅读/回复状态（POST notice-ack，在下方的设备分支）。
 	// 密钥不对必须明确 403，不能落到用户鉴权分支回「请先登录」——
 	// 那会把「设备密钥配错」伪装成「登录过期」（与 POST 侧同款教训）。
-	if (path0 === "files") {
+	if (path0 === "files" || path0 === "notices") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		if (secret) {
 			if (!deviceSecretOk(event)) {
@@ -187,23 +195,29 @@ export async function GET(event: RequestEvent) {
 					{ status: 403 }
 				);
 			}
-			const fid = String(event.url.searchParams.get("id") ?? "").trim();
-			const obj = fid ? getFileObject(fid) : null;
-			if (!obj) return json({ error: "文件不存在或已清理", code: "not_found" }, { status: 404 });
-			const bytes = readFileBytes(obj);
-			if (!bytes) return json({ error: "文件内容已清理", code: "gone" }, { status: 410 });
-			// 中文文件名：filename* 按 RFC 5987 编码；filename 兜底 ASCII。
-			const asciiName = obj.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
-			return new Response(new Uint8Array(bytes), {
-				status: 200,
-				headers: {
-					"content-type": "application/octet-stream",
-					"content-length": String(bytes.length),
-					"content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(obj.name)}`
-				}
-			});
+			if (path0 === "files") {
+				const fid = String(event.url.searchParams.get("id") ?? "").trim();
+				const obj = fid ? getFileObject(fid) : null;
+				if (!obj) return json({ error: "文件不存在或已清理", code: "not_found" }, { status: 404 });
+				const bytes = readFileBytes(obj);
+				if (!bytes) return json({ error: "文件内容已清理", code: "gone" }, { status: 410 });
+				// 中文文件名：filename* 按 RFC 5987 编码；filename 兜底 ASCII。
+				const asciiName = obj.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+				return new Response(new Uint8Array(bytes), {
+					status: 200,
+					headers: {
+						"content-type": "application/octet-stream",
+						"content-length": String(bytes.length),
+						"content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(obj.name)}`
+					}
+				});
+			}
+			// 被控端 catch-up：拉这台设备还没看过的类型化通知（重启后补齐弹窗）。
+			const pendUid = String(event.url.searchParams.get("pending_for") ?? "").trim();
+			if (!pendUid) return json({ error: "缺少 pending_for（设备 uid）" }, { status: 400 });
+			return json({ notices: listPendingTypedNotices(pendUid) });
 		}
-		// 无设备密钥 → 落到下面的用户会话分支（发送方查自己文件的下载进度不需要密钥）。
+		// 无设备密钥 → 落到下面的用户会话分支（面板拉历史 / 查询进度）。
 	}
 
 	const g = guard(event);
@@ -219,8 +233,24 @@ export async function GET(event: RequestEvent) {
 
 	switch (path) {
 		case "notices":
-			// class 过滤：历史通知「分班级」查看（不传 = 全部）
-			return json(listNotices(Number(q.get("limit") ?? 50) || 50, q.get("class") || undefined));
+			// 历史通知：「班级」过滤分班查看（不传 = 全部）；「since」增量拉取
+			// （被控端 catch-up 复用同一端点拉补课，面板轮询只看新的）。
+			return json(
+				listNotices(
+					Number(q.get("limit") ?? 50) || 50,
+					q.get("class") || undefined,
+					q.get("since") || undefined
+				)
+			);
+		case "notice-deliveries": {
+			// 类型化通知的逐台回执（面板「谁看了、谁没看」明细；viewConsole 即可，
+			// 与看历史同一权限档 —— 回执含设备 uid 属内部信息，不对外）。
+			const nid = Number(q.get("notice") ?? 0);
+			if (!nid) return json({ error: "缺少 notice 参数" }, { status: 400 });
+			const n = getNoticeById(nid);
+			if (!n) return json({ error: "通知不存在" }, { status: 404 });
+			return json({ notice: n, deliveries: listNoticeDeliveries(nid) });
+		}
 		case "chat":
 			return json(listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100));
 		case "audit":
@@ -404,7 +434,7 @@ export async function POST(event: RequestEvent) {
 	// 鉴权用部署级共享密钥（`CONSOLE_DEVICE_REPORT_SECRET`），且**未配置即拒绝**：
 	// 这个入口会把 ip/port 写进面板要嵌的 iframe，一旦可被任意伪造，
 	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
-	if (path === "vnc-session" || path === "media-session" || path === "captures" || path === "file-ack") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures" || path === "file-ack" || path === "notice-ack") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		// 带了这个头 = 调用方**自称是设备代理**（只有 Rust 代理会发，面板从不发）。
 		// 此时密钥不对必须明确 403，不能落到用户鉴权分支去回「请先登录」——
@@ -468,6 +498,28 @@ export async function POST(event: RequestEvent) {
 					detail: `${state}${body.detail ? "：" + String(body.detail).slice(0, 120) : ""}`
 				});
 				return json({ ok: okUp, state });
+			}
+			if (path === "notice-ack") {
+				// 类型化通知的设备回执：收到（received）→ 已读（read）/ 已回复（replied，
+				// action_result 为预设短语原文）/ 驳回（rejected——用户点了取消/不在场）/
+				// 跳过（dismissed——岛通知轮播结束不打扰）。
+				// uid 由设备自称（密钥为部署级共享），防伪面：回执只更新发给「这个 uid」且
+				// 未终态的行，虚报 uid 顶多把同名行提前标已读，拿不到任何内容。
+				const nid = Number(body.notice_id ?? 0);
+				const duid = String(body.uid ?? "").trim();
+				if (!nid || !duid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
+				const st = ["read", "replied", "rejected", "dismissed", "received"].includes(String(body.state))
+					? String(body.state)
+					: "read";
+				const okSt = markNoticeDelivery(nid, duid, st, st === "replied" ? String(body.action_result ?? "") : "");
+				addAudit({
+					actor: `device:${duid}`,
+					role: "device",
+					action: "notice.ack",
+					target: String(nid),
+					detail: `${st}${st === "replied" ? "：" + String(body.action_result ?? "").slice(0, 120) : ""}`
+				});
+				return json({ ok: okSt, state: st });
 			}
 			const proto = path === "vnc-session" ? "vnc" : "media";
 			const uid = String(body.uid ?? "").trim();
@@ -592,6 +644,33 @@ export async function POST(event: RequestEvent) {
 			const durRaw = Number(body.duration_seconds);
 			const seconds = Number.isFinite(durRaw) && durRaw > 0 ? Math.min(durRaw, 3600) : undefined;
 
+			// ── v2.1 通知类型（notice / island / popup / fullscreen）───────────
+			// 类型决定教室端的呈现（课表岛 / 弹窗 / 全屏），由角色矩阵服务端强制：
+			// teacher=notice/island，homeroom 加 popup，admin/owner 全 4 种。
+			const rawType = String(body.type || "notice").trim();
+			const typed: NoticeType = ["notice", "island", "popup", "fullscreen"].includes(rawType)
+				? (rawType as NoticeType)
+				: "notice";
+			if (typed !== "notice" && !canSendNoticeType(u.role, typed)) {
+				return json(
+					{ error: `当前角色不能发送「${NOTICE_TYPE_LABELS[typed] ?? typed}」通知` },
+					{ status: 403 }
+				);
+			}
+			// 类型化旗标：只收白名单字段（其余忽略），避免把任意 JSON 塞进库/指令。
+			const flags: Record<string, unknown> = {};
+			if (typed === "popup") {
+				const presets = Array.isArray(body.reply_presets)
+					? body.reply_presets.map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 6)
+					: [];
+				if (presets.length) flags.reply_presets = presets;
+				if (body.emergency_confirm === true) flags.emergency_confirm = true;
+			}
+			if (typed === "popup" || typed === "fullscreen") {
+				const ads = Number(body.auto_dismiss_seconds);
+				if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
+			}
+
 			// 真推送到教室端（这是「自动推送」的核心：留痕不等于送达）。
 			// ⚠️ 留痕由 broadcastToClassrooms 内部**唯一收口**，本函数不再自己 addNotice ——
 			//    曾经这里又写了一次，导致每条通知在历史里出现两遍（重复 2 次的根因）。
@@ -602,7 +681,9 @@ export async function POST(event: RequestEvent) {
 					classes,
 					source: "notice",
 					author: actor,
-					seconds
+					seconds,
+					type: typed,
+					flags
 				});
 			}
 
@@ -616,8 +697,17 @@ export async function POST(event: RequestEvent) {
 					author: actor,
 					sent: body.sent,
 					classes,
-					channel: "notice"
+					channel: "notice",
+					type: typed,
+					flags
 				});
+
+			// 类型化通知：给目标设备建档回执（老师把通知发出去后能看「谁看了、谁没看」）。
+			// 幂等（ensureXxx），面板通过 GET notice-deliveries 轮询明细。
+			const targetUids = broadcast?.uids;
+			if (typed !== "notice" && targetUids && targetUids.length > 0) {
+				ensureNoticeDeliveries(item.id, targetUids);
+			}
 
 			// 审计也只在「没走 broadcast」时补（broadcast 内部已记，避免审计双份）。
 			if (!broadcast) {
@@ -627,7 +717,9 @@ export async function POST(event: RequestEvent) {
 					detail: `${title}（仅留痕，未推送）`.slice(0, 200)
 				});
 			}
-			return json({ ...item, broadcast }, { status: 201 });
+			// uids 是内部对账用的，不随响应出网（面板要明细走 notice-deliveries 端点）。
+			const { uids: _omit, ...broadcastSafe } = broadcast ?? { ok: false, delivered: 0, total: 0 };
+			return json({ ...item, typed, broadcast: broadcast ? broadcastSafe : null }, { status: 201 });
 		}
 		case "chat": {
 			if (!body.text?.trim()) return json({ error: "消息不能为空" }, { status: 400 });

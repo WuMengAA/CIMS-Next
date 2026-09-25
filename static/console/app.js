@@ -1590,6 +1590,33 @@
                  style="width:96px"/>
           <button class="primary" data-act="send-notice" data-need="broadcast">发布</button>
         </div>
+        <div class="row" style="margin-top:6px">
+          <span class="muted" style="width:88px">呈现方式</span>
+          <select id="nt-type" title="通知在教室电脑上怎么显示（按账号角色限制，服务端强制校验）">
+            <option value="">普通通知</option>
+            <option value="island">课表岛 · 顶部滚动</option>
+            ${
+              PERM.role === "admin" || PERM.role === "owner" || PERM.role === "homeroom"
+                ? `<option value="popup">弹窗 · 需要确认</option>`
+                : ""
+            }
+            ${
+              PERM.role === "admin" || PERM.role === "owner"
+                ? `<option value="fullscreen">全屏 · 置顶紧急</option>`
+                : ""
+            }
+          </select>
+          <span class="muted" style="font-size:12px" id="nt-type-hint">普通通知：教室端横幅显示，不打断教学。</span>
+        </div>
+        <div class="row" style="margin-top:6px" id="nt-presets-row" style="display:none">
+          <span class="muted" style="width:88px">预设回复</span>
+          <input id="nt-presets" placeholder="逗号分隔，最多 6 条（如：下课再处理,已收到）" style="flex:1"/>
+          <label class="row" style="gap:4px"><input type="checkbox" id="nt-emergency"/> 需确认</label>
+        </div>
+        <div class="row" style="margin-top:6px" id="nt-ads-row" style="display:none">
+          <span class="muted" style="width:88px">自动关屏</span>
+          <input id="nt-ads" type="number" min="1" max="300" step="1" placeholder="秒（1~300，留空=不自动关）" style="width:220px"/>
+        </div>
         <textarea id="nt-content" placeholder="通知正文（可空）" style="min-height:64px"></textarea>
 
         <div class="row" style="margin-top:4px">
@@ -3361,6 +3388,20 @@
         // 显示时长（秒）：留空 = 不指定（教室端按字数自适应）。显式给 0 也等于不指定。
         const durEl = $("#nt-duration");
         const dur = durEl && durEl.value.trim() !== "" ? Number(durEl.value) : undefined;
+        // v2.1 呈现方式与旗标（服务端按角色矩阵强制，前端只透传）
+        const ntType = ($("#nt-type") || {}).value || "";
+        const presets = ($("#nt-presets") || { value: "" }).value
+          .split(/[,，、]/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 6);
+        const emg = ($("#nt-emergency") || {}).checked === true;
+        const adsRaw = ($("#nt-ads") || { value: "" }).value;
+        const ads = Number(adsRaw);
+        const noticeOpts = { type: ntType };
+        if (presets.length) noticeOpts.reply_presets = presets;
+        if (emg) noticeOpts.emergency_confirm = true;
+        if (Number.isFinite(ads) && ads > 0 && ads <= 300) noticeOpts.auto_dismiss_seconds = Math.round(ads);
         // 勾选的班级 = 定向推送目标（多选）。为空则交给「范围」决定。
         const cls = Array.from(view.querySelectorAll("input.nt-cls:checked")).map((x) => x.value);
         try {
@@ -3370,19 +3411,35 @@
           //     且该处注释明确写着「broadcast 内部已记，避免审计双份」。
           // 前端再记一次，会让每次广播在操作日志里出现三条记录，
           // 真正的失败原因反而被淹掉（2026-09-17 实测真实数据确认）。
-          const r = await API.sendNotice(t, $("#nt-scope").value, cls, c, dur);
+          const r = await API.sendNotice(t, $("#nt-scope").value, cls, c, dur, noticeOpts);
           const b = r && r.broadcast;
           // 时长回显：让「设了 30 秒」和「忘了设」在结果通知里一眼可分。
           const durNote =
             Number.isFinite(dur) && dur > 0 ? `（大屏显示 ${dur} 秒）` : "（时长自适应）";
+          const typeNote = r && r.typed && r.typed !== "notice"
+            ? { island: " · 课表岛", popup: " · 弹窗", fullscreen: " · 全屏紧急" }[r.typed] || ""
+            : "";
           if (b && b.deduped) {
             toast("内容与 30 秒内的上一条完全相同，已自动去重（未重复推送）");
           } else if (b && b.ok === false) {
             toast("未送达：" + (b.error || "未知原因"));
           } else if (b) {
-            toast(`通知已发布${durNote}，送达 ${b.delivered}/${b.total} 台设备`);
+            toast(`通知已发布${durNote}${typeNote}，送达 ${b.delivered}/${b.total} 台设备`);
+            // v2.1 类型化通知：轮询回执，把「谁看了」直接亮给发件人
+            if (r && r.typed && r.typed !== "notice" && r.id) {
+              setTimeout(async () => {
+                try {
+                  const dv = await API.noticeDeliveries(r.id);
+                  const rows = (dv.deliveries || []).filter((d) => d.state !== "pending");
+                  if (rows.length) {
+                    const reads = rows.filter((d) => d.state === "read" || d.state === "replied").length;
+                    toast(`回执：已读 ${reads}/${rows.length} 台${rows.some((d) => d.state === "replied") ? "，1 台已回复" : ""}`);
+                  }
+                } catch (_) { /* 回执轮询失败不打扰发送成功本身 */ }
+              }, 8000);
+            }
           } else {
-            toast("通知已发布" + durNote);
+            toast("通知已发布" + durNote + typeNote);
           }
         } catch (e) {
           toast("发布失败：" + (e && e.message ? e.message : e));
@@ -3856,6 +3913,25 @@
     if (e.target && e.target.id === "sb-type") {
       const row = $("#sb-weekday-row");
       if (row) row.style.display = e.target.value === "weekly" ? "" : "none";
+      return;
+    }
+    // v2.1 通知呈现方式：弹窗 → 显示预设回复/需确认行；弹窗/全屏 → 显示自动关屏行
+    if (e.target && e.target.id === "nt-type") {
+      const v = e.target.value + "";
+      const presetsRow = $("#nt-presets-row");
+      const adsRow = $("#nt-ads-row");
+      const hint = $("#nt-type-hint");
+      if (presetsRow) presetsRow.style.display = v === "popup" ? "" : "none";
+      if (adsRow) adsRow.style.display = v === "popup" || v === "fullscreen" ? "" : "none";
+      if (hint)
+        hint.textContent =
+          v === "island"
+            ? "课表岛：大屏顶部滚动循环，不打断教学（老师也能发）。"
+            : v === "popup"
+              ? "弹窗：教室端弹出需确认的弹窗，可带预设回复与紧急确认。"
+              : v === "fullscreen"
+                ? "全屏：置顶屏幕上方，强打断（仅学校管理员）。"
+                : "普通通知：教室端横幅显示，不打断教学。";
       return;
     }
 

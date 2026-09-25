@@ -27,6 +27,11 @@ export interface ConsoleNotice {
 	classes: string[];
 	/** 来源通道：notice（面板发布）/ chat（群里喊话）/ announcement（网站公告）。 */
 	channel: string;
+	/** 通知类型（v2.1）：notice | island | popup | fullscreen（来自 notice_kinds，默认 notice）。 */
+	type: string;
+	/** 类型化旗标（JSON 原串；解析用 flagsParsed）。 */
+	flags: string;
+	flagsParsed: Record<string, unknown>;
 	createdAt: string;
 }
 
@@ -69,22 +74,46 @@ const unpackClasses = (s: unknown): string[] =>
 
 // ── 通知广播历史 ────────────────────────────────────────────────────────────
 
-export function listNotices(limit = 50, classId?: string): ConsoleNotice[] {
+export function listNotices(limit = 50, classId?: string, since?: string): ConsoleNotice[] {
 	// 按班级筛选：班级号是逗号串里的独立项，用「首项 / 中间项 / 末项」三种包含式精确匹配，
 	// 避免 LIKE '%3%' 把「13班」也匹配进来。空 classes 的旧行为「不限班级」，任何筛选都可见。
 	const cls = String(classId ?? "").trim();
-	const where = cls
-		? "WHERE classes = '' OR classes = ? OR classes LIKE ? OR classes LIKE ? OR classes LIKE ?"
-		: "";
-	const params: any[] = cls ? [cls, `${cls},%`, `%,${cls},%`, `%,${cls}`] : [];
+	const conds: string[] = [];
+	const params: any[] = [];
+	if (cls) {
+		conds.push("(n.classes = '' OR n.classes = ? OR n.classes LIKE ? OR n.classes LIKE ? OR n.classes LIKE ?)");
+		params.push(cls, `${cls},%`, `%,${cls},%`, `%,${cls}`);
+	}
+	// since：增量拉取（被控端 catch-up 与面板「只显示最近」都用它）。
+	// 用 ISO 字典序比较（nowIso 为 UTC Z 格式），与 created_at 同一坐标系。
+	const snc = String(since ?? "").trim();
+	if (snc && !Number.isNaN(new Date(snc).getTime())) {
+		conds.push("n.created_at > ?");
+		params.push(new Date(snc).toISOString());
+	}
+	const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 	const rows = getDb()
 		.prepare(
-			`SELECT id, title, scope, account, author, sent, classes, channel, created_at
-			 FROM console_notices ${where} ORDER BY created_at DESC, id DESC LIMIT ?`
+			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
+			        k.type, k.flags
+			 FROM console_notices n
+			 LEFT JOIN notice_kinds k ON k.notice_id = n.id
+			 ${where} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`
 		)
 		.all(...params, Math.min(Math.max(limit, 1), 200)) as unknown as any[];
-	return rows.map((r) => ({
-		id: r.id,
+	return rows.map((r) => noticeFromRow(r));
+}
+
+export function noticeFromRow(r: any): ConsoleNotice {
+	let flagsParsed: Record<string, unknown> = {};
+	try {
+		const f = JSON.parse(String(r.flags || "{}"));
+		if (f && typeof f === "object") flagsParsed = f;
+	} catch {
+		/* 坏 JSON 当无旗标 */
+	}
+	return {
+		id: Number(r.id),
 		title: r.title,
 		scope: r.scope,
 		account: r.account,
@@ -92,8 +121,24 @@ export function listNotices(limit = 50, classId?: string): ConsoleNotice[] {
 		sent: Number(r.sent ?? 0),
 		classes: unpackClasses(r.classes),
 		channel: r.channel || "",
+		type: String(r.type || "notice"),
+		flags: String(r.flags || "{}"),
+		flagsParsed,
 		createdAt: r.created_at
-	}));
+	};
+}
+
+export function getNoticeById(id: number): ConsoleNotice | null {
+	const r = getDb()
+		.prepare(
+			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
+			        k.type, k.flags
+			 FROM console_notices n
+			 LEFT JOIN notice_kinds k ON k.notice_id = n.id
+			 WHERE n.id = ?`
+		)
+		.get(Number(id ?? 0)) as any;
+	return r ? noticeFromRow(r) : null;
 }
 
 export function addNotice(input: {
@@ -104,6 +149,10 @@ export function addNotice(input: {
 	sent?: number;
 	classes?: string[] | string;
 	channel?: string;
+	/** v2.1 通知类型（notice/island/popup/fullscreen）；默认 notice。 */
+	type?: string;
+	/** 类型化旗标对象（emergency_confirm / auto_dismiss_seconds / reply_presets…）。 */
+	flags?: Record<string, unknown>;
 }): ConsoleNotice {
 	const row = {
 		title: cut(input.title, 200),
@@ -121,8 +170,19 @@ export function addNotice(input: {
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(row.title, row.scope, row.account, row.author, row.sent, row.classes, row.channel, ts);
+	const id = Number(info.lastInsertRowid);
+	const kind = ["notice", "island", "popup", "fullscreen"].includes(String(input.type || "notice"))
+		? String(input.type || "notice")
+		: "notice";
+	const flags = input.flags && typeof input.flags === "object" ? input.flags : {};
+	if (kind !== "notice" || Object.keys(flags).length > 0) {
+		getDb()
+			.prepare(`INSERT INTO notice_kinds (notice_id, type, flags) VALUES (?, ?, ?)
+			           ON CONFLICT(notice_id) DO UPDATE SET type = excluded.type, flags = excluded.flags`)
+			.run(id, kind, JSON.stringify(flags).slice(0, 2000));
+	}
 	return {
-		id: Number(info.lastInsertRowid),
+		id,
 		title: row.title,
 		scope: row.scope,
 		account: row.account,
@@ -130,6 +190,9 @@ export function addNotice(input: {
 		sent: row.sent,
 		classes: unpackClasses(row.classes),
 		channel: row.channel,
+		type: kind,
+		flags: JSON.stringify(flags),
+		flagsParsed: flags,
 		createdAt: ts
 	};
 }
@@ -138,6 +201,105 @@ export function addNotice(input: {
 export function clearNotices(): number {
 	const info = getDb().prepare("DELETE FROM console_notices").run();
 	return Number(info.changes ?? 0);
+}
+
+/** 回填送达数（类型化通知先建档拿 id、下发后再把 delivered 写回）。 */
+export function setNoticeSent(id: number, sent: number): void {
+	getDb()
+		.prepare("UPDATE console_notices SET sent = ? WHERE id = ?")
+		.run(Math.max(0, Number(sent ?? 0)), Number(id ?? 0));
+}
+
+// ── 通知送达回执（v2.1）─────────────────────────────────────────────────────
+
+export interface NoticeDeliveryRow {
+	id: number;
+	notice_id: number;
+	uid: string;
+	state: string;
+	action_result: string;
+	detail: string;
+	created_at: string;
+	updated_at: string;
+}
+
+/** 某条通知的逐台回执（面板「谁看了、谁没看」明细）。 */
+export function listNoticeDeliveries(noticeId: number): NoticeDeliveryRow[] {
+	return getDb()
+		.prepare(
+			`SELECT id, notice_id, uid, state, action_result, detail, created_at, updated_at
+			 FROM notice_deliveries WHERE notice_id = ? ORDER BY created_at ASC`
+		)
+		.all(Number(noticeId ?? 0)) as unknown as NoticeDeliveryRow[];
+}
+
+/** 建档：某通知开局时给每台目标设备落一行 pending（幂等：已存在则跳过）。 */
+export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number {
+	if (!Number(noticeId)) return 0;
+	const ts = nowIso();
+	let n = 0;
+	const stmt = getDb().prepare(
+		`INSERT OR IGNORE INTO notice_deliveries (notice_id, uid, state, action_result, detail, created_at, updated_at)
+		 VALUES (?, ?, 'pending', '', '', ?, ?)`
+	);
+	for (const uidRaw of uids) {
+		const uid = String(uidRaw ?? "").trim().toLowerCase();
+		if (!uid) continue;
+		stmt.run(noticeId, uid, ts, ts);
+		n++;
+	}
+	return n;
+}
+
+/**
+ * 设备回报（设备密钥鉴权由路由层把关）：received → read / replied / rejected / dismissed。
+ * action_result 只用于 replied（预设短语原文）；其余状态置空。
+ * 返回是否命中（找不到行 = 通知不存在或不是发往这台设备的，拒绝）。
+ */
+export function markNoticeDelivery(
+	noticeId: number,
+	uid: string,
+	state: string,
+	actionResult: string
+): boolean {
+	const nid = Number(noticeId ?? 0);
+	const u = String(uid ?? "").trim().toLowerCase();
+	if (!nid || !u) return false;
+	const st = ["received", "read", "replied", "rejected", "dismissed", "failed"].includes(state)
+		? state
+		: "read";
+	// replied 允许带预设短语原文；其余状态一律不存（防脏数据）
+	const ar = st === "replied" ? String(actionResult ?? "").slice(0, 120) : "";
+	const r = getDb()
+		.prepare(
+			`UPDATE notice_deliveries
+			 SET state = ?, action_result = ?, updated_at = ?
+			 WHERE notice_id = ? AND LOWER(uid) = ? AND state NOT IN ('replied', 'acked')`
+		)
+		.run(st, ar, nowIso(), nid, u);
+	return Number(r.changes) > 0;
+}
+
+/**
+ * 被控端 catch-up 拉取：某台设备还没看到的类型化通知（用于「错过弹窗/重启后补齐」）。
+ * 返回该设备仍为 pending/received（未终态）的通知。plain notice 不在此列（无交互语义）。
+ */
+export function listPendingTypedNotices(uid: string, limit = 20): ConsoleNotice[] {
+	const u = String(uid ?? "").trim().toLowerCase();
+	if (!u) return [];
+	const rows = getDb()
+		.prepare(
+			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
+			        k.type, k.flags
+			 FROM notice_deliveries d
+			 JOIN console_notices n ON n.id = d.notice_id
+			 JOIN notice_kinds k ON k.notice_id = n.id
+			 WHERE LOWER(d.uid) = ? AND d.state = 'pending'
+			 ORDER BY d.created_at DESC
+			 LIMIT ?`
+		)
+		.all(u, Math.min(Math.max(limit, 1), 50)) as unknown as any[];
+	return rows.map((r) => noticeFromRow(r));
 }
 
 // ── 班级交流 ────────────────────────────────────────────────────────────────
