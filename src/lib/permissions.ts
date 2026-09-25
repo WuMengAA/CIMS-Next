@@ -11,7 +11,9 @@
 //  新模型把权限从等级里彻底解耦：
 //   - 每个角色拥有一组**称号（Title）**；称号是权限的载体，每个称号显式声明它授予哪些 `Action`。
 //   - `can(role, action)` = 「该角色的称号并集是否包含这个 action」——**与等级数值无关**。
-//   - `Level`（L1~L6）只用于 UI 展示「秩位高低」（如「L3 电教委员」），不参与任何判定。
+//   - 经验等级（#248 之后：Lv.1~Lv.6，由 `xp` 经验值推导）只用于 UI 展示「参与程度」，
+//     与权限、与角色**零耦合**——例如「Lv.6 传奇」的游客也只是游客，权限不变。
+//   - 角色秩（ROLE_RANK，1~6）只用于「权限晋升」的有序性校验，不叫等级、不参与判定。
 //   - 设备轴（watch/control/remote/manage）、广播范围（class/grade/school）、管理分级
 //     （class/grade/school）作为**与称号正交的独立轴**，仍按角色表驱动（见 ROLE_DEVICE /
 //     ROLE_SCOPE / ROLE_TIER）。其中设备轴按用户原意保持「独立正交轴」不变。
@@ -28,7 +30,7 @@
 //  向后兼容：旧 8 个角色名一个都没删，`ROLE_TITLES` 为它们各配一组称号，使 `can()` 的
 //  输出与重构前逐角色逐 action 完全一致（由 `_probe/permissions-invariants.mjs` 守住）。
 
-/** 六级纵向等级。仅作「显示秩位」，不参与任何权限判定。 */
+/** 六级纵向经验等级（#248：由 xp 经验值推导，纯展示，不参与任何权限判定，与角色零耦合）。 */
 export type Level = 1 | 2 | 3 | 4 | 5 | 6;
 
 /** 角色标识（数据库存的仍是这些值，保持向后兼容）。 */
@@ -45,6 +47,98 @@ export type Role =
 
 /** 设备操作敏感度轴（横向，独立于称号）。 */
 export type DeviceTier = "watch" | "control" | "remote" | "manage";
+
+/**
+ * 设备**动作**轴（2026-09-25 班级系统 v2，用户逐角色口述定死）：
+ * 老的 DeviceTier 回答「敏感度多高」，这一轴回答「具体能做什么事」，
+ * 并与「班级范围」正交（范围见 CLASS_BIND_LIMITS / class-scope.ts）。
+ *   watch    监控（看设备画面/状态）
+ *   playback 监控视频回放（翻历史截图时间线）
+ *   remote   远控（锁屏/重启/音量/切课表等本机控制）
+ *   voice    发语音（推送音频到教室播放）
+ *   notify   发通知（定向班级通知/广播）
+ *   file     传文件（上传并推送到教室）
+ *   shutdown 关机（**仅学校管理员**；含 reboot 同级危险动作）
+ */
+export type DeviceAction =
+	| "watch"
+	| "playback"
+	| "remote"
+	| "voice"
+	| "notify"
+	| "file"
+	| "shutdown";
+
+export const DEVICE_ACTION_LABELS: Record<DeviceAction, string> = {
+	watch: "监控",
+	playback: "监控回放",
+	remote: "远控",
+	voice: "发语音",
+	notify: "发通知",
+	file: "传文件",
+	shutdown: "关机"
+};
+
+/**
+ * 角色 → 设备动作表（v2 权威矩阵，与用户 2026-09-25 口述逐格对齐）：
+ *   学校管理员（owner/admin）→ 全部动作，不绑班（范围=全校）；
+ *   班主任 homeroom → 远控/监控/回放/语音/通知/传文件（恰好 1 班）；
+ *   老师 teacher → 传文件（≤2 班）；
+ *   电教委员 techrep → 电教委员面板（viewConsole 称号）+ 传文件（1 班）；
+ *   user / viewer / editor / moderator → 一律无设备动作（双重严禁里的后端半边）。
+ */
+const ROLE_DEVICE_ACTIONS: Record<Role, DeviceAction[]> = {
+	owner: ["watch", "playback", "remote", "voice", "notify", "file", "shutdown"],
+	admin: ["watch", "playback", "remote", "voice", "notify", "file", "shutdown"],
+	homeroom: ["watch", "playback", "remote", "voice", "notify", "file"],
+	teacher: ["file"],
+	techrep: ["file"],
+	editor: [],
+	moderator: [],
+	user: [],
+	viewer: []
+};
+
+/** 设备动作判定（纯函数；班级范围由 class-scope.ts 叠加，这里只看角色）。 */
+export function canDeviceAction(role: Role | null | undefined, action: DeviceAction): boolean {
+	if (!role) return false;
+	return (ROLE_DEVICE_ACTIONS[role] ?? []).includes(action);
+}
+
+/** 某角色的全部设备动作（面板按它渲染按钮；服务端按它逐请求强制）。 */
+export function deviceActionsOf(role: Role | null | undefined): DeviceAction[] {
+	if (!role) return [];
+	return [...(ROLE_DEVICE_ACTIONS[role] ?? [])];
+}
+
+/**
+ * 「用户 ↔ 班级」绑定上限（v2：必须绑定的三角色各有限额）。
+ *   -1 = 不需要绑定（范围即全校，绑了也不作为权限依据）；
+ *    0 = 禁止绑定（该角色没有任何设备/班级能力）；
+ *   >0 = 最多可绑班数（也是下限要求：没绑定就没有班级范围，什么都推不了）。
+ */
+export const CLASS_BIND_LIMITS: Record<Role, number> = {
+	owner: -1,
+	admin: -1,
+	homeroom: 1,
+	teacher: 2,
+	techrep: 1,
+	editor: 0,
+	moderator: 0,
+	user: 0,
+	viewer: 0
+};
+
+/** 该角色最多可绑班数（-1 = 无需绑定；0 = 禁止）。 */
+export function classBindLimit(role: Role | null | undefined): number {
+	if (!role) return 0;
+	return CLASS_BIND_LIMITS[role] ?? 0;
+}
+
+/** 该角色是否「必须绑班才有班级范围」（teacher/homeroom/techrep）。 */
+export function requiresClassBinding(role: Role | null | undefined): boolean {
+	return classBindLimit(role) > 0;
+}
 
 /** 内容 / 平台动作（纵向能力清单，由称号授予）。 */
 export type Action =
@@ -84,6 +178,7 @@ export type TitleKey =
 	| "visitor"
 	| "participant"
 	| "techcommissioner"
+	| "classTeacher"
 	| "broadcaster"
 	| "reviewer"
 	| "editor"
@@ -130,7 +225,13 @@ export const TITLES: Record<TitleKey, Title> = {
 	techcommissioner: {
 		key: "techcommissioner",
 		label: "电教委员",
-		description: "进入集控面板，运维本班设备（本班设备操作主力）。",
+		description: "进入集控面板（v2：设备动作只剩传文件，运维归班主任/站长）。",
+		actions: ["viewConsole"]
+	},
+	classTeacher: {
+		key: "classTeacher",
+		label: "任课教师",
+		description: "进入集控面板使用传文件等班级教学功能（≤2 班；不含监控与广播）。",
 		actions: ["viewConsole"]
 	},
 	broadcaster: {
@@ -180,11 +281,16 @@ export const TITLE_KEYS: TitleKey[] = Object.keys(TITLES) as TitleKey[];
 export const ROLE_TITLES: Record<Role, TitleKey[]> = {
 	viewer: ["visitor"],
 	user: ["visitor", "participant"],
+	// v2（2026-09-25 用户矩阵）：电教委员 = 电教委员面板 + 传文件。
+	// 设备轴动作清空（watch/control/remote 全收回）——「能碰设备」的收口在
+	// ROLE_DEVICE_ACTIONS，面板可达性走 viewConsole 称号，两者正交。
 	techrep: ["visitor", "participant", "techcommissioner"],
-	// 班主任：能进面板（viewConsole）+ 参与者 + 广播员（本班/年级广播）。
+	// 班主任：进面板 + 参与者 + 广播员（发通知，范围收敛到本班，见 ROLE_SCOPE）。
 	// 设备轴走独立正交轴（ROLE_DEVICE.homeroom = watch/control/remote），与内容称号无关。
 	homeroom: ["visitor", "participant", "broadcaster"],
-	teacher: ["visitor", "participant", "broadcaster"],
+	// 老师（任课教师）v2：只保留传文件（≤2 班）——收回 sendBroadcast（发通知归班主任），
+	// 新增 classTeacher 称号让它仍能进面板使用传文件界面。
+	teacher: ["visitor", "participant", "classTeacher"],
 	editor: ["visitor", "participant", "broadcaster", "reviewer", "editor"],
 	moderator: ["visitor", "participant", "broadcaster", "reviewer", "editor"],
 	admin: ["visitor", "participant", "broadcaster", "reviewer", "editor", "stationmaster"],
@@ -208,26 +314,68 @@ export function actionsOfTitles(titles: TitleKey[]): Set<Action> {
 }
 
 /**
- * 纵向「等级轴」标签（仅展示用）。
- * ⚠️ 仅用于 UI 显示「秩位」，不参与 `can()` 判定——权限来自称号。
+ * 纵向「经验等级」标签（#248：纯展示，与权限/角色**零耦合**）。
+ * ⚠️ 经验等级由 `xp`（经验值）推导，只回答「用了多久、参与多深」；
+ * 不参与 `can()` 判定，也不映射任何角色——权限只来自称号（TITLES）。
+ * 旧版「L1 游客 … L6 站长」的等级=角色标签已被废弃（#248 彻底解耦）。
  */
 export const LEVEL_LABELS: Record<Level, string> = {
-	1: "L1 游客",
-	2: "L2 学生",
-	3: "L3 电教委员",
-	4: "L4 老师",
-	5: "L5 审核·编辑",
-	6: "L6 管理·站长"
+	1: "Lv.1 新芽",
+	2: "Lv.2 新秀",
+	3: "Lv.3 骨干",
+	4: "Lv.4 精英",
+	5: "Lv.5 达人",
+	6: "Lv.6 传奇"
 };
 
 export const LEVEL_DESCRIPTIONS: Record<Level, string> = {
-	1: "只读：浏览公开内容。",
-	2: "参与：评论、发帖、反馈、申请友链与专页、文档纠错。",
-	3: "电教委员：进入集控面板，运维本班设备（锁屏/截图/远控本班）。",
-	4: "老师：带班管理、发本年级广播。",
-	5: "审核·编辑：审核 UGC 与权限申请，管理内容/页面/媒体，可进入后台。",
-	6: "管理·站长：管理用户、权限与站点设置，含全量设备。"
+	1: "起步阶段，继续积累使用经验吧。",
+	2: "已开始活跃，经验值在稳步累积。",
+	3: "平台常客，参与度日渐加深。",
+	4: "深度使用者，经验值不断攀升。",
+	5: "资深用户，离最高荣誉仅一步之遥。",
+	6: "最高荣誉——经验与贡献的见证。"
 };
+
+/**
+ * 经验值 → 等级阈值表（[达到该值即升到该档]）。纯展示，不参与任何权限判定。
+ * 阈值：0 → Lv.1，100 → Lv.2，300 → Lv.3，600 → Lv.4，1000 → Lv.5，1500 → Lv.6。
+ */
+export const XP_THRESHOLDS: [number, Level][] = [
+	[0, 1],
+	[100, 2],
+	[300, 3],
+	[600, 4],
+	[1000, 5],
+	[1500, 6]
+];
+
+/** 经验值 → 经验等级（纯函数；非法/负数按 0 处理）。 */
+export function xpToLevel(xp: number): Level {
+	const n = Number.isFinite(xp) ? Math.max(0, Math.floor(xp)) : 0;
+	let lv: Level = 1;
+	for (const [t, l] of XP_THRESHOLDS) if (n >= t) lv = l;
+	return lv;
+}
+
+/** 经验等级的中文标签（「Lv.3 骨干」）。 */
+export function levelLabelOfXp(xp: number): string {
+	return LEVEL_LABELS[xpToLevel(xp)];
+}
+
+/** 经验等级的描述。 */
+export function levelDescriptionOfXp(xp: number): string {
+	return LEVEL_DESCRIPTIONS[xpToLevel(xp)];
+}
+
+/** 距下一档还差多少经验（已满级返回 0）。 */
+export function xpToNextLevel(xp: number): number {
+	const lv = xpToLevel(xp);
+	if (lv >= 6) return 0;
+	const next = XP_THRESHOLDS.find(([, l]) => l === (lv + 1) as Level);
+	const n = Number.isFinite(xp) ? Math.max(0, Math.floor(xp)) : 0;
+	return next ? Math.max(0, next[0] - n) : 0;
+}
 
 export const DEVICE_LABELS: Record<DeviceTier, string> = {
 	watch: "观看",
@@ -243,10 +391,28 @@ export const DEVICE_DESCRIPTIONS: Record<DeviceTier, string> = {
 	manage: "全量设备增删改与策略下发"
 };
 
-/** 角色 -> 等级（仅展示）。 */
-export function roleToLevel(role: Role | null | undefined): Level | null {
-	if (!role) return null;
-	return ROLE_LEVEL[role] ?? null;
+/**
+ * 角色秩（1–6）：**只用于「权限晋升」的有序性校验与角色排序**，不是等级。
+ * 经验等级（xp→Lv）才是显示用的等级；角色秩回答的是「谁在权限链上更高」，
+ * 与经验值、与展示等级完全无关（#248 解耦后等级=经验，权限链=角色秩）。
+ * 例：admin/owner 秩 6 > editor/moderator 秩 5 > teacher/homeroom 秩 4 > techrep 秩 3。
+ */
+export const ROLE_RANK: Record<Role, number> = {
+	viewer: 1,
+	user: 2,
+	techrep: 3,
+	teacher: 4,
+	homeroom: 4,
+	moderator: 5,
+	editor: 5,
+	admin: 6,
+	owner: 6
+};
+
+/** 角色秩（未知/未登录 = 0）。 */
+export function roleRank(role: Role | null | undefined): number {
+	if (!role) return 0;
+	return ROLE_RANK[role] ?? 0;
 }
 
 /** 角色 -> 设备档位（默认档，与称号正交）。 */
@@ -267,12 +433,6 @@ export const ROLE_LABELS: Record<Role, string> = {
 	techrep: "电教委员",
 	viewer: "游客"
 };
-
-/** 角色的等级标签（UI 上「L4 编辑」这类展示）。 */
-export function roleLevelLabel(role: Role | null | undefined): string {
-	const lv = roleToLevel(role);
-	return lv === null ? "未登录" : LEVEL_LABELS[lv];
-}
 
 /**
  * 权限判定核心：**由称号驱动，与等级数值无关**。
@@ -312,17 +472,17 @@ export function userCan(
 const ROLE_DEVICE: Record<Role, DeviceTier[]> = {
 	owner: ["watch", "control", "remote", "manage"],
 	admin: ["watch", "control", "remote", "manage"],
-	// ⚠️ 设备三关铁律（#249，2026-09-21 方案）：能碰设备（**含看画面 watch**）的
-	// 只有 站长(owner/admin) / 班主任(homeroom) / 电教委员(techrep)。其余角色一律
-	// 清空设备档位 —— 不是前端藏，是权限层就没有（本机截图=敏感内容）。
+	// ⚠️ 设备三关（#249）已被 v2 矩阵（2026-09-25）取代并收紧：
+	// 「能碰设备」的粗档只剩 站长(owner/admin) / 班主任(homeroom)；
+	// 老师/电教委员的设备动作收口到 ROLE_DEVICE_ACTIONS（都只剩传文件），
+	// 传文件走网站 ext 端点（服务端代推），**不经过**这条代理粗档 ——
+	// 因此它们在这里必须清空：设备列表一条不给、代理指令一条不发。
 	editor: [],
 	moderator: [],
-	// 老师（任课教师）2026-09-21 方案：收回全部设备档，连画面都没有。
-	// 之前提档到 remote 与铁律冲突，已回退（带班的设备运维归班主任 homeroom）。
 	teacher: [],
 	user: [],
-	techrep: ["watch", "control", "remote"],
-	// 班主任：本班设备全部（含远控），与电教委员同档；本班归属由代理层按绑定班级收敛。
+	techrep: [],
+	// 班主任：本班设备全部粗档（远控/监控）；本班归属由代理层按绑定班级收敛。
 	homeroom: ["watch", "control", "remote"],
 	viewer: []
 };
@@ -361,9 +521,10 @@ const ROLE_SCOPE: Record<Role, BroadcastScope | null> = {
 	admin: "school",
 	editor: "school",
 	moderator: "grade",
-	teacher: "grade",
-	// 班主任：本班/年级广播（方案表：本班/年级）
-	homeroom: "grade",
+	// v2（2026-09-25 用户矩阵）：发通知收归班主任，老师只传文件 → 不能广播。
+	teacher: null,
+	// 班主任：发通知只到**本班**（1 个班；旧方案的本班·年级广播被 v2 收紧）。
+	homeroom: "class",
 	techrep: "class",
 	user: "class",
 	viewer: null
@@ -500,64 +661,18 @@ export function clampManagementScope(
 
 export const ASSIGNABLE_TIERS: ManagementTier[] = ["class", "grade", "school"];
 
-// ── 等级 ↔ 角色映射（仅展示用，驱动标签与矩阵样例角色）──────────────────────
-
-const ROLE_LEVEL: Record<Role, Level> = {
-	owner: 6,
-	admin: 6,
-	editor: 5,
-	moderator: 5,
-	teacher: 4,
-	homeroom: 4,
-	techrep: 3,
-	user: 2,
-	viewer: 1
-};
-
-/**
- * ⚠️ 仅用于「权限矩阵页」展示「某个动作由哪一等级引入」。
- * 重构后它**不再参与 `can()` 判定**——权限来自称号。请勿在此新增任何判定逻辑。
- */
-const LEVEL_OF_ACTION: Record<Action, Level> = {
-	viewConsole: 3,
-	comment: 2,
-	postForum: 2,
-	submitFeedback: 2,
-	submitProject: 2,
-	submitLink: 2,
-	suggestDoc: 2,
-	submitIssue: 2,
-	readBroadcast: 2,
-	chatClass: 2,
-	chatGrade: 2,
-	sendBroadcast: 4,
-	moderate: 5,
-	createChannel: 5,
-	reviewPermission: 5,
-	manageContent: 5,
-	managePages: 5,
-	manageFiles: 5,
-	manageFeeds: 5,
-	viewAdmin: 5,
-	manageUsers: 6,
-	manageSettings: 6,
-	managePermissions: 6,
-	manageDevices: 6
-};
+// ── 角色能力摘要 / 权限矩阵（#248：矩阵不再出现「等级」，等级=经验，与权限无关）────────
 
 /** 角色能力摘要（用于界面直观展示）。actions 现由称号并集推导。 */
 export function roleCapabilitiesSummary(role: Role | null | undefined): {
-	level: Level | null;
-	levelLabel: string;
+	roleLabel: string;
 	actions: Action[];
 	deviceTiers: DeviceTier[];
 	isUserPlusDevice: boolean;
 } {
-	const lv = roleToLevel(role);
 	const actions = Array.from(actionsOfTitles(titlesOf(role)));
 	return {
-		level: lv,
-		levelLabel: lv === null ? "未登录" : LEVEL_LABELS[lv],
+		roleLabel: role ? ROLE_LABELS[role] : "未登录",
 		actions,
 		deviceTiers: roleDeviceTiers(role),
 		// 电教委员 = 参与者能力 + 设备权限（叠加，而非替代）
@@ -569,14 +684,15 @@ export function roleCapabilitiesSummary(role: Role | null | undefined): {
  * 面板「权限与分级」页的完整快照（服务端算好后一次性下发）。
  * 前端拿到的必须是"服务端认为你能做什么"，而不是"前端自己推导出你能做什么"。
  *
- * @param user 可传用户对象（含显式称号 `titles`，来自 user_titles 表）或纯角色。
- *   传用户对象时 me 快照会反映**实际生效**的称号（覆盖写优先），与 userCan() 门控同源；
- *   传纯角色时退化为角色预设（等价于重构前行为）。
+ * @param user 可传用户对象（含显式称号 `titles`、经验值 `xp`）或纯角色。
+ *   传用户对象时 me 快照会反映**实际生效**的称号（覆盖写优先）与**该用户的经验等级**
+ *   （xp→Lv，与角色无关）；传纯角色时退化为角色预设（xp 按 0 计 = Lv.1）。
  */
 export function permissionMatrix(
-	user: { role?: Role | null; titles?: TitleKey[] | null } | Role | null | undefined
+	user: { role?: Role | null; titles?: TitleKey[] | null; xp?: number | null } | Role | null | undefined
 ) {
 	const role = (typeof user === "object" && user !== null ? user.role : user) ?? null;
+	const xp = typeof user === "object" && user !== null && user.xp != null ? Number(user.xp) || 0 : 0;
 	const titles =
 		typeof user === "object" && user !== null && user.titles && user.titles.length
 			? user.titles
@@ -590,8 +706,12 @@ export function permissionMatrix(
 		me: {
 			role,
 			roleLabel: role ? ROLE_LABELS[role] : "未登录",
-			level: roleToLevel(role),
-			levelLabel: role ? roleLevelLabel(role) : "未登录",
+			// 经验等级（#248：与角色零耦合）—— xp → Lv，权限仍只看称号。
+			xp,
+			level: xpToLevel(xp),
+			levelLabel: levelLabelOfXp(xp),
+			levelDescription: levelDescriptionOfXp(xp),
+			xpToNext: xpToNextLevel(xp),
 			// 称号（权限的真实载体）—— 显式覆盖优先，与 userCan() 同源
 			titles,
 			titleLabels: titles.map((t) => TITLES[t].label),
@@ -608,15 +728,7 @@ export function permissionMatrix(
 			canManageGrade: tier === "grade",
 			canManageSchool: tier === "school"
 		},
-		// 等级轴（仅展示秩位，不参与判定）
-		levels: capabilitiesByLevel().map((g) => ({
-			level: g.level,
-			label: LEVEL_LABELS[g.level],
-			description: LEVEL_DESCRIPTIONS[g.level],
-			sampleRole: LEVEL_SAMPLE_ROLE[g.level],
-			actions: g.actions.map((a) => ({ key: a, label: ACTION_LABELS[a] }))
-		})),
-		// 称号目录（权限的真实载体，供面板展示「我的称号」）
+		// 称号目录（权限的真实载体，供面板展示「我的称号」）—— 权限矩阵不再按等级分轴
 		titles: TITLE_KEYS.map((k) => ({
 			key: k,
 			label: TITLES[k].label,
@@ -628,44 +740,70 @@ export function permissionMatrix(
 			key: t,
 			label: DEVICE_LABELS[t],
 			description: DEVICE_DESCRIPTIONS[t],
-			roles: (Object.keys(ROLE_LABELS) as Role[]).filter((r) => canDevice(r, t)).map((r) => ROLE_LABELS[r])
+			// 去重：admin/owner 同标「站长」等历史冗余，矩阵不重复展示（UI 层，不改角色语义）
+			roles: uniqStrings((Object.keys(ROLE_LABELS) as Role[]).filter((r) => canDevice(r, t)).map((r) => ROLE_LABELS[r]))
 		})),
 		// 分级轴
 		managementTiers: ASSIGNABLE_TIERS.map((t) => ({
 			key: t,
 			label: MANAGEMENT_TIER_LABELS[t],
 			description: MANAGEMENT_TIER_DESCRIPTIONS[t],
-			roles: (Object.keys(ROLE_LABELS) as Role[])
-				.filter((r) => roleManagementTier(r) === t)
-				.map((r) => ROLE_LABELS[r])
+			roles: uniqStrings(
+				(Object.keys(ROLE_LABELS) as Role[])
+					.filter((r) => roleManagementTier(r) === t)
+					.map((r) => ROLE_LABELS[r])
+			)
 		})),
 		// 广播范围轴
 		broadcastScopes: (["class", "grade", "school"] as BroadcastScope[]).map((s) => ({
 			key: s,
 			label: BROADCAST_SCOPE_LABELS[s],
-			roles: (Object.keys(ROLE_LABELS) as Role[])
-				.filter((r) => canBroadcastTo(r, s))
-				.map((r) => ROLE_LABELS[r])
+			roles: uniqStrings(
+				(Object.keys(ROLE_LABELS) as Role[])
+					.filter((r) => canBroadcastTo(r, s))
+					.map((r) => ROLE_LABELS[r])
+			)
 		})),
-		// 全部角色（面板做"角色 → 能力"对照表）
-		roles: ASSIGNABLE_ROLES.map((r) => {
-			const s = broadcastScope(r);
-			const t = roleManagementTier(r);
-			return {
-				key: r,
-				label: ROLE_LABELS[r],
-				level: roleToLevel(r),
-				levelLabel: roleLevelLabel(r),
-				titles: titlesOf(r),
-				titleLabels: titlesOf(r).map((tt) => TITLES[tt].label),
-				deviceTiers: roleDeviceTiers(r),
-				managementTier: t,
-				managementTierLabel: t ? MANAGEMENT_TIER_LABELS[t] : "—",
-				broadcastScope: s,
-				broadcastScopeLabel: s ? BROADCAST_SCOPE_LABELS[s] : "不可广播"
-			};
-		})
+		// 全部角色（面板做"角色 → 能力"对照表；rank=角色秩，仅排序用，非等级）
+		roles: dedupeByLabel(
+			ASSIGNABLE_ROLES.map((r) => {
+				const s = broadcastScope(r);
+				const t = roleManagementTier(r);
+				return {
+					key: r,
+					label: ROLE_LABELS[r],
+					rank: roleRank(r),
+					titles: titlesOf(r),
+					titleLabels: titlesOf(r).map((tt) => TITLES[tt].label),
+					deviceTiers: roleDeviceTiers(r),
+					managementTier: t,
+					managementTierLabel: t ? MANAGEMENT_TIER_LABELS[t] : "—",
+					broadcastScope: s,
+					broadcastScopeLabel: s ? BROADCAST_SCOPE_LABELS[s] : "不可广播"
+				};
+			})
+		)
 	};
+}
+
+/** 字符串数组去重（保持原顺序，保留首次出现）。 */
+function uniqStrings(arr: string[]): string[] {
+	return [...new Set(arr)];
+}
+
+/**
+ * 按 label 去重（保持原顺序，保留首次出现）。
+ * 用于权限矩阵的「角色 → 能力」对照表：admin/owner 是历史上功能完全等价的
+ * 两个角色标识（标签同为「站长」），DB 里存量账号两个值都可能有，不能合并，
+ * 但展示层不应出现两行无法区分的「站长」，故同标签只展示第一个。
+ */
+function dedupeByLabel<T extends { label: string }>(arr: T[]): T[] {
+	const seen = new Set<string>();
+	return arr.filter((x) => {
+		if (seen.has(x.label)) return false;
+		seen.add(x.label);
+		return true;
+	});
 }
 
 /** 可分配角色清单，按等级从高到低（用户管理下拉复用）。 */
@@ -709,29 +847,10 @@ export const ACTION_LABELS: Record<Action, string> = {
 	manageDevices: "全量设备管理"
 };
 
-/** 按等级归组的能力清单（权限矩阵页按行渲染；仅展示，LEVEL_OF_ACTION 不再参与判定）。 */
-export function capabilitiesByLevel(): { level: Level; actions: Action[] }[] {
-	const levels: Level[] = [1, 2, 3, 4, 5, 6];
-	return levels.map((level) => ({
-		level,
-		actions: (Object.keys(LEVEL_OF_ACTION) as Action[]).filter((a) => LEVEL_OF_ACTION[a] === level)
-	}));
-}
-
 /** 某角色在矩阵中的能力快照（矩阵页逐格打勾）。 */
 export function hasAction(role: Role, action: Action): boolean {
 	return can(role, action);
 }
-
-/** 代表各等级的「示例角色」，用于矩阵列头展示。 */
-export const LEVEL_SAMPLE_ROLE: Record<Level, Role> = {
-	1: "viewer",
-	2: "user",
-	3: "techrep",
-	4: "teacher",
-	5: "moderator",
-	6: "admin"
-};
 
 /**
  * 按称号归组的能力清单（权限矩阵「称号视角」）。

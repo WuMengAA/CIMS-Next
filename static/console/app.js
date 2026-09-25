@@ -78,6 +78,10 @@
       // 广播位（2026-09-23 新增）：能发通知/广播 = 内容轴 sendBroadcast 称号
       // 或设备轴 control 档任一。与设备三关铁律解耦 —— 老师没有设备档也能发本班通知。
       broadcast: flag("broadcast"),
+      // v2 传文件位（2026-09-25）：老师/电教委员/班主任/管理员的 file 动作。
+      // 旧宿主 URL 不带 file=1 时按设备档兜底（control/manage 本来就在旧模型的
+      // 传文件档里），避免升级间隙把能传文件的人挡在门外。
+      file: flag("file") || flag("control") || flag("manage"),
       // 广播可达范围（class/grade/school）。宿主按角色等级算好后下发；
       // 内嵌态拿不到就视为「仅本班」，宁可少列也不给未授权的大范围。
       bscopes: (q.get("bscopes") || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -2457,9 +2461,17 @@
   };
 
   views.scheduled = async () => {
-    const [list, devs] = await Promise.all([API.listScheduled(), API.listDevices()]);
+    // 班级下拉 v2：真实班级目录（/api/classes，CIMS 唯一来源）。旧版从设备清单
+    // 推导（suggest），设备没绑班就缺班、没导班就空——都不是"确切真实"的班级。
+    // 取不到 = 只保留「全校」并在页内明示，绝不放假班。
+    const [list, clsRes] = await Promise.all([
+      API.listScheduled(),
+      API.listSiteClasses()
+        .then((c) => ({ classes: c }))
+        .catch((e) => ({ error: (e && e.message) || String(e) })),
+    ]);
     const items = (list && list.items) || [];
-    const classes = (devs && devs.suggest) || [];
+    const classes = clsRes.classes || [];
     const nameOf = (cid) => (classes.find((c) => c.class_id === cid) || {}).name || cid;
     const rows = items.length
       ? items.map((it) => `
@@ -2495,6 +2507,7 @@
       <div class="row"><span class="muted" style="width:70px">正文</span><textarea id="sb-content" style="width:420px;height:60px" placeholder="要广播的内容"></textarea></div>
       <div class="row"><span class="muted" style="width:70px">目标</span>
         <select id="sb-target"><option value="">全校</option>${classes.map((c) => `<option value="${esc(c.class_id)}">${esc(c.name)}</option>`).join("")}</select></div>
+      ${classes.length ? "" : `<p class="muted">班级列表不可用（${esc(clsRes.error || "CIMS 尚未导入班级")}），只能全校广播。</p>`}
       <div class="row" style="margin-top:8px">
         <button class="primary" data-act="sb-save">${schedEditId ? "保存修改" : "新建"}</button>
         <button data-act="sb-cancel" ${schedEditId ? "" : 'style="display:none"'}>取消编辑</button>
@@ -2578,25 +2591,51 @@
   // ============ 文件传输（面板侧完整 UI；后端/设备端下发依赖部署包）============
   // 设备端能力（上传后下发到设备、设备侧接收落盘）需教室端部署 ClassroomDeploy 包；
   // 未部署时本页可上传到服务端暂存、查看历史，但「下发到设备」会提示未就绪。
+  // ============ 文件传输 v2（2026-09-25 班级系统配套）============
+  // 旧版是占位（"后端接口联调中"），文件本体从未离开发送机。v2 三环补齐：
+  //   ① multipart 上传实体到网站（≤100MB）；② 服务端代推 file_push 到目标班级
+  //   （目标班必须在调用者绑定范围内，服务端逐班校验）；③ 逐台回执轮询，
+  //   "送达 x/y 台"实时亮出。设备端收文后自动弹本机通知。
+  // 目标班级唯一来源 /api/classes（CIMS 真实班级），取不到明示、绝不放假班。
+  let ftHistory = []; // 本次会话内的推送记录（持久化历史在桌面端）
   views.filetransfer = async () => {
-    const cls = await API.listClassEntities().catch(() => ({ deviceMap: [] }));
-    const devs = (cls && cls.deviceMap) || [];
-    const clsOpts = devs.map((d) => `<option value="${esc(d.class_id || d.id)}">${esc(d.name || d.id)}</option>`).join("");
+    let classes = [];
+    let classErr = "";
+    try { classes = await API.listSiteClasses(); }
+    catch (e) { classErr = (e && e.message) || String(e); }
+    const chips = classes.length
+      ? classes.map((c) => `<label class="row" style="gap:6px">
+            <input type="checkbox" class="ft-cls" value="${esc(c.class_id)}"/>
+            <span>${esc(c.name || c.class_id)}</span>
+          </label>`).join("")
+      : `<p class="muted" style="grid-column:1/-1">${classErr ? esc(classErr) : "暂无班级（需先在 CIMS 导入/创建班级）"}</p>`;
+    const hist = ftHistory.map((h) => {
+      const tag = h.status === "sent" ? "ok" : h.status === "failed" ? "err" : "warn";
+      const label = h.status === "pending" ? "发送中…"
+        : h.status === "failed" ? "没发出去"
+        : `送达 ${h.delivered}/${h.total} 台${h.failed ? `（${h.failed} 台失败）` : ""}`;
+      return `<tr data-fid="${esc(h.fileId)}">
+        <td>${esc(h.name)}<span class="muted" style="font-size:12px"> · ${Math.max(1, Math.round(h.size / 1024))}KB</span></td>
+        <td>${esc(h.classes)}</td>
+        <td><span class="tag ${tag}">${esc(label)}</span></td>
+        <td class="muted" style="font-size:12px">${new Date(h.at).toLocaleTimeString("zh-CN", { hour12: false })}</td>
+      </tr>`;
+    }).join("");
     return `
-      <div class="card"><h3>文件传输</h3>
-        <p class="muted">上传文件到服务端，再下发到选定班级/设备。设备侧接收需教室端部署星集控 ClassroomDeploy 包（含最新代理）；未部署时仅完成服务端暂存。</p>
-        <div class="row">
-          <input id="ft-file" type="file" multiple style="flex:1"/>
-        </div>
+      <div class="card"><h3>发文件</h3>
+        <p class="muted">把文件送到所选班级的全部教室电脑；教室端收到后自动弹通知，这里逐台亮出送达情况。</p>
+        <div class="row"><input id="ft-file" type="file" multiple style="flex:1"/></div>
+        <div class="row" style="margin-top:8px"><span class="muted">发给班级</span></div>
+        <div class="grid g4" style="gap:6px 10px">${chips}</div>
         <div class="row" style="margin-top:8px">
-          <span class="muted">下发到</span>
-          <select id="ft-target"><option value="">全校</option>${clsOpts}</select>
-          <button class="primary" data-act="ft-upload">上传并下发</button>
+          <button class="primary" data-act="ft-upload" data-need="file">上传并下发</button>
         </div>
-        <div id="ft-status" class="muted" style="margin-top:8px">待上传。</div>
-        <h4 style="margin:14px 0 6px">传输历史</h4>
-        <div id="ft-list" class="list"><p class="muted">暂无传输记录。</p></div>
-        <p class="muted">注：后端文件存储接口与设备端接收为本期后端联调项，界面已就绪，下发动作待部署包就位后生效。</p>
+        <div id="ft-status" class="muted" style="margin-top:8px">选好班级和文件后点「上传并下发」。</div>
+      </div>
+      <div class="card">
+        <h3>传输历史（本次会话）</h3>
+        <table class="tbl"><thead><tr><th>文件</th><th>目标</th><th>状态</th><th>时间</th></tr></thead>
+        <tbody>${hist || `<tr><td colspan="4" class="muted" style="text-align:center;padding:14px 0">暂无传输记录。</td></tr>`}</tbody></table>
       </div>`;
   };
 

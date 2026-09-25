@@ -6,13 +6,16 @@ import { syncUserUpdateToCims } from "$lib/server/cims-account.js";
 import {
 	userCan,
 	canDevice,
-	roleLevelLabel,
+	levelLabelOfXp,
+	xpToLevel,
 	ROLE_LABELS,
 	allowedBroadcastScopes,
 	roleManagementTier,
-	MANAGEMENT_TIER_LABELS
+	MANAGEMENT_TIER_LABELS,
+	deviceActionsOf
 } from "$lib/permissions.js";
 import type { Role } from "$lib/permissions.js";
+import { classScopeOf, listBindings } from "$lib/server/class-scope.js";
 
 /**
  * 取当前登录用户：先认浏览器 Cookie（网页），再认 Bearer 令牌（桌面端）。
@@ -44,16 +47,35 @@ function resolveUser(event: RequestEvent) {
 function identityOf(u: NonNullable<ReturnType<typeof verifyToken>>) {
 	const role = u.role as Role | null | undefined;
 	const tier = roleManagementTier(role);
+	const xp = u.xp ?? 0;
+	// v2（班级系统 2026-09-25）：动作矩阵与班级范围由服务端一次算清。
+	// 前端（含 Flutter 桌面端）只准消费这里的结果，不允许自己从 role 推导
+	// —— 推导分叉就会出现「界面能点、服务端 403」的错位。
+	const scope = classScopeOf(role, u.id ?? null);
+	const actions = deviceActionsOf(role);
 	return {
 		role: role ?? null,
 		roleLabel: role ? ROLE_LABELS[role] : "未登录",
-		levelLabel: role ? roleLevelLabel(role) : "未登录",
+		// 经验等级（#248：xp→Lv，与角色零耦合；未登录按 0）
+		xp,
+		level: xpToLevel(xp),
+		levelLabel: levelLabelOfXp(xp),
 		className: u.className || "",
 		gradeName: u.gradeName || "",
+		// v2：结构化班级绑定（真实 class_id 列表；"-" 表示全校无需绑定）
+		classScope: scope,
+		classes: scope === "*" ? [] : listBindings(u.id ?? 0),
+		deviceActions: actions,
 		can: {
+			watch: canDevice(role, "watch") || actions.includes("watch"),
 			control: canDevice(role, "control"),
 			remote: canDevice(role, "remote"),
 			manage: canDevice(role, "manage"),
+			playback: actions.includes("playback") || actions.includes("watch"),
+			voice: actions.includes("voice"),
+			notify: actions.includes("notify"),
+			file: actions.includes("file"),
+			shutdown: actions.includes("shutdown"),
 			issue: userCan(u, "submitIssue")
 		},
 		broadcastScopes: allowedBroadcastScopes(role),
@@ -75,6 +97,7 @@ export function GET(event: RequestEvent) {
 		role: user.role,
 		className: user.className || "",
 		gradeName: user.gradeName || "",
+		xp: user.xp ?? 0,
 		createdAt: user.createdAt,
 		lastLoginAt: user.lastLoginAt ?? null,
 		loginCount: user.loginCount ?? 0,

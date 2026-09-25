@@ -1479,6 +1479,59 @@
       } catch (_) { return { devices: {}, classes: [] }; }
     },
 
+    // ---- 班级系统 v2（2026-09-25）：真实班级唯一来源 + 文件传输 v2 ----
+    //
+    // 「班级选择列表没有确切真实获取班级」收口：所有"选班"界面一律走
+    // GET /api/classes（站点服务端直读 CIMS /class/list，45s 缓存）。
+    // 取不到（CIMS 不可达/未导班）→ 抛人话错误，调用方明示，
+    // 绝不回退演示班（旧"高一(1)班"兜底已废除）。
+    listSiteClasses: async () => {
+      const r = await siteFetch("/api/classes");
+      if (r && r.error) throw new Error(r.error);
+      return (r && r.classes) || [];
+    },
+    // 管理员读写某用户的班级绑定（user_class_bindings；teacher≤2/homeroom≤1/techrep≤1）
+    adminUserClasses: async (username) => {
+      const r = await siteFetch(`/api/admin/users/classes?username=${encodeURIComponent(username)}`);
+      if (r && r.error) throw new Error(r.error);
+      return r || { bindings: [] };
+    },
+    adminSetUserClasses: async (username, classIds) => {
+      const r = await siteFetch(`/api/admin/users/classes?username=${encodeURIComponent(username)}`, {
+        method: "PUT", body: JSON.stringify({ class_ids: classIds })
+      });
+      if (r && r.error) throw new Error(r.error);
+      return r || {};
+    },
+
+    // 文件传输 v2：上传实体 → 服务端代推 file_push → 逐台回执。
+    // 旧链路只发元数据、文件本体从未离开发送机（设备永远收不到），v2 三环补齐。
+    uploadFile: async (file, kind = "file") => {
+      const base = state.siteHost ? state.siteHost.replace(/\/+$/, "") : "";
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      fd.append("kind", kind);
+      const res = await fetch(base + "/api/console/ext/files", {
+        method: "POST", credentials: "include", body: fd,
+      });
+      const txt = await res.text();
+      const d = txt ? JSON.parse(txt) : {};
+      if (!res.ok) throw new Error(d.error || "HTTP " + res.status);
+      return d.file || {};
+    },
+    filePush: async (fileId, classIds) => {
+      const r = await siteFetch("/api/console/ext/file-push", {
+        method: "POST", body: JSON.stringify({ file_id: fileId, classes: classIds })
+      });
+      if (r && r.error) throw new Error(r.error);
+      return r || {};
+    },
+    fileDeliveries: async (fileId) => {
+      const r = await siteFetch(`/api/console/ext/file-deliveries?file=${encodeURIComponent(fileId)}`);
+      if (r && r.error) throw new Error(r.error);
+      return (r && r.deliveries) || [];
+    },
+
     // ---- 文件夹式班级：创建 / 审核 / 详情（#182）----
     //
     // 与「课表资源」的关键区别：班级现在是**独立实体**（有自己的主键、编号、

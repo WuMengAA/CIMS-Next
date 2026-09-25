@@ -4,8 +4,19 @@ import { verifyToken, type User } from "$lib/server/auth.js";
 import { can, userCan, canDevice, broadcastScope, canBroadcastTo, clampBroadcastScope, scopeFromLabel, BROADCAST_SCOPE_LABELS, type BroadcastScope, // 权限矩阵（等级轴 / 设备轴 / 分级轴 / 广播范围轴 + 当前账号快照）
 	// 全部由 permissions.ts 的 permissionMatrix() 计算，本路由只做透传 ——
 	// 因此不再逐个导入各轴的中文标签常量（它们只在 permissionMatrix 内部使用）。
-	permissionMatrix, type Action, type DeviceTier } from "$lib/permissions.js";
+	permissionMatrix, canDeviceAction, deviceActionsOf, type Action, type DeviceTier, type DeviceAction } from "$lib/permissions.js";
 import { broadcastToClassrooms } from "$lib/server/broadcast.js";
+import { classScopeOf, scopeCovers, listBindings } from "$lib/server/class-scope.js";
+import { fetchClassList, fetchDeviceClassMap, classOfDevice } from "$lib/server/cims-client.js";
+import {
+	saveUpload,
+	getFileObject,
+	readFileBytes,
+	pushFileToDevices,
+	listDeliveries,
+	updateDelivery,
+	MAX_FILE_BYTES
+} from "$lib/server/file-transfer.js";
 import {
 	listNotices,
 	addNotice,
@@ -45,10 +56,24 @@ import {
 	listDeviceSessions,
 	verifyDeviceReportSecret,
 	// ── 设备截图回传（#T07.7 步骤 2）────────────────────────────────────
+	// ── 截图回放 / 会话日志等历史清单的导入 ────────────────────────────────
 	putDeviceCapture,
 	getDeviceCapture,
-	clearDeviceCapture
+	clearDeviceCapture,
+	listDeviceCaptures,
+	getDeviceCaptureById
 } from "$lib/server/console-ext.js";
+
+/**
+ * 设备密钥请求判定：带 `x-stelarith-device-secret` 头的调用方自称是教室端设备
+ * （Rust 代理 / 星集控被控循环）。密钥与服务端 CONSOLE_DEVICE_REPORT_SECRET
+ * 比对，未配置一律拒绝（fail-closed）。
+ */
+function deviceSecretOk(event: RequestEvent): boolean {
+	const secret = event.request.headers.get("x-stelarith-device-secret");
+	if (!secret) return false;
+	return verifyDeviceReportSecret(secret);
+}
 
 /**
  * 集控面板协作数据接口（站点侧，替代纯前端演示数据）。
@@ -146,6 +171,41 @@ async function readBody(event: RequestEvent): Promise<any> {
 }
 
 export async function GET(event: RequestEvent) {
+	const path0 = (event.params.path ?? "").replace(/^\/+|\/+$/g, "");
+
+	// ── 设备密钥早分派（先于用户鉴权）──────────────────────────────────────
+	// 设备（教室端代理 / 星集控被控循环）没有用户会话，走不了 viewConsole。
+	// 它们只被允许做一件事：按 id 下载推送文件（file_push 指令的下半场）。
+	// 密钥不对必须明确 403，不能落到用户鉴权分支回「请先登录」——
+	// 那会把「设备密钥配错」伪装成「登录过期」（与 POST 侧同款教训）。
+	if (path0 === "files") {
+		const secret = event.request.headers.get("x-stelarith-device-secret");
+		if (secret) {
+			if (!deviceSecretOk(event)) {
+				return json(
+					{ error: "设备密钥无效：x-stelarith-device-secret 与服务端不一致（或服务端未配置）" },
+					{ status: 403 }
+				);
+			}
+			const fid = String(event.url.searchParams.get("id") ?? "").trim();
+			const obj = fid ? getFileObject(fid) : null;
+			if (!obj) return json({ error: "文件不存在或已清理", code: "not_found" }, { status: 404 });
+			const bytes = readFileBytes(obj);
+			if (!bytes) return json({ error: "文件内容已清理", code: "gone" }, { status: 410 });
+			// 中文文件名：filename* 按 RFC 5987 编码；filename 兜底 ASCII。
+			const asciiName = obj.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+			return new Response(new Uint8Array(bytes), {
+				status: 200,
+				headers: {
+					"content-type": "application/octet-stream",
+					"content-length": String(bytes.length),
+					"content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(obj.name)}`
+				}
+			});
+		}
+		// 无设备密钥 → 落到下面的用户会话分支（发送方查自己文件的下载进度不需要密钥）。
+	}
+
 	const g = guard(event);
 	if ("error" in g) return g.error;
 	const u = g.user;
@@ -155,6 +215,7 @@ export async function GET(event: RequestEvent) {
 	// 遮蔽它，导致 TDZ 报错（Block-scoped variable 'q' used before its declaration），
 	// 于是改成 kw —— 局部变量名不要与它同名。
 	const q = event.url.searchParams;
+	const scope = classScopeOf(u.role, u.id);
 
 	switch (path) {
 		case "notices":
@@ -225,6 +286,41 @@ export async function GET(event: RequestEvent) {
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
 			const host = String(event.url.searchParams.get("host") ?? "").trim();
 			if (!uid && !host) return json({ capture: null, reason: "missing_uid" });
+
+			// ── v2：监控回放（历史时间线 + 按帧取图）─────────────────────────
+			// 需要 watch 或 playback 动作；目标设备的班必须在调用者班级范围内
+			//（设备班解析不到 = 确定不了归属 → 不给，宁严勿泄）。
+			const histUid = uid || host;
+			if (q.get("history") === "1" || q.get("frame")) {
+				if (!canDeviceAction(u.role, "watch") && !canDeviceAction(u.role, "playback")) {
+					return json({ error: "无权限（需要监控/回放能力）" }, { status: 403 });
+				}
+				if (scope !== "*") {
+					const cid = await classOfDevice(histUid);
+					if (!cid || !scopeCovers(scope, cid)) {
+						return json({ error: "目标设备不在你的班级范围内" }, { status: 403 });
+					}
+				}
+				const frameId = Number(q.get("frame") ?? 0);
+				if (frameId > 0) {
+					const f = getDeviceCaptureById(frameId);
+					if (!f) return json({ capture: null, reason: "frame_gone" });
+					return json({
+						capture: { at: f.meta.at, bytes: f.meta.bytes, image_base64: f.png.toString("base64") },
+						reason: "ok"
+					});
+				}
+				const limit = Number(q.get("limit") ?? 60) || 60;
+				return json({ history: listDeviceCaptures(histUid, limit), reason: "ok" });
+			}
+
+			// 实时最新一张：同样按班级范围收敛（班主任/站长看本班/全校）。
+			if (canDeviceAction(u.role, "watch") && scope !== "*") {
+				const cid = await classOfDevice(histUid);
+				if (cid && !scopeCovers(scope, cid)) {
+					return json({ capture: null, reason: "out_of_scope" });
+				}
+			}
 			const c = getDeviceCapture(uid) || (host ? getDeviceCapture(host) : null);
 			if (!c) return json({ capture: null, reason: "no_capture_reported" });
 			return json({
@@ -241,6 +337,21 @@ export async function GET(event: RequestEvent) {
 		case "sessions":
 			// 诊断页用：一眼看到"代理到底有没有报过"，而不是只有 session:null 一个空字。
 			return json({ sessions: listDeviceSessions() });
+		case "file-deliveries": {
+			// 传文件回执（发送方视角）：某次推送后，每台设备收到没有。
+			const fid = String(q.get("file") ?? "").trim();
+			if (!fid) return json({ error: "缺少 file 参数" }, { status: 400 });
+			const obj = getFileObject(fid);
+			if (!obj) return json({ error: "文件不存在" }, { status: 404 });
+			// 非管理员只能看「推给自己范围内班级」的回执 —— 文件上传者本身可见自己的记录。
+			if (scope !== "*" && obj.uploader !== (u.displayName || u.username) && u.role !== "owner" && u.role !== "admin") {
+				return json({ error: "无权限查看该文件的回执" }, { status: 403 });
+			}
+			return json({ file: { id: obj.id, name: obj.name, kind: obj.kind }, deliveries: listDeliveries(fid) });
+		}
+		case "my-classes":
+			// 我的班级绑定（老师/班主任/电教委员的面板按它渲染可选目标）。
+			return json({ classes: listBindings(u.id) });
 		case "settings":
 			// 面板配置读取：任何能进面板的人都能读（只读不敏感，且前端要用它渲染当前策略）。
 			return json({ settings: getConsoleSettings() });
@@ -251,6 +362,37 @@ export async function GET(event: RequestEvent) {
 
 export async function POST(event: RequestEvent) {
 	const path = (event.params.path ?? "").replace(/^\/+|\/+$/g, "");
+
+	// ── 文件上传（multipart，先于 readBody —— JSON 解析吃不了 multipart）────
+	// 发送方（老师/班主任/电教委员/站长）带用户会话上传文件本体；
+	// 之后调 file-push 把它推给目标班级/设备。这里只校验「能力」，
+	// 「班级范围」在 file-push 解析出目标设备后逐台判定。
+	if (path === "files" && !deviceSecretOk(event)) {
+		const g = guard(event, "viewConsole");
+		if ("error" in g) return g.error;
+		const up = g.user;
+		if (!canDeviceAction(up.role, "file")) {
+			return json({ error: "当前角色没有传文件能力" }, { status: 403 });
+		}
+		try {
+			const form = await event.request.formData();
+			const f = form.get("file");
+			if (!(f instanceof File)) return json({ error: "缺少 file 字段（multipart）" }, { status: 400 });
+			if (f.size > MAX_FILE_BYTES) {
+				return json(
+					{ error: `文件超过大小上限（${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB）` },
+					{ status: 413 }
+				);
+			}
+			const kind = String(form.get("kind") ?? "file") === "voice" ? "voice" : "file";
+			const buf = Buffer.from(await f.arrayBuffer());
+			const obj = saveUpload(f.name || "未命名文件", buf, kind, up.displayName || up.username);
+			return json({ ok: true, file: obj }, { status: 201 });
+		} catch (e) {
+			return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
+		}
+	}
+
 	const body = await readBody(event);
 
 	// ── 设备回报分支（先于用户鉴权）────────────────────────────────────────
@@ -262,7 +404,7 @@ export async function POST(event: RequestEvent) {
 	// 鉴权用部署级共享密钥（`CONSOLE_DEVICE_REPORT_SECRET`），且**未配置即拒绝**：
 	// 这个入口会把 ip/port 写进面板要嵌的 iframe，一旦可被任意伪造，
 	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
-	if (path === "vnc-session" || path === "media-session" || path === "captures") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures" || path === "file-ack") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		// 带了这个头 = 调用方**自称是设备代理**（只有 Rust 代理会发，面板从不发）。
 		// 此时密钥不对必须明确 403，不能落到用户鉴权分支去回「请先登录」——
@@ -308,6 +450,24 @@ export async function POST(event: RequestEvent) {
 					detail: `${raw.length} bytes → ${meta.path.split(/[\\/]/).pop()}`
 				});
 				return json({ ok: true, at: meta.at, bytes: raw.length });
+			}
+			if (path === "file-ack") {
+				// 设备侧回报 file_push 结果：下载/播放完成（acked）或失败（failed）。
+				// 「文件传输后没有消息提示」的发送方半边靠它点亮 —— 老师能在
+				// 传文件页看到每台设备的真实状态，而不是发送成功 = 万事大吉。
+				const fid = String(body.file_id ?? "").trim();
+				const duid = String(body.uid ?? "").trim();
+				if (!fid || !duid) return json({ error: "file_id/uid 不能为空" }, { status: 400 });
+				const state = body.state === "acked" ? "acked" : body.state === "failed" ? "failed" : "pending";
+				const okUp = updateDelivery(fid, duid, state, String(body.detail ?? ""));
+				addAudit({
+					actor: `device:${duid}`,
+					role: "device",
+					action: "file.ack",
+					target: fid,
+					detail: `${state}${body.detail ? "：" + String(body.detail).slice(0, 120) : ""}`
+				});
+				return json({ ok: okUp, state });
 			}
 			const proto = path === "vnc-session" ? "vnc" : "media";
 			const uid = String(body.uid ?? "").trim();
@@ -406,19 +566,25 @@ export async function POST(event: RequestEvent) {
 				? body.classes.map((c: unknown) => String(c).trim()).filter(Boolean).slice(0, 40)
 				: [];
 
-			// L2 只能发本班：未指定则**强制**为本人绑定班级，指定了非本班则拒绝。
-			// 没有班级绑定时无从判定「本班」，直接拒绝并提示 —— 宁可让他先绑定，
-			// 也不能因为「不知道他哪个班」就放行成全校广播。
+			// ── v2：班级范围的权威来源是 user_class_bindings（真实 class_id）────
+			// 旧实现用 u.className 自由文本匹配，老师带两个班时根本表达不了；
+			// 现在：班级档（homeroom）只能发自己绑定的班 —— 未指定则默认全部绑定班，
+			// 指定了范围外的班则拒绝。没绑定 = 空范围 = 直接拒绝（必须先绑定）。
 			if (broadcastScope(u.role) === "class") {
-				const myClass = (u.className || "").trim();
-				if (!myClass) {
-					return json({ error: "请先在个人资料中绑定班级，之后才可向本班广播" }, { status: 403 });
+				const mine = listBindings(u.id);
+				if (mine.length === 0) {
+					return json({ error: "请先让管理员为你绑定班级，之后才可向本班发通知" }, { status: 403 });
 				}
-				const outside = classes.filter((c) => c !== myClass);
+				const inScope = (c: string) =>
+					mine.some((b) => b.class_id === c || (b.class_name && b.class_name === c));
+				const outside = classes.filter((c) => !inScope(c));
 				if (outside.length > 0) {
-					return json({ error: `只能向本班（${myClass}）广播，不能指定：${outside.join("、")}` }, { status: 403 });
+					return json(
+						{ error: `只能向已绑定的班级（${mine.map((b) => b.class_name || b.class_id).join("、")}）发通知，不能指定：${outside.join("、")}` },
+						{ status: 403 }
+					);
 				}
-				if (classes.length === 0) classes = [myClass];
+				if (classes.length === 0) classes = mine.map((b) => b.class_id);
 			}
 
 			// 显示时长（秒）：可选字段。非法值/越界一律当「未指定」—— 绝不因为一个坏字段
@@ -578,6 +744,78 @@ export async function POST(event: RequestEvent) {
 				detail: body.detail
 			});
 			return json(item, { status: 201 });
+		}
+		case "file-push": {
+			// 传文件的下半场：把已上传的文件推给目标班级/设备（file_push 指令）。
+			// 能力关：传文件动作（v2 矩阵：老师/班主任/电教委员/站长）。
+			// 范围关：目标班级必须 ⊆ 调用者绑定班级（站长 "*" 全校）。
+			if (!canDeviceAction(u.role, "file")) {
+				return json({ error: "当前角色没有传文件能力" }, { status: 403 });
+			}
+			// 调用者的班级范围（'*'=全校 / class_id[]）：POST 分支此前没算过，
+			// 直接用会在范围关处 ReferenceError（线上 500 实证）。
+			const scope = classScopeOf(u.role, u.id);
+			const fid = String(body.file_id ?? "").trim();
+			const file = fid ? getFileObject(fid) : null;
+			if (!file) return json({ error: "文件不存在（请先上传）" }, { status: 404 });
+
+			const wantClasses: string[] = Array.isArray(body.classes)
+				? body.classes.map((c: unknown) => String(c).trim()).filter(Boolean).slice(0, 20)
+				: [];
+			const wantUids: string[] = Array.isArray(body.uids)
+				? body.uids.map((c: unknown) => String(c).trim()).filter(Boolean).slice(0, 200)
+				: [];
+			if (wantClasses.length === 0 && wantUids.length === 0) {
+				return json({ error: "请指定目标班级或设备" }, { status: 400 });
+			}
+
+			const map = await fetchDeviceClassMap();
+			if (!map) return json({ error: "CIMS 不可达，无法解析目标设备" }, { status: 502 });
+
+			// 班级 → 设备；每个目标班先过范围关（class_id 或名称命中都算）。
+			const uids = new Set<string>();
+			const targets: string[] = [];
+			for (const c of wantClasses) {
+				const hit = map.classes.find((x) => x.class_id === c || x.name === c);
+				if (!hit) return json({ error: `班级不存在或未绑定设备：${c}` }, { status: 404 });
+				if (scope !== "*" && !scopeCovers(scope, hit.class_id)) {
+					return json(
+						{ error: `班级 ${hit.name || hit.class_id} 不在你的绑定范围内` },
+						{ status: 403 }
+					);
+				}
+				targets.push(hit.class_id);
+				for (const [uidKey, cid] of map.uidToClass) {
+					if (cid.toLowerCase() === hit.class_id.toLowerCase()) uids.add(uidKey);
+				}
+			}
+			// 直接指定设备：逐台查班级、过范围关。
+			for (const uid of wantUids) {
+				const cid = map.uidToClass.get(uid.toLowerCase()) ?? "";
+				if (scope !== "*") {
+					if (!cid || !scopeCovers(scope, cid)) {
+						return json(
+							{ error: `设备 ${uid} 不在你的绑定范围内（或未划班）` },
+							{ status: 403 }
+						);
+					}
+				}
+				uids.add(uid.toLowerCase());
+				if (cid && !targets.includes(cid)) targets.push(cid);
+			}
+			if (uids.size === 0) return json({ error: "目标班级下没有可推送的设备" }, { status: 404 });
+
+			const results = await pushFileToDevices(file, [...uids], (uid2) =>
+				map.uidToClass.get(uid2.toLowerCase()) ?? ""
+			);
+			addAudit({
+				actor: u.displayName || u.username,
+				role: u.role,
+				action: "file_push",
+				target: targets.join("、") || uids.size + " 台设备",
+				detail: `推送「${file.name}」（${Math.round(file.size / 1024)}KB）到 ${uids.size} 台设备`
+			});
+			return json({ ok: true, file: { id: file.id, name: file.name }, targets, results }, { status: 201 });
 		}
 		case "vnc-session":
 		case "media-session":

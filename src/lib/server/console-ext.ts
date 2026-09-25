@@ -822,7 +822,74 @@ export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): Devic
 	fs.writeFileSync(file, bytes);
 	const meta: DeviceCaptureMeta = { uid: key, at: Date.now(), bytes: bytes.length, path: file };
 	deviceCaptures.set(key, meta);
+	// v2（监控回放）：除内存 TTL 缓存外，落一行 SQLite 索引（content/captures 的
+	// 文件本身保留，「回放」= 按设备翻时间线）。旧路径只留最新一张 60s，
+	// 老师想回看上午的教室画面时什么都没有 —— 这就是「监控视频回放」的落点。
+	try {
+		const sha = crypto.createHash("sha256").update(bytes).digest("hex");
+		getDb()
+			.prepare(
+				`INSERT INTO captures (uid, path, bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?)`
+			)
+			.run(key, file, bytes.length, sha, nowIso());
+	} catch (e) {
+		// 索引写失败不影响实时看图（主结果已落盘+内存）；记日志便于发现库异常。
+		console.warn("[console-ext] captures 索引写入失败：", e);
+	}
 	return meta;
+}
+
+/** 回放时间线条目（不含图片字节；字节按 id 单独取，避免列表请求拖几十 MB）。 */
+export interface CaptureHistoryItem {
+	id: number;
+	uid: string;
+	at: string;
+	bytes: number;
+	sha256: string;
+}
+
+/** 某设备的截图历史（回放时间线，按时间倒序）。 */
+export function listDeviceCaptures(uid: string, limit = 60): CaptureHistoryItem[] {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return [];
+	const rows = getDb()
+		.prepare(
+			`SELECT id, uid, bytes, sha256, created_at FROM captures
+			 WHERE uid = ? ORDER BY created_at DESC LIMIT ?`
+		)
+		.all(key, Math.min(Math.max(limit, 1), 300)) as {
+		id: number;
+		uid: string;
+		bytes: number;
+		sha256: string;
+		created_at: string;
+	}[];
+	return rows.map((r) => ({
+		id: r.id,
+		uid: r.uid,
+		at: r.created_at,
+		bytes: r.bytes,
+		sha256: r.sha256
+	}));
+}
+
+/** 按行 id 取回放帧（含 PNG 字节）；文件已清理时返回 null。 */
+export function getDeviceCaptureById(id: number): { meta: CaptureHistoryItem; png: Buffer } | null {
+	if (!Number.isFinite(id) || id <= 0) return null;
+	const row = getDb()
+		.prepare(`SELECT id, uid, path, bytes, sha256, created_at FROM captures WHERE id = ?`)
+		.get(id) as { id: number; uid: string; path: string; bytes: number; sha256: string; created_at: string } | undefined;
+	if (!row) return null;
+	try {
+		const png = fs.readFileSync(row.path);
+		if (png.length === 0) return null;
+		return {
+			meta: { id: row.id, uid: row.uid, at: row.created_at, bytes: row.bytes, sha256: row.sha256 },
+			png
+		};
+	} catch {
+		return null;
+	}
 }
 
 /**

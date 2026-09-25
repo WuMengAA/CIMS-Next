@@ -3,7 +3,9 @@ import { env } from "$env/dynamic/private";
 import type { RequestEvent } from "@sveltejs/kit";
 import http from "node:http";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, userCan, canDevice, roleManagementTier, type DeviceTier } from "$lib/permissions.js";
+import { can, userCan, canDevice, roleManagementTier, type DeviceTier, type Role } from "$lib/permissions.js";
+import { classScopeOf, scopeCovers, listBindings } from "$lib/server/class-scope.js";
+import { fetchDeviceClassMap } from "$lib/server/cims-client.js";
 
 // ── 分级过滤（2026-09-21 修复：不同权限看见不该看的）─────────────────────
 // 代理以「服务端特权 CIMS 令牌」转发，8097 侧分辨不出「谁在问」——所以过滤只能在
@@ -29,15 +31,13 @@ function classMatches(c: Record<string, unknown>, ownDigits: string): boolean {
 	return cands.some((d) => d === ownDigits);
 }
 function applyScopeFilter(
-	u: { role?: string | null; className?: string | null },
+	u: { role?: string | null; className?: string | null; id?: number | null },
 	rel: string,
 	payload: unknown
 ): unknown {
-	// ⚠️ 设备三关铁律（#249，2026-09-21 方案）：能碰设备（含看画面 watch）的只有
-	// 站长/班主任/电教委员。非三关角色（无 watch 档）的设备列表接口**直接返回空数组**
-	// —— 不是前端藏，是接口就没有（本机截图=敏感内容）。teacher/editor/moderator/
-	// user/viewer 均无 watch 档，这里必须拦在班级过滤之前（它们大多有 viewConsole，
-	// 能进面板，但设备数据一条都不能给）。
+	// ⚠️ 设备三关铁律（#249 → v2 2026-09-25 收紧）：能看设备（watch 档）的只剩
+	// 站长/班主任（电教委员 v2 只剩传文件，watch 也收回）。非 watch 档的设备列表
+	// 接口**直接返回空数组** —— 不是前端藏，是接口就没有（本机截图=敏感内容）。
 	if (!canDevice((u.role ?? null) as never, "watch")) {
 		if (rel === "/class/device-status") return { devices: [], fresh_seconds: 90 };
 		if (rel === "/class/device-map") return { devices: {}, classes: [] };
@@ -49,20 +49,32 @@ function applyScopeFilter(
 	if (tier === "school") return payload; // 校级全量
 	// 班级目录（/class/list）保持全量：班级名不敏感，且绑定页依赖它给未绑定用户候选。
 	if (rel === "/class/list") return payload;
-	const own = scopeDigits(u.className);
-	// 绑定的是自由文本（无数字，如「信息中心」）→ 无法对到任何班级实体 → 设备给空。
-	// 这正是要修掉的体验：绑了个 CIMS 不认识的班名，等于没绑定，那就看不到设备。
-	if (!own) {
-		if (rel === "/class/device-map") return { devices: {}, classes: [] };
-		if (rel === "/class/device-status") return { devices: [], fresh_seconds: 90 };
-		return payload;
-	}
+
+	// ── v2：范围权威来源 = user_class_bindings（真实 class_id）──────────────
+	// 没绑定的 homeroom/teacher/techrep = 空范围 = 设备一条不给。
+	// 迁移宽容：绑定表为空但 users.class_name 带数字时，退回旧数字启发式，
+	// 避免上线瞬间把还没来得及重新绑定的存量账号全部打成"看不见设备"。
+	const scope = classScopeOf((u.role ?? null) as Role, u.id ?? null);
+	const ownIds: string[] = scope === "*" ? [] : scope;
+	const ownDigits = ownIds.length === 0 ? scopeDigits(u.className) : "";
+	const hitByBinding = (c: Record<string, unknown>): boolean => {
+		const cid = String(c.class_id ?? "");
+		if (cid && scopeCovers(ownIds, cid)) return true;
+		// 名称兜底：绑定表存了 class_name，而列表项只有名字没有 id 的形态
+		const name = String(c.name ?? "");
+		if (name && listBindings(u.id ?? 0).some((b) => b.class_name && b.class_name === name)) return true;
+		return false;
+	};
+	const hitByDigits = (c: Record<string, unknown>): boolean => classMatches(c, ownDigits);
+	const hit = (c: Record<string, unknown>): boolean =>
+		ownIds.length > 0 ? hitByBinding(c) : ownDigits ? hitByDigits(c) : false;
+
 	if (rel === "/class/device-status" && payload && typeof payload === "object") {
 		const p = payload as { devices?: unknown[] };
 		if (Array.isArray(p.devices)) {
 			p.devices = p.devices.filter((d) => {
 				const cid = String((d as Record<string, unknown>).class_id ?? "");
-				return !!cid && classMatches({ class_id: cid }, own);
+				return !!cid && hit({ class_id: cid });
 			});
 		}
 		return payload;
@@ -71,13 +83,11 @@ function applyScopeFilter(
 		const p = payload as { devices?: Record<string, unknown>; classes?: unknown[] };
 		if (p.devices && typeof p.devices === "object") {
 			for (const k of Object.keys(p.devices)) {
-				if (!classMatches({ class_id: p.devices[k] }, own)) delete p.devices[k];
+				if (!hit({ class_id: p.devices[k] } as Record<string, unknown>)) delete p.devices[k];
 			}
 		}
 		if (Array.isArray(p.classes)) {
-			p.classes = p.classes.filter((c) =>
-				classMatches(c as Record<string, unknown>, own)
-			);
+			p.classes = p.classes.filter((c) => hit(c as Record<string, unknown>));
 		}
 		return payload;
 	}
@@ -150,6 +160,20 @@ function requiredTier(rel: string, method: string, body: string | undefined): De
 		method === "POST" &&
 		/^\/?(api\/)?v1\/client\/[^/]+\/(status|command\/ack)$/.test(rel)
 	) {
+		return "control";
+	}
+
+	// ---- 自助切班：互换/单切申请的创建、取消、回退 ----
+	// 是班主任/电教委员的日常操办（不是站长专属），按 control 档而非 manage 兜底：
+	// 与「下发设备指令」同档即可 —— 换课表方案属于设备控制动作，不涉及 manage 语义。
+	// ⚠️ 审批（approve/reject）与全局开关（config）是 manage 语义：审批 = 替他人
+	// 放行一次班级级变更，config = 改全校审批策略，都比普通换班更敏感，
+	// 不能让 teacher/homeroom 的 control 档拿到（2026-09-24 接力棒修正）。
+	// GET 一律走下方 watch 放宽（列表/详情是只读）；config 的 GET 也归 manage：
+	// 开关值影响全校流程，读它只给 manage 档（与 class/pending 的「读但敏感」同款）。
+	if (/^\/class\/swap\/config$/.test(rel)) return "manage";
+	if (method !== "GET" && /^\/class\/swap($|\/)/.test(rel)) {
+		if (/\/approve$/.test(rel) || /\/reject$/.test(rel)) return "manage";
 		return "control";
 	}
 
@@ -335,6 +359,37 @@ async function forward(event: RequestEvent) {
 	const tier = requiredTier(rel, method, body);
 	if (tier && !canDevice(u.role, tier)) {
 		return json({ error: "无权限" }, { status: 403 });
+	}
+
+	// ── v2 班级范围强制（写路径）────────────────────────────────────────────
+	// 粗档（control/remote）只回答「能不能发指令」，不回答「能对谁发」——
+	// 旧实现里班级账号可以把 shutdown 发给全校任何一台设备，这是范围维度的洞。
+	const scope = classScopeOf((u.role ?? null) as Role, u.id ?? null);
+
+	// ① 危险动作收权：shutdown 只归学校管理员（v2 矩阵：关机一格只有站长有勾）。
+	if (scope !== "*" && body && /"action"\s*:\s*"(shutdown|reboot)"/.test(body)) {
+		return json({ error: "关机/重启只允许学校管理员操作" }, { status: 403 });
+	}
+
+	// ② 指令目标范围：给某台设备发指令前，先解析它属于哪个班。
+	//    解析不到归属 = 确定不了 = 不放行（宁严勿泄，与列表过滤同一原则）。
+	//    ⚠️ /v1/client/{uid}/status|ack 是设备自报（本机被控回执），不在拦截之列。
+	const cmdTarget = method === "POST" ? rel.match(/^\/account\/[^/]+\/client\/([^/]+)\/command\//) : null;
+	if (cmdTarget && scope !== "*") {
+		const targetUid = decodeURIComponent(cmdTarget[1]).toLowerCase();
+		const cid = await (async () => {
+			const m = await fetchDeviceClassMap();
+			return m?.uidToClass.get(targetUid) ?? null;
+		})();
+		if (!cid || !scopeCovers(scope, cid)) {
+			return json({ error: "目标设备不在你的班级范围内" }, { status: 403 });
+		}
+	}
+
+	// ③ 班级级写操作（切课表/预览图）同样过范围关。
+	const clsTarget = method !== "GET" ? rel.match(/^\/class\/([^/]+)\/(activate|preview)$/) : null;
+	if (clsTarget && scope !== "*" && !scopeCovers(scope, decodeURIComponent(clsTarget[1]))) {
+		return json({ error: "目标班级不在你的绑定范围内" }, { status: 403 });
 	}
 
 	if (!ALLOW.some((re) => re.test(rel))) {

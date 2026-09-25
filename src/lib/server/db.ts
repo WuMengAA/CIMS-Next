@@ -38,7 +38,9 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_ip TEXT,
   login_count   INTEGER NOT NULL DEFAULT 0,
   class_name    TEXT NOT NULL DEFAULT '',
-  grade_name    TEXT NOT NULL DEFAULT ''
+  grade_name    TEXT NOT NULL DEFAULT '',
+  -- 经验值（#248：经验等级 xp→Lv 的唯一数据源；纯展示，与权限/角色零耦合）
+  xp            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -199,6 +201,101 @@ CREATE TABLE IF NOT EXISTS user_titles (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_user_titles_user ON user_titles(user_id);
+
+-- ── 项目展板 · 站内 Issues（类 GitHub）────────────────────────────────────
+-- 为什么放 DB：issue 需要「每个项目内自增编号」（#1、#2…）、状态流转与评论计数，
+-- 这些都是关系型语义；放 content/*.json 会退化成全量读写 + 手工算编号，
+-- 并发下必然撞号。
+--
+-- number 是「项目内」编号，用 (project_slug, number) 唯一索引约束；
+-- 分配编号时在事务里取 MAX(number)+1，配合 SQLite 的写锁即可保证不重号。
+CREATE TABLE IF NOT EXISTS board_issues (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_slug  TEXT    NOT NULL,
+  number        INTEGER NOT NULL,
+  title         TEXT    NOT NULL,
+  body          TEXT    NOT NULL DEFAULT '',
+  author        TEXT    NOT NULL DEFAULT '',
+  state         TEXT    NOT NULL DEFAULT 'open',   -- open | closed
+  labels        TEXT    NOT NULL DEFAULT '[]',     -- JSON 数组，如 ["bug","enhancement"]
+  pinned        INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL,
+  updated_at    TEXT    NOT NULL,
+  closed_at     TEXT    NOT NULL DEFAULT '',
+  closed_by     TEXT    NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_board_issues_num    ON board_issues(project_slug, number);
+CREATE INDEX        IF NOT EXISTS idx_board_issues_state  ON board_issues(project_slug, state, created_at);
+
+CREATE TABLE IF NOT EXISTS board_issue_comments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_id    INTEGER NOT NULL,
+  author      TEXT    NOT NULL DEFAULT '',
+  body        TEXT    NOT NULL DEFAULT '',
+  created_at  TEXT    NOT NULL,
+  FOREIGN KEY (issue_id) REFERENCES board_issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_board_comments_issue ON board_issue_comments(issue_id, created_at);
+
+-- ── 班级系统 v2：结构化的「用户 ↔ 班级」绑定 ─────────────────────────────────
+-- 旧模型 users.class_name 是自由文本（一人一班、写错没人拦），权限层只能靠
+-- 「数字启发式」去猜用户说的是哪个班 —— 这正是「班级选择列表没有确切真实获取班级」
+-- 的根源。v2 的规矩：
+--   · class_id 必须是 **CIMS 真实班级实体**（/class/list 里的 class_id，如 class_3p1），
+--     绑定接口在写入前会实时校验存在性，绝不允许自由文本进这张表；
+--   · 一人可绑多班（老师带两个班），上限按角色收敛（班主任=1、电教委员=1、老师=2）；
+--   · 站长（owner/admin）不需要绑定 —— 他们的范围就是全校。
+CREATE TABLE IF NOT EXISTS user_class_bindings (
+  uid        INTEGER NOT NULL,
+  class_id   TEXT    NOT NULL,
+  class_name TEXT    NOT NULL DEFAULT '',
+  bound_by   TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL,
+  PRIMARY KEY (uid, class_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ucb_class ON user_class_bindings(class_id);
+
+-- 截图回放索引：设备每回传一张截图，除了进内存 TTL 缓存（面板实时看），
+-- 再落一行 SQLite + 磁盘文件（content/captures/），「监控视频回放」= 按设备翻时间线。
+-- 不存图片字节进库（PNG 动辄几百 KB，SQLite 存 blob 会让库迅速膨胀），只存索引。
+CREATE TABLE IF NOT EXISTS captures (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid        TEXT    NOT NULL,
+  path       TEXT    NOT NULL,
+  bytes      INTEGER NOT NULL DEFAULT 0,
+  sha256     TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_captures_uid ON captures(uid, created_at);
+
+-- 文件传输 v1 实体表：此前「传文件」只发元数据（name/size/sha256），文件本体从未
+-- 离开发送机 —— 设备端自然永远收不到。现在：发送方先把文件上传到这里（磁盘
+-- content/files/ + 本表登记），再经 file_push 指令让设备按 id 下载。
+CREATE TABLE IF NOT EXISTS file_objects (
+  id         TEXT    PRIMARY KEY,
+  name       TEXT    NOT NULL,
+  size       INTEGER NOT NULL DEFAULT 0,
+  sha256     TEXT    NOT NULL DEFAULT '',
+  kind       TEXT    NOT NULL DEFAULT 'file',   -- file | voice（语音走同一通道，设备端自动播放）
+  path       TEXT    NOT NULL,
+  uploader   TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+
+-- 送达回执：file_push 每指向一台设备就记一行 pending，设备下载/播放后回 ack 更新。
+-- 「文件传输后没有消息提示」的发送方那一半修在这里 —— 老师能看到每台设备收没收到。
+CREATE TABLE IF NOT EXISTS file_deliveries (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id    TEXT    NOT NULL,
+  uid        TEXT    NOT NULL,
+  class_id   TEXT    NOT NULL DEFAULT '',
+  state      TEXT    NOT NULL DEFAULT 'pending',  -- pending | acked | failed
+  detail     TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_filedel_file ON file_deliveries(file_id, uid);
+CREATE INDEX IF NOT EXISTS idx_filedel_uid  ON file_deliveries(uid, created_at);
 `;
 
 export function nowIso(): string {
@@ -230,6 +327,8 @@ function ensureDb(): DatabaseSync {
 	// 班级绑定（集控面板「新账号引导补充班级身份」字段）：仅面板/管理端可写，用户自填。
 	if (!cols.has("class_name")) db.exec("ALTER TABLE users ADD COLUMN class_name TEXT NOT NULL DEFAULT ''");
 	if (!cols.has("grade_name")) db.exec("ALTER TABLE users ADD COLUMN grade_name TEXT NOT NULL DEFAULT ''");
+	// 经验值（#248）：经验等级的数据源。旧库补 0 = 从 Lv.1 起步。
+	if (!cols.has("xp")) db.exec("ALTER TABLE users ADD COLUMN xp INTEGER NOT NULL DEFAULT 0");
 
 	// console_notices 定向广播字段（向后兼容旧库：老行补空串，等价于「不限班级」）。
 	// 有了这两列，历史通知才能「分班级、按通道」正确展示，也多通道重复推送有了判据。
