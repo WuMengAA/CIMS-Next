@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from "svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
@@ -34,20 +35,36 @@
 	let title = $state("");
 	let content = $state("");
 	let scope = $state<"本班" | "本年级" | "全校">("本班");
-	let classesRaw = $state("");
 	let duration = $state<number | undefined>(undefined);
+
+	// v2（2026-09-25）：目标班级只从 CIMS 真实班级出（/api/classes）。
+	// 旧版是手输自由文本（"多个班级用逗号分隔"）——拼错一个字就静默发不到，
+	// 也没有了“班级选择列表不真实”的另一个入口。取不到=明示错误，绝不放假班。
+	let classOptions = $state<{ class_id: string; name: string }[]>([]);
+	let classOptionsErr = $state("");
+	let pickedClasses = $state<string[]>([]);
+
+	onMount(async () => {
+		try {
+			const res = await fetch("/api/classes");
+			const d = await res.json();
+			if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
+			classOptions = (d.classes ?? []).map((c: { class_id?: string; name?: string }) => ({
+				class_id: String(c.class_id ?? ""),
+				name: String(c.name ?? c.class_id ?? "")
+			})).filter((c) => c.class_id);
+		} catch (e) {
+			classOptionsErr = (e as Error).message || "班级列表加载失败";
+		}
+	});
+
+	function parseClasses(): string[] {
+		return pickedClasses.slice(0, 40);
+	}
 
 	let submitting = $state(false);
 	let confirming = $state(false); // 发布确认态
 	let result = $state<PublishResult | null>(null);
-
-	function parseClasses(): string[] {
-		return classesRaw
-			.split(/[，,、\s]+/)
-			.map((s) => s.trim())
-			.filter(Boolean)
-			.slice(0, 40);
-	}
 
 	async function doPublish() {
 		if (!title.trim()) {
@@ -156,15 +173,28 @@
 			</div>
 			{#if scope === "本班"}
 				<div class="grid gap-1.5">
-					<Label for="bc-classes">目标班级（选填，默认本班）</Label>
-					<input
-						id="bc-classes"
-						type="text"
-						bind:value={classesRaw}
-						placeholder="多个班级用逗号分隔，如：3班, 4班"
-						class="h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:bg-input/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 w-full min-w-0 outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
-					/>
-					<p class="text-xs text-muted-foreground">不填则推送到你绑定的班级；填了则只推这些班。</p>
+					<Label for="bc-classes">目标班级（选填，默认你绑定的班级）</Label>
+					{#if classOptionsErr}
+						<p class="text-xs text-destructive" id="bc-classes">
+							班级列表不可用：{classOptionsErr}（本次只能发往你绑定的班级）
+						</p>
+					{:else if classOptions.length}
+						<div id="bc-classes" class="flex flex-wrap gap-2">
+							{#each classOptions as c (c.class_id)}
+								<label
+									class="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm {pickedClasses.includes(c.class_id) ? 'border-primary bg-primary/10' : 'border-border'}"
+								>
+									<input type="checkbox" class="accent-primary" bind:group={pickedClasses} value={c.class_id} />
+									{c.name}
+								</label>
+							{/each}
+						</div>
+						<p class="text-xs text-muted-foreground">
+							只能选你绑定范围内的班级（发布时服务端会再次校验）；不选则推送到你绑定的全部班。
+						</p>
+					{:else}
+						<p class="text-xs text-muted-foreground" id="bc-classes">正在加载真实班级…</p>
+					{/if}
 				</div>
 			{/if}
 
@@ -179,7 +209,7 @@
 
 	{#if confirming}
 		<div class="mt-4 rounded-xl border border-primary/40 bg-primary/5 p-4">
-			<p class="text-sm font-medium">确认发布到【{scope}】？</p>
+			<p class="text-sm font-medium">确认发布到【{scope}】{scope === "本班" && pickedClasses.length ? `（选定 ${pickedClasses.length} 个班）` : ""}？</p>
 			<p class="mt-1 text-xs text-muted-foreground">标题：{title.trim()}{content.trim() ? ` · 正文 ${content.trim().length} 字` : ""}</p>
 			<div class="mt-3 flex items-center gap-2">
 				<Button onclick={doPublish} disabled={submitting} class="gap-1.5">
