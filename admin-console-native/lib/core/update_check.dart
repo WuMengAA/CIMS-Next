@@ -14,9 +14,9 @@ import 'package:http/http.dart' as http;
 import 'log.dart';
 import 'settings.dart';
 
-/// 本地版本（与 pubspec.yaml 的 `version: 1.0.0+1` 对齐；改 pubspec 时一并改这里）。
-const String kLocalVersion = '1.0.0';
-const int kLocalBuild = 1;
+/// 本地版本（与 pubspec.yaml 的 `version: 1.0.1+2` 对齐；改 pubspec 时一并改这里）。
+const String kLocalVersion = '1.0.2';
+const int kLocalBuild = 2;
 
 /// 版本接口路径（挂在站点根下）。改路径只动这里，不用改调用方。
 const String kVersionApiPath = '/api/version';
@@ -74,6 +74,8 @@ class AppVersion {
   final String notes;
   final String minSupported;
   final String updatedAt;
+  /// 更新包 sha256（十六进制）。空 = 不校验（仅联调可用，生产必须填）。
+  final String sha256;
   const AppVersion({
     required this.version,
     this.build = 0,
@@ -81,6 +83,7 @@ class AppVersion {
     this.notes = '',
     this.minSupported = '',
     this.updatedAt = '',
+    this.sha256 = '',
   });
 
   factory AppVersion.fromJson(Map<String, dynamic> j) {
@@ -94,6 +97,7 @@ class AppVersion {
       notes: (j['notes'] ?? '').toString().trim(),
       minSupported: (j['minSupported'] ?? '').toString().trim(),
       updatedAt: (j['updatedAt'] ?? '').toString(),
+      sha256: (j['sha256'] ?? '').toString().trim(),
     );
   }
 

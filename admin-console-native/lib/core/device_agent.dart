@@ -24,6 +24,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -164,11 +165,52 @@ class AgentNotice {
   /// 所有通知都置顶会变成"这软件老弹出来"的反感源。
   final bool urgent;
 
+  /// 呈现类型（与服务端 `type` 对齐）：
+  ///   · `plain`        —— 本机产生的确认（已截图/已收文件），普通横幅；
+  ///   · `island`       —— 课表岛内的普通通知，滚动循环即可视为已读；
+  ///   · `popup`        —— 弹窗通知，需老师点确认（emergency_confirm 时更强调）；
+  ///   · `fullscreen`   —— 全屏紧急通知，必须覆盖整块屏幕、手动关掉。
+  ///
+  /// 为什么类型必须带在对象上而不是只靠 [urgent]：界面要按类型决定"是盖满屏、
+  /// 是要给回复按钮、要不要语音朗读"。只给一个布尔量，界面就得猜 ——
+  /// 猜错的表现是老师压根没看见那通知。
+  final String kind;
+
+  /// 服务端通知 id。0 表示这条是本机自己产生的，**不上报回执**
+  /// （本机确认类的回执没有"操控端"在等它）。
+  final int noticeId;
+
+  /// 预设回复短语（老师点一下就能回）。来自 flags.reply_presets，最多 6 条。
+  final List<String> presets;
+
+  /// 需要老师点「确认收到」按钮才算送达（popup 默认要）。
+  final bool requiresConfirm;
+
+  /// 紧急：文案里要给出明确警示（⚠️ 紧急）。
+  final bool emergency;
+
+  /// 需要老师**回复**（文字或预设短语），回复会回传操控端。
+  final bool replyable;
+
+  /// 是否需要本机用系统语音朗读一遍（TTS）。仅 `island`/`popup` 生效。
+  final bool tts;
+
+  /// 全屏通知自动关闭秒数（0 = 必须手动关）。
+  final int autoDismissSeconds;
+
   const AgentNotice({
     required this.title,
     required this.body,
     required this.at,
     this.urgent = true,
+    this.kind = 'plain',
+    this.noticeId = 0,
+    this.presets = const <String>[],
+    this.requiresConfirm = false,
+    this.emergency = false,
+    this.replyable = false,
+    this.tts = false,
+    this.autoDismissSeconds = 0,
   });
 
   /// 界面上显示的主文本：标题和正文重复时只留一份。
@@ -249,6 +291,8 @@ class DeviceAgent {
   bool _polling = false;
   bool _reporting = false;
   DateTime _startedAt = DateTime.now();
+  /// v2.1 类型化通知 catch-up 节流（60s 一次）。
+  DateTime? _lastTypedCatchUp;
 
   // ---- 生命周期 ----
 
@@ -346,7 +390,12 @@ class DeviceAgent {
         phase: '在线 · 已连接',
         lastPollAt: DateTime.now(),
       );
-      if (list.isEmpty) return;
+      if (list.isEmpty) {
+        // v2.1：轮询到空也顺手 catch-up 类型化通知（60s 节流在方法内），
+        // 错过弹窗 / 重启的设备由此补齐，不依赖新指令到达。
+        unawaited(_catchUpNotices());
+        return;
+      }
       Log.i('取到 ${list.length} 条下发指令', 'agent');
       for (final e in list) {
         if (e is! Map) continue;
@@ -405,7 +454,7 @@ class DeviceAgent {
         'POST',
         s.siteHost,
         '/api/console/cims/v1/client/${Uri.encodeComponent(s.deviceUid)}/command/ack',
-        body: {'command_ids': [id], 'status': status},
+        body: {'command_ids': [id], 'status': status, 'detail': detail},
       );
       if (res.statusCode >= 400) {
         Log.w('回报指令 #$id 失败（HTTP ${res.statusCode}）：面板会一直显示"待回执"', 'agent');
@@ -439,6 +488,18 @@ class DeviceAgent {
         );
       case 'screenshot':
         return _screenshot(shotPath);
+      case 'file_push':
+        return _filePush(p);
+      // v2.1 类型化通知：island（课表岛）/ popup（弹窗）/ fullscreen（全屏）。
+      // 指令里只带 notice_id + 渲染参数；呈现与回执统一走 _typedNotice。
+      case 'island_notice':
+      case 'popup_notice':
+      case 'fullscreen_notice': {
+        final kind = task.action.replaceFirst(RegExp(r'_notice$'), '');
+        final params = Map<dynamic, dynamic>.from(p);
+        params['__kind'] = kind;
+        return _typedNotice(params);
+      }
       case 'ping':
         return ActionResult.yes('心跳');
       default:
@@ -472,10 +533,33 @@ class DeviceAgent {
     // 截图先落盘是主结果，回传是加分项。
     final upload = await _uploadCapture(r.path);
     final uploaded = upload == null || upload.isEmpty;
+    // ⚠️ v2 修复「不能有效上报图片」的静默分支：旧实现里"密钥未配置"与"上传成功"
+    // 返回的 suffix 一样是空串 —— 老师在面板里只看到「已执行 ✓」却永远等不到图，
+    // 而回执里一个字都没提。现在三种状态都进回执详情：
+    //   未配置密钥（null）→ 明说"面板将看不到本图，请配置设备密钥"；
+    //   上传失败          → 带上人话原因；
+    //   成功              → "已回传集控端"。
     final suffix = upload == null
-        ? ''
+        ? '，但未配置设备密钥（设置→设备上报密钥），监控端看不到本图'
         : (uploaded ? '，已回传集控端' : '（回传失败：$upload）');
     await _notify('星集控 · 已截图', '保存到 ${r.path}$suffix');
+    // 完成上报：面板的「执行回执」页要靠它显示"这张图到底传到哪了"。
+    // upload_note 带上未配置密钥 / 回传失败的原因 —— 只有成败色块的话，
+    // 老师在面板里等图等到天黑也不知道是密钥没配还是网络断了。
+    final shotDetail = upload == null
+        ? '未配置设备密钥，图未回传（本机已保存）'
+        : (uploaded ? '图已回传集控端' : '回传失败：$upload');
+    unawaited(reportCompletion(
+      event: 'screenshot',
+      ok: uploaded,
+      detail: shotDetail,
+      extra: {
+        'path': r.path,
+        'uploaded': uploaded,
+        'upload_note': upload ?? '未配置设备密钥',
+        'bytes': r.detail,
+      },
+    ));
     return ActionResult.yes('截图已保存：${r.path}$suffix');
   }
 
@@ -526,6 +610,422 @@ class DeviceAgent {
     }
   }
 
+  /// 接收目录：`%USERPROFILE%\Downloads\星集控\`（取不到回退到系统临时目录）。
+  /// 必须是老师/学生**看得见**的地方 —— 收到文件没有提示的一半原因是
+  /// 旧版本根本没有下载，另一半原因就是收了也收进无人知晓的目录。
+  Directory _receiveDir() {
+    final home = Platform.environment['USERPROFILE'] ?? '';
+    if (home.isNotEmpty) {
+      return Directory('$home\\Downloads\\星集控');
+    }
+    return Directory(Directory.systemTemp.path);
+  }
+
+  /// 处理 file_push：下载 → 校验 sha256 → 落盘到用户可见目录 →
+  /// 语音类自动播放 → 弹本机通知 → 回执带人话详情。
+  ///
+  /// 「文件传输后没有消息提示」的设备端半边修在这里：旧版本没有 file_push
+  /// 分支，指令被回落成普通通知弹一下，文件本体从未落地。
+  Future<ActionResult> _filePush(Map<dynamic, dynamic> p) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    if (secret.isEmpty) {
+      return ActionResult.no(
+          '未配置设备密钥（设置→设备上报密钥），无法下载推送文件');
+    }
+    final fid = (p['file_id'] ?? '').toString().trim();
+    final name = (p['name'] ?? '').toString().trim();
+    final expectSha = (p['sha256'] ?? '').toString().trim().toLowerCase();
+    final kind = (p['kind'] ?? 'file').toString();
+    if (fid.isEmpty || name.isEmpty) {
+      return ActionResult.no('file_push 指令缺少 file_id/name');
+    }
+    // 落盘文件名做安全清洗：只留常用字符，防路径注入。
+    final safeName = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final dir = _receiveDir();
+    try {
+      await dir.create(recursive: true);
+    } catch (_) {}
+    final dest = File('${dir.path}${Platform.pathSeparator}$safeName');
+
+    // ① 下载（设备密钥鉴权，与截图回传同通道）
+    final base = s.siteHost.endsWith('/')
+        ? s.siteHost.substring(0, s.siteHost.length - 1)
+        : s.siteHost;
+    final uri = Uri.parse('$base/api/console/ext/files?id=${Uri.encodeQueryComponent(fid)}');
+    final req = http.Request('GET', uri);
+    req.headers['x-stelarith-device-secret'] = secret;
+    http.StreamedResponse streamed;
+    try {
+      streamed = await _client.send(req).timeout(const Duration(minutes: 10));
+    } catch (e) {
+      return ActionResult.no('下载失败：$e');
+    }
+    if (streamed.statusCode >= 400) {
+      final body = await streamed.stream.bytesToString().timeout(const Duration(seconds: 5));
+      final why = _clip(body.trim());
+      _ackDetailHint('HTTP ${streamed.statusCode} $why');
+      return ActionResult.no('下载失败（HTTP ${streamed.statusCode}）$why');
+    }
+    final bytes = await streamed.stream.toBytes().timeout(const Duration(minutes: 10));
+    if (bytes.isEmpty) return ActionResult.no('下载内容为空');
+
+    // ② 完整性校验：sha256 不符绝不落盘（防损坏/篡改的包覆盖学生机上的文件）
+    final got = crypto.sha256.convert(bytes).toString();
+    if (expectSha.isNotEmpty && got != expectSha) {
+      _ackDetailHint('校验失败');
+      return ActionResult.no('文件校验失败（sha256 不符），已丢弃');
+    }
+    try {
+      await dest.writeAsBytes(bytes, flush: true);
+    } catch (e) {
+      return ActionResult.no('保存失败：$e');
+    }
+
+    // ③ 语音类：自动播放（wav 走 SoundPlayer 同步播；其余交给系统默认播放器）
+    String played = '';
+    if (kind == 'voice') {
+      final pr = await _playAudio(dest.path);
+      played = pr.isEmpty ? '，已自动播放' : '（自动播放失败：$pr）';
+    }
+
+    // ④ 本机提示 + 回执
+    final title = kind == 'voice' ? '星集控 · 收到语音' : '星集控 · 收到文件';
+    await _notify(title, '${kind == "voice" ? "正在播放" : "已保存"}：${dest.path}$played');
+    unawaited(reportCompletion(
+      event: 'file_receive',
+      ok: true,
+      detail: '${kind == "voice" ? "语音" : "文件"}已保存到 ${dest.path}（${bytes.length} 字节）$played',
+      extra: {
+        'path': dest.path,
+        'bytes': bytes.length,
+        'kind': kind,
+        'name': safeName,
+        'played': kind == 'voice' && played.isEmpty,
+      },
+    ));
+    return ActionResult.yes(
+        '${kind == "voice" ? "语音已接收" : "文件已接收"}：${dest.path}（${bytes.length} 字节）$played');
+  }
+
+  /// 回执辅助：把「设备侧卡在哪一步」也写进本地日志（ack 在调用方统一发）。
+  void _ackDetailHint(String hint) {
+    Log.w('file_push 中途失败：$hint', 'agent');
+  }
+
+  // ---- v2.1 类型化通知（island / popup / fullscreen）----------------------
+
+  /// 呈现一条类型化通知 + 按类型回执：
+  ///   · island      → 非打断横幅（urgent=false），滚动循环即可视为已读 → ack read；
+  ///   · popup       → 高优先级横幅（urgent=true），弹了但等确认 → ack received
+  ///                   （预设回复短语随正文展示；真「点击回复」待桌面 UI 增强）；
+  ///   · fullscreen  → 高优先级横幅 + 12s 后二次提醒（不停留/不确认）→ ack read；
+  ///                   auto_dismiss_seconds（1~300）显式给出时按它二次提醒。
+  /// 回执走 notice-ack（设备密钥鉴权，与截图/文件下载同通道），失败只记日志不阻塞。
+  Future<ActionResult> _typedNotice(Map<dynamic, dynamic> p) async {
+    final nid = int.tryParse((p['notice_id'] ?? '').toString()) ?? 0;
+    if (nid <= 0) return ActionResult.no('类型化通知缺少 notice_id');
+    final kind = (p['__kind'] ?? 'island').toString();
+    final title = (p['title'] ?? '集控通知').toString().trim();
+    final body = (p['content'] ?? '').toString().trim();
+    final flagsRaw = p['flags'];
+    final flags = flagsRaw is Map ? flagsRaw : <dynamic, dynamic>{};
+    final presetsRaw = flags['reply_presets'];
+    final presets = presetsRaw is List
+        ? presetsRaw.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).take(6).toList()
+        : const <String>[];
+    final ads = int.tryParse((flags['auto_dismiss_seconds'] ?? '').toString()) ?? 0;
+    final lines = <String>[
+      if (body.isNotEmpty) body,
+      if (kind == 'popup' && presets.isNotEmpty) '预设回复：${presets.join(' / ')}',
+      if (kind == 'popup' && flags['emergency_confirm'] == true) '⚠️ 这是一条需要确认的紧急弹窗',
+      if (kind == 'fullscreen' && ads > 0) '（$ads 秒后自动关闭）',
+    ];
+    final urgent = kind == 'popup' || kind == 'fullscreen';
+    final isEmergency = flags['emergency_confirm'] == true;
+    final needConfirm = kind == 'popup' || isEmergency;
+    await _notify(
+      title,
+      lines.join('\n'),
+      urgent: urgent,
+      kind: kind,
+      noticeId: nid,
+      presets: presets,
+      requiresConfirm: needConfirm,
+      emergency: isEmergency,
+      replyable: kind == 'popup' && presets.isNotEmpty,
+      tts: flags['tts'] == true || flags['voice'] == true,
+      autoDismissSeconds: kind == 'fullscreen' ? ads : 0,
+    );
+    // 回执（异步，不阻塞指令循环）
+    // popup 只报 received（人还没点确认）；等界面收到「确认收到」再补 read。
+    unawaited(_ackNotice(nid, kind == 'popup' ? 'received' : 'read'));
+    if (kind == 'fullscreen' && ads > 0) {
+      unawaited(() async {
+        await Future<void>.delayed(Duration(seconds: ads.clamp(1, 300)));
+        if (!_disposed) await _ackNotice(nid, 'read');
+      }());
+    }
+    Log.i('类型化通知 #$nid（$kind）已呈现，回执=${kind == "popup" ? "received" : "read"}', 'agent');
+    // 完成上报：操控端要能看见"这条通知**确实弹到了老师眼前**"，
+    // 而不是只看到一条"已下发"。界面关掉时还会再补一条 read 回执。
+    unawaited(reportCompletion(
+      event: 'notice_shown',
+      ok: true,
+      detail: kind == 'popup'
+          ? (isEmergency ? '已弹窗（紧急，等待确认）' : '已弹窗（等待确认）')
+          : '已呈现（$kind）',
+      extra: {
+        'notice_id': nid,
+        'kind': kind,
+        'needs_confirm': needConfirm,
+        'replyable': kind == 'popup' && presets.isNotEmpty,
+      },
+    ));
+    return ActionResult.yes(
+        kind == 'popup' ? '已送达弹窗（等待确认）' : '通知已呈现（$kind）');
+  }
+
+  /// 类型化通知回执：POST /api/console/ext/notice-ack（设备密钥鉴权）。
+  /// uid 由设备自称；服务端只更新发给「这个 uid」且未终态的行。
+  Future<void> _ackNotice(int noticeId, String state, {String result = ''}) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    if (secret.isEmpty || uid.isEmpty || noticeId <= 0) return;
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request('POST', Uri.parse('$base/api/console/ext/notice-ack'))
+        ..headers['Content-Type'] = 'application/json'
+        ..headers['x-stelarith-device-secret'] = secret
+        ..body = jsonEncode({
+          'notice_id': noticeId,
+          'uid': uid,
+          'state': state,
+          'action_result': result,
+        });
+      final streamed = await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed).timeout(const Duration(seconds: 8));
+      if (res.statusCode >= 400) {
+        Log.w('类型化通知 #$noticeId 回执失败（HTTP ${res.statusCode}）', 'agent');
+      }
+    } catch (e) {
+      Log.w('类型化通知 #$noticeId 回执失败：$e', 'agent');
+    }
+  }
+
+  /// 界面回执：老师点了「确认收到」/ 关掉了全屏 → 补一条 `read`。
+  ///
+  /// 只把「弹出来了」当送达是不够的：面板要能区分"人看到了"和"机器收到了"，
+  /// 否则紧急通知的确认率永远是 0，真出事时无从追溯。
+  Future<void> confirmNotice(int noticeId) async {
+    if (noticeId <= 0) return;
+    await _ackNotice(noticeId, 'read');
+  }
+
+  /// 老师点预设回复 / 发出自定义回复 → 回传操控端（双向传递的另一半）。
+  ///
+  /// 没有这一半，回复就只是"老师在自己机器上点了一下"，操控端永远看不到，
+  /// 老师也会认定"这功能坏了"。失败只记日志，绝不因此再弹一次窗打扰老师。
+  Future<bool> replyNotice(int noticeId, String text) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    final body = text.trim();
+    if (noticeId <= 0 || body.isEmpty) return false;
+    if (secret.isEmpty || uid.isEmpty) {
+      Log.w('回复未发出：本机未配置设备密钥（设置→设备上报密钥）', 'agent');
+      return false;
+    }
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request(
+        'POST',
+        Uri.parse('$base/api/console/ext/notice-reply'),
+      )
+        ..headers['Content-Type'] = 'application/json'
+        ..headers['x-stelarith-device-secret'] = secret
+        ..body = jsonEncode({
+          'notice_id': noticeId,
+          'uid': uid,
+          'text': body.length > 500 ? body.substring(0, 500) : body,
+        });
+      final streamed =
+          await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode >= 400) {
+        Log.w('回复上报失败（HTTP ${res.statusCode}）', 'agent');
+        return false;
+      }
+      Log.i('已回复通知 #$noticeId：$body', 'agent');
+      await reportCompletion(
+        event: 'notice_reply',
+        ok: true,
+        detail: body,
+        extra: {'notice_id': noticeId},
+      );
+      return true;
+    } catch (e) {
+      Log.w('回复上报失败：$e', 'agent');
+      return false;
+    }
+  }
+
+  /// 被控端「操作完成」上报 —— 面板的「执行回执」页靠它。
+  ///
+  /// 与 command/ack 的区别：ack 回答的是"这条指令收到了、结果如何"，
+  /// 而这里回答的是"这个动作**做完之后**留下了什么"（截图存到哪、文件落在哪、
+  /// 语音播了没）。没有它，面板只有成败两个色块，看不到老师那台机器到底发生了什么。
+  ///
+  /// 失败一律只记日志 —— 上报失败不该让本机动作回滚，也不该弹窗打扰。
+  Future<void> reportCompletion({
+    required String event,
+    required bool ok,
+    required String detail,
+    Map<String, dynamic> extra = const <String, dynamic>{},
+  }) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    if (secret.isEmpty || uid.isEmpty) return;
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request('POST', Uri.parse('$base/api/console/ext/events'))
+        ..headers['Content-Type'] = 'application/json'
+        ..headers['x-stelarith-device-secret'] = secret
+        ..body = jsonEncode({
+          'uid': uid,
+          'event': event,
+          'ok': ok,
+          'detail': detail.length > 400 ? '${detail.substring(0, 400)}…' : detail,
+          'extra': extra,
+          'at': DateTime.now().toIso8601String(),
+        });
+      final streamed =
+          await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode >= 400) {
+        // 常见原因是端点还没部署（旧站点）→ 只记 warning，别刷屏。
+        Log.w('完成上报失败（HTTP ${res.statusCode}）：$event', 'agent');
+      }
+    } catch (e) {
+      Log.w('完成上报失败：$e', 'agent');
+    }
+  }
+
+  /// 被控端 catch-up：拉这台设备还没看到的类型化通知（错过弹窗 / 重启后补齐）。
+  /// 依赖服务端「通知送达行 pending → received/read」的迁移 —— 指令通道处理过的
+  /// 通知已不再是 pending，不会重复弹。60s 节流，挂在轮询成功后。
+  Future<void> _catchUpNotices() async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    if (secret.isEmpty || uid.isEmpty || _disposed) return;
+    final now = DateTime.now();
+    if (_lastTypedCatchUp != null &&
+        now.difference(_lastTypedCatchUp!) < const Duration(seconds: 60)) {
+      return;
+    }
+    _lastTypedCatchUp = now;
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request(
+          'GET',
+          Uri.parse(
+              '$base/api/console/ext/notices?pending_for=${Uri.encodeQueryComponent(uid)}'))
+        ..headers['x-stelarith-device-secret'] = secret;
+      final streamed = await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return;
+      final d = _decode(res);
+      final list = d['notices'];
+      if (list is! List || list.isEmpty) return;
+      for (final n in list) {
+        if (n is! Map) continue;
+        final flagsRaw = n['flagsParsed'] is Map
+            ? n['flagsParsed']
+            : (n['flags'] is String
+                ? (() {
+                    try {
+                      final v = jsonDecode(n['flags'].toString());
+                      return v is Map ? v : const <dynamic, dynamic>{};
+                    } catch (_) {
+                      return const <dynamic, dynamic>{};
+                    }
+                  })()
+                : const <dynamic, dynamic>{});
+        await _typedNotice({
+          'notice_id': n['id'],
+          'title': (n['title'] ?? '').toString(),
+          'content': '',
+          'flags': flagsRaw,
+          '__kind': (n['type'] ?? 'island').toString(),
+        });
+      }
+    } catch (e) {
+      Log.w('catch-up 类型化通知拉取失败：$e', 'agent');
+    }
+  }
+
+  /// 播放音频。返回空串 = 成功；非空 = 人话失败原因。
+  /// wav 用 PowerShell SoundPlayer（同步播完，无黑窗——脚本内容纯 ASCII）；
+  /// 其他格式（mp3/m4a…）交给系统默认播放器打开。
+  Future<String> _playAudio(String path) async {
+    final lower = path.toLowerCase();
+    final isWav = lower.endsWith('.wav');
+    if (isWav) {
+      final f = File('${Directory.systemTemp.path}'
+          '${Platform.pathSeparator}xjk-play-${DateTime.now().microsecondsSinceEpoch}.ps1');
+      try {
+        // 路径含中文（接收目录"星集控"）→ 走参数传递而非拼进脚本体；
+        // PS5.1 下 SoundPlayer 参数由 -File 传参按系统码页解释，中文路径
+        // 可能乱码 —— 稳妥起见复制为 ASCII 临时名再播。
+        final tmp = File('${Directory.systemTemp.path}'
+            '${Platform.pathSeparator}xjk-voice-${DateTime.now().microsecondsSinceEpoch}.wav');
+        await File(path).copy(tmp.path);
+        await f.writeAsString(
+          '\$p = New-Object Media.SoundPlayer \$args[0]\n'
+          '\$p.PlaySync()\n'
+          'Write-Output OK\n',
+          flush: true,
+          encoding: const SystemEncoding(),
+        );
+        final r = await Process.run(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', f.path, tmp.path],
+        ).timeout(const Duration(minutes: 5));
+        try { await tmp.delete(); } catch (_) {}
+        if (r.exitCode != 0 || !'${r.stdout}'.contains('OK')) {
+          return '播放器退出码 ${r.exitCode}';
+        }
+        return '';
+      } catch (e) {
+        return '$e';
+      } finally {
+        try { await f.delete(); } catch (_) {}
+      }
+    }
+    // 非 wav：交给系统默认播放器。`start /B` = 后台启动**不新建窗口**——
+    // 旧写法 `start /min` 会先弹出一个最小化 cmd 黑窗（用户点名不要的闪窗），
+    // `/B` 从根上不产生窗口。
+    try {
+      await Process.run('cmd.exe', ['/c', 'start', '', '/B', path]).timeout(const Duration(seconds: 10));
+      return '';
+    } catch (e) {
+      return '$e';
+    }
+  }
+
   Future<ActionResult> _setVolume(int value, bool muted) async {
     final v = value.clamp(0, 100);
     final r = await _psScript(_volumeScript, ['-Volume', '$v', '-Muted', muted ? '1' : '0']);
@@ -533,8 +1033,32 @@ class DeviceAgent {
     return ActionResult.yes('音量已设为 $v%${muted ? "（静音）" : ""}');
   }
 
-  Future<ActionResult> _notify(String title, String body,
-      {bool urgent = false}) async {
+  /// 投递一条通知给界面。
+  ///
+  /// [kind] 决定界面怎么呈现（见 [AgentNotice.kind]）；[noticeId] > 0 时界面
+  /// 会在关闭时自动回执（read / received），0 表示纯本机提示不需回执。
+  Future<ActionResult> _notify(
+    String title,
+    String body, {
+    bool urgent = false,
+    String kind = 'plain',
+    int noticeId = 0,
+    List<String> presets = const <String>[],
+    bool requiresConfirm = false,
+    bool emergency = false,
+    bool replyable = false,
+    bool tts = false,
+    int autoDismissSeconds = 0,
+  }) async {
+    // ⓪ 静默（不弹任何窗口，只记日志）：设置里关了通知弹窗（agentNotifyQuiet），
+    //    或处于演练模式（dryRun——装样子不打扰）。教室里要展示公告时把开关打开。
+    //    ⚠️ 用户 2026-09-25 明令：「agent 弹窗不要弹出来，弹出最小化也不行」——
+    //    不仅气泡，界内横幅也不投递；信息仍留在日志与状态里，绝不静默吞掉。
+    final s0 = _read();
+    if (s0.agentNotifyQuiet || dryRun) {
+      Log.i('通知（静默${dryRun ? "·演练" : ""}）：$title - ${_clip(body)}', 'agent');
+      return ActionResult.yes('通知已收到（静默模式，未弹窗）');
+    }
     // ① 界面在跑 → 交给界面弹（大字体、置顶、可留痕），**不**再起 PowerShell。
     //
     //    以前这里一律走 PowerShell 气泡，实测有两个硬伤：
@@ -549,6 +1073,14 @@ class DeviceAgent {
         body: body,
         at: DateTime.now(),
         urgent: urgent,
+        kind: kind,
+        noticeId: noticeId,
+        presets: presets,
+        requiresConfirm: requiresConfirm,
+        emergency: emergency,
+        replyable: replyable,
+        tts: tts,
+        autoDismissSeconds: autoDismissSeconds,
       );
       Log.i('已投递通知到界面（第 $_noticeSeq 条${urgent ? "" : "，非急"}）：${_clip(body)}',
           'agent');
@@ -588,7 +1120,7 @@ class DeviceAgent {
       await f.writeAsString(script, flush: true, encoding: const SystemEncoding());
       final r = await Process.run(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f.path, ...args],
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', f.path, ...args],
       ).timeout(const Duration(seconds: 20));
       final out = '${r.stdout}'.trim();
       final err = '${r.stderr}'.trim();

@@ -61,6 +61,22 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
     /// <summary>两次不同内容的推送最小间隔（秒），避免连续报错把通知刷爆。</summary>
     private const double MinGapSeconds = 1.5;
 
+    // ─── 紧急通知（IsEmergency）───────────────────────────────────────────────
+    // ClassIsland 2.1.0.1 的宿主 API 里**没有**任何「紧急」开关：
+    // NotificationContent / NotificationRequest 上都没有对应成员（已核对
+    // ClassIsland.Core.xml 与全部 ClassIsland.*.dll，连 IsEmargency 这种拼写变体都不存在），
+    // IsEmergency 只存在于 SendNotification 的 protobuf 载荷里。
+    // 也就是说官方「紧急」语义在这套 API 上**只能自己模拟**，没别的路子。
+    // 模拟策略（全部落在本次 Push 内，不改宿主行为）：
+    //   ① 跳过同内容去重与短时限频 —— 紧急通知被吞掉是最不能接受的失败形态；
+    //   ② 强制置顶 + 强制声音 + 强制特效（集控端已经说了「紧急」，不接受教室端静音）；
+    //   ③ 时长下限抬到 EmergencyMinSeconds，且至少重复两次，保证在课堂上被看见；
+    //   ④ 涟漪特效颜色改红（NotificationContent.Color 的官方含义就是涟漪特效色）。
+    /// <summary>紧急通知的显示时长下限（秒）。</summary>
+    private const double EmergencyMinSeconds = 10.0;
+    /// <summary>紧急通知的最小重复次数。</summary>
+    private const int EmergencyMinRepeat = 2;
+
     /// <summary>
     /// 集控通知的附加开关（对应 CIMS <c>NotificationPayload</c> 的布尔字段）。
     /// 为 <c>null</c> = 「插件内部推送」（如"配置已同步"）→ 不动
@@ -109,34 +125,46 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
             var now = DateTime.UtcNow.Ticks;
             var safeTitle = string.IsNullOrWhiteSpace(title) ? StelarithBranding.SourceName : title;
             var key = safeTitle + "\u0001" + (content ?? "");
+            var emergency = flags is not null && flags.IsEmergency;
 
-            lock (_gate)
+            if (emergency)
             {
-                // 1) 同内容去重：窗口内已弹过完全一样的内容 → 丢弃（远程连接报错这类轮询错误不重复霸屏）
-                if (_recentKey == key && (now - _recentPushTicks) < TimeSpan.FromSeconds(DedupWindowSeconds).Ticks)
+                // 紧急通知**不许被降频**：去重/限频是为「轮询报错刷屏」准备的，
+                // 用在紧急通知上会直接把「主任喊人」吞成 silence（fail-silent，红线）。
+                Diag($"Push emergency: bypass dedup/rate-limit, title={safeTitle}");
+            }
+            else
+            {
+                lock (_gate)
                 {
-                    Diag($"Push dedup-skip: {safeTitle} (same content within {DedupWindowSeconds}s)");
-                    return;
+                    // 1) 同内容去重：窗口内已弹过完全一样的内容 → 丢弃（远程连接报错这类轮询错误不重复霸屏）
+                    if (_recentKey == key && (now - _recentPushTicks) < TimeSpan.FromSeconds(DedupWindowSeconds).Ticks)
+                    {
+                        Diag($"Push dedup-skip: {safeTitle} (same content within {DedupWindowSeconds}s)");
+                        return;
+                    }
+                    // 2) 短时限频：两次不同内容太密，也丢弃，避免刷爆
+                    if (_recentKey != null && (now - _lastPushTicks) < TimeSpan.FromSeconds(MinGapSeconds).Ticks)
+                    {
+                        Diag($"Push rate-skip: {safeTitle} (gap<{MinGapSeconds}s)");
+                        return;
+                    }
+                    _lastPushTicks = now;
+                    _recentKey = key;
+                    _recentPushTicks = now;
                 }
-                // 2) 短时限频：两次不同内容太密，也丢弃，避免刷爆
-                if (_recentKey != null && (now - _lastPushTicks) < TimeSpan.FromSeconds(MinGapSeconds).Ticks)
-                {
-                    Diag($"Push rate-skip: {safeTitle} (gap<{MinGapSeconds}s)");
-                    return;
-                }
-                _lastPushTicks = now;
-                _recentKey = key;
-                _recentPushTicks = now;
             }
 
             // 3) 时长策略（官方语义为准）：
             //    · 集控端显式给了 DurationSeconds（>0）→ 严格照用（上限 1 小时，与 CIMS 字段约束一致）；
             //    · 未指定（≤0）→ 官方默认 5 秒，并**只在内容较长时抬高下限**（只增不减），
             //      这样长播报不会被 5 秒掐断，短提示也不会长时间占屏。
-            var repeat = Math.Max(1, repeatCounts);
+            //    · 紧急通知：只增不减地抬到下限（EmergencyMinSeconds），并保证重复至少两次。
+            var repeat = Math.Max(1, emergency ? Math.Max(repeatCounts, EmergencyMinRepeat) : repeatCounts);
             double effective;
             if (seconds > 0) effective = Math.Min(seconds, 3600.0);
             else effective = Math.Max(5.0, 2.5 + (content?.Length ?? 0) * 0.12);
+            if (emergency) effective = Math.Max(effective, EmergencyMinSeconds);
 
             // 构造 Avalonia 控件必须在 UI 线程进行，而本方法由后台轮询线程（守护线程/ThreadPool）
             // 调用，直接构造会抛 "Call from invalid thread"。整体 marshal 到 Dispatcher.UIThread。
@@ -145,6 +173,7 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
             var effDuration = effective;
             var effRepeat = repeat;
             var effFlags = flags;
+            var effEmergency = emergency;
             Dispatcher.UIThread.InvokeAsync(() =>
             {
                 try
@@ -161,6 +190,10 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
                     {
                         SpeechContent = combined,
                         Duration = total,
+                        // 紧急：涟漪特效改红，让「这不是普通播报」在远看也能一眼分辨。
+                        // 这是 NotificationContent.Color 的官方含义（涟漪特效色），不会改文字颜色，
+                        // 所以字号/可读性完全不受影响。
+                        Color = effEmergency ? new Avalonia.Media.SolidColorBrush(Avalonia.Media.Colors.Red) : null,
                     };
 
                     var req = new NotificationRequest
@@ -179,12 +212,21 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
                         s.IsNotificationEffectEnabled = effFlags.IsEffectEnabled;
                         s.IsNotificationSoundEnabled = effFlags.IsSoundEnabled;
                         s.IsNotificationTopmostEnabled = effFlags.IsTopmost;
+                        if (effEmergency)
+                        {
+                            // 紧急 = 不接受教室端静音/不置顶：集控端既然标了紧急，
+                            // 就该盖过大屏上的其它一切（含宿主的「关闭提示音」设置）。
+                            s.IsNotificationEffectEnabled = true;
+                            s.IsNotificationSoundEnabled = true;
+                            s.IsNotificationTopmostEnabled = true;
+                        }
                     }
 
                     ShowNotification(req);
 
                     Diag($"Push ok: oneLine={combined.Length}ch font={BuildSingleLineFontSize(combined.Length)} " +
-                         $"maskDuration={total.TotalSeconds:N1}s flags={(effFlags is null ? "宿主默认" : "集控载荷")}");
+                         $"maskDuration={total.TotalSeconds:N1}s flags={(effFlags is null ? "宿主默认" : "集控载荷")}" +
+                         $" emergency={(effEmergency ? "yes(red/topmost/sound, ≥" + EmergencyMinSeconds + "s×" + EmergencyMinRepeat + ")" : "no")}");
                 }
                 catch (Exception ex)
                 {

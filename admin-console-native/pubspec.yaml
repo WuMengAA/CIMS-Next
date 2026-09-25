@@ -1,7 +1,7 @@
 name: xingjikong
 description: "星集控 · 独立桌面集控端（原生 Windows）—— 设备管控 / 广播通知 / 课堂工具"
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.2+3
 
 environment:
   sdk: ^3.12.2
@@ -14,6 +14,8 @@ dependencies:
   shared_preferences: ^2.5.5
   path_provider: ^2.1.5
   crypto: ^3.0.7
+  archive: ^3.5.0
+  path: ^1.9.0
   file_picker: ^10.0.0
   url_launcher: ^6.3.0
   # 本机截屏用：GDI 的 BitBlt / GetDIBits 需要手写 FFI 绑定与堆分配

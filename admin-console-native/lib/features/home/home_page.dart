@@ -18,7 +18,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/device_agent.dart';
 import '../../core/identity.dart';
 import '../../core/settings.dart';
+import '../../core/update_action.dart';
 import '../../core/update_check.dart';
+import '../../core/updater.dart';
 import '../broadcast/broadcast_page.dart';
 import '../devices/devices_page.dart';
 import '../review/review_page.dart';
@@ -206,10 +208,19 @@ class _UpdateBanner extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final s = ref.watch(settingsProvider);
-    // 去更新的链接：接口给的 url 优先，否则回落站点首页。
+    final action = ref.watch(updateActionProvider);
+    final busy = action != null &&
+        action.phase != UpdatePhase.done &&
+        action.phase != UpdatePhase.error;
+    // 去官网下载的兜底链接：接口给的 url 优先，否则回落站点首页。
     final target = (latest != null && latest!.url.isNotEmpty)
         ? latest!.url
         : (s.siteHost.isNotEmpty ? s.siteHost : kDefaultSiteHost);
+    final title = latest != null
+        ? (latest!.forced
+            ? '当前版本已停止支持，请更新到 v${latest!.version}'
+            : '发现新版本 v${latest!.version}（build ${latest!.build}）')
+        : '发现新版本';
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -218,48 +229,76 @@ class _UpdateBanner extends ConsumerWidget {
         color: theme.colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.system_update_alt,
-              size: 18, color: theme.colorScheme.onPrimaryContainer),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              latest != null
-                  ? (latest!.forced
-                      ? '当前版本已停止支持，请更新到 v${latest!.version}'
-                      : '发现新版本 v${latest!.version}（build ${latest!.build}）')
-                  : '发现新版本',
-              style: TextStyle(
-                  fontSize: 13, color: theme.colorScheme.onPrimaryContainer),
-            ),
+          Row(
+            children: [
+              Icon(Icons.system_update_alt,
+                  size: 18, color: theme.colorScheme.onPrimaryContainer),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  busy ? (action.message) : title,
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: theme.colorScheme.onPrimaryContainer),
+                ),
+              ),
+              if (latest != null && latest!.notes.isNotEmpty && !busy) ...[
+                Tooltip(
+                  message: latest!.notes,
+                  child: const Icon(Icons.info_outline, size: 16),
+                ),
+                const SizedBox(width: 8),
+              ],
+              if (!busy)
+                TextButton(
+                  onPressed: () =>
+                      ref.read(updateProvider.notifier).dismiss(),
+                  child: const Text('稍后'),
+                ),
+              const SizedBox(width: 4),
+              if (!busy)
+                FilledButton(
+                  onPressed: () {
+                    if (latest != null) {
+                      ref
+                          .read(updateActionProvider.notifier)
+                          .start(latest!);
+                    }
+                  },
+                  child: const Text('立即更新'),
+                )
+              else
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
           ),
-          if (latest != null && latest!.notes.isNotEmpty) ...[
-            Tooltip(
-              message: latest!.notes,
-              child: const Icon(Icons.info_outline, size: 16),
-            ),
-            const SizedBox(width: 8),
+          if (busy && (action.fraction != null)) ...[
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: action.fraction),
           ],
-          TextButton(
-            onPressed: () => ref.read(updateProvider.notifier).dismiss(),
-            child: const Text('稍后'),
-          ),
-          const SizedBox(width: 4),
-          FilledButton(
-            onPressed: () async {
-              try {
-                await launchUrl(Uri.parse(target),
-                    mode: LaunchMode.externalApplication);
-              } catch (_) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('无法打开 $target')));
+          if (action!.phase == UpdatePhase.error) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: () async {
+                try {
+                  await launchUrl(Uri.parse(target),
+                      mode: LaunchMode.externalApplication);
+                } catch (_) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('无法打开 $target')));
+                  }
                 }
-              }
-            },
-            child: const Text('去更新'),
-          ),
+              },
+              child: const Text('或去官网手动下载'),
+            ),
+          ],
         ],
       ),
     );
