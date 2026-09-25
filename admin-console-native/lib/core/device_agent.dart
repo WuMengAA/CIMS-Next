@@ -250,6 +250,8 @@ class DeviceAgent {
   bool _polling = false;
   bool _reporting = false;
   DateTime _startedAt = DateTime.now();
+  /// v2.1 类型化通知 catch-up 节流（60s 一次）。
+  DateTime? _lastTypedCatchUp;
 
   // ---- 生命周期 ----
 
@@ -347,7 +349,12 @@ class DeviceAgent {
         phase: '在线 · 已连接',
         lastPollAt: DateTime.now(),
       );
-      if (list.isEmpty) return;
+      if (list.isEmpty) {
+        // v2.1：轮询到空也顺手 catch-up 类型化通知（60s 节流在方法内），
+        // 错过弹窗 / 重启的设备由此补齐，不依赖新指令到达。
+        unawaited(_catchUpNotices());
+        return;
+      }
       Log.i('取到 ${list.length} 条下发指令', 'agent');
       for (final e in list) {
         if (e is! Map) continue;
@@ -442,6 +449,16 @@ class DeviceAgent {
         return _screenshot(shotPath);
       case 'file_push':
         return _filePush(p);
+      // v2.1 类型化通知：island（课表岛）/ popup（弹窗）/ fullscreen（全屏）。
+      // 指令里只带 notice_id + 渲染参数；呈现与回执统一走 _typedNotice。
+      case 'island_notice':
+      case 'popup_notice':
+      case 'fullscreen_notice': {
+        final kind = task.action.replaceFirst(RegExp(r'_notice$'), '');
+        final params = Map<dynamic, dynamic>.from(p);
+        params['__kind'] = kind;
+        return _typedNotice(params);
+      }
       case 'ping':
         return ActionResult.yes('心跳');
       default:
@@ -624,6 +641,135 @@ class DeviceAgent {
   /// 回执辅助：把「设备侧卡在哪一步」也写进本地日志（ack 在调用方统一发）。
   void _ackDetailHint(String hint) {
     Log.w('file_push 中途失败：$hint', 'agent');
+  }
+
+  // ---- v2.1 类型化通知（island / popup / fullscreen）----------------------
+
+  /// 呈现一条类型化通知 + 按类型回执：
+  ///   · island      → 非打断横幅（urgent=false），滚动循环即可视为已读 → ack read；
+  ///   · popup       → 高优先级横幅（urgent=true），弹了但等确认 → ack received
+  ///                   （预设回复短语随正文展示；真「点击回复」待桌面 UI 增强）；
+  ///   · fullscreen  → 高优先级横幅 + 12s 后二次提醒（不停留/不确认）→ ack read；
+  ///                   auto_dismiss_seconds（1~300）显式给出时按它二次提醒。
+  /// 回执走 notice-ack（设备密钥鉴权，与截图/文件下载同通道），失败只记日志不阻塞。
+  Future<ActionResult> _typedNotice(Map<dynamic, dynamic> p) async {
+    final nid = int.tryParse((p['notice_id'] ?? '').toString()) ?? 0;
+    if (nid <= 0) return ActionResult.no('类型化通知缺少 notice_id');
+    final kind = (p['__kind'] ?? 'island').toString();
+    final title = (p['title'] ?? '集控通知').toString().trim();
+    final body = (p['content'] ?? '').toString().trim();
+    final flagsRaw = p['flags'];
+    final flags = flagsRaw is Map ? flagsRaw : <dynamic, dynamic>{};
+    final presetsRaw = flags['reply_presets'];
+    final presets = presetsRaw is List
+        ? presetsRaw.map((e) => e.toString()).where((e) => e.trim().isNotEmpty).take(6).toList()
+        : const <String>[];
+    final ads = int.tryParse((flags['auto_dismiss_seconds'] ?? '').toString()) ?? 0;
+    final lines = <String>[
+      if (body.isNotEmpty) body,
+      if (kind == 'popup' && presets.isNotEmpty) '预设回复：${presets.join(' / ')}',
+      if (kind == 'popup' && flags['emergency_confirm'] == true) '⚠️ 这是一条需要确认的紧急弹窗',
+      if (kind == 'fullscreen' && ads > 0) '（$ads 秒后自动关闭）',
+    ];
+    final urgent = kind == 'popup' || kind == 'fullscreen';
+    await _notify(title, lines.join('\n'), urgent: urgent);
+    // 回执（异步，不阻塞指令循环）
+    unawaited(_ackNotice(nid, kind == 'popup' ? 'received' : 'read'));
+    if (kind == 'fullscreen' && ads > 0) {
+      unawaited(() async {
+        await Future<void>.delayed(Duration(seconds: ads.clamp(1, 300)));
+        if (!_disposed) await _ackNotice(nid, 'read');
+      }());
+    }
+    Log.i('类型化通知 #$nid（$kind）已呈现，回执=${kind == "popup" ? "received" : "read"}', 'agent');
+    return ActionResult.yes(
+        kind == 'popup' ? '已送达弹窗（等待确认）' : '通知已呈现（$kind）');
+  }
+
+  /// 类型化通知回执：POST /api/console/ext/notice-ack（设备密钥鉴权）。
+  /// uid 由设备自称；服务端只更新发给「这个 uid」且未终态的行。
+  Future<void> _ackNotice(int noticeId, String state, {String result = ''}) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    if (secret.isEmpty || uid.isEmpty || noticeId <= 0) return;
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request('POST', Uri.parse('$base/api/console/ext/notice-ack'))
+        ..headers['Content-Type'] = 'application/json'
+        ..headers['x-stelarith-device-secret'] = secret
+        ..body = jsonEncode({
+          'notice_id': noticeId,
+          'uid': uid,
+          'state': state,
+          'action_result': result,
+        });
+      final streamed = await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed).timeout(const Duration(seconds: 8));
+      if (res.statusCode >= 400) {
+        Log.w('类型化通知 #$noticeId 回执失败（HTTP ${res.statusCode}）', 'agent');
+      }
+    } catch (e) {
+      Log.w('类型化通知 #$noticeId 回执失败：$e', 'agent');
+    }
+  }
+
+  /// 被控端 catch-up：拉这台设备还没看到的类型化通知（错过弹窗 / 重启后补齐）。
+  /// 依赖服务端「通知送达行 pending → received/read」的迁移 —— 指令通道处理过的
+  /// 通知已不再是 pending，不会重复弹。60s 节流，挂在轮询成功后。
+  Future<void> _catchUpNotices() async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    if (secret.isEmpty || uid.isEmpty || _disposed) return;
+    final now = DateTime.now();
+    if (_lastTypedCatchUp != null &&
+        now.difference(_lastTypedCatchUp!) < const Duration(seconds: 60)) {
+      return;
+    }
+    _lastTypedCatchUp = now;
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request(
+          'GET',
+          Uri.parse(
+              '$base/api/console/ext/notices?pending_for=${Uri.encodeQueryComponent(uid)}'))
+        ..headers['x-stelarith-device-secret'] = secret;
+      final streamed = await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed).timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return;
+      final d = _decode(res);
+      final list = d['notices'];
+      if (list is! List || list.isEmpty) return;
+      for (final n in list) {
+        if (n is! Map) continue;
+        final flagsRaw = n['flagsParsed'] is Map
+            ? n['flagsParsed']
+            : (n['flags'] is String
+                ? (() {
+                    try {
+                      final v = jsonDecode(n['flags'].toString());
+                      return v is Map ? v : const <dynamic, dynamic>{};
+                    } catch (_) {
+                      return const <dynamic, dynamic>{};
+                    }
+                  })()
+                : const <dynamic, dynamic>{});
+        await _typedNotice({
+          'notice_id': n['id'],
+          'title': (n['title'] ?? '').toString(),
+          'content': '',
+          'flags': flagsRaw,
+          '__kind': (n['type'] ?? 'island').toString(),
+        });
+      }
+    } catch (e) {
+      Log.w('catch-up 类型化通知拉取失败：$e', 'agent');
+    }
   }
 
   /// 播放音频。返回空串 = 成功；非空 = 人话失败原因。
