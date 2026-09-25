@@ -9,7 +9,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/settings.dart';
+import '../../core/update_action.dart';
 import '../../core/update_check.dart';
+import '../../core/updater.dart';
 import '../debug/debug_page.dart';
 import '../devices/devices_page.dart';
 import 'agent_card.dart';
@@ -478,6 +480,11 @@ class _UpdateCardState extends ConsumerState<_UpdateCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final st = _statusOf(theme);
+    final upd = ref.watch(updateProvider);
+    final act = ref.watch(updateActionProvider);
+    final actBusy = act != null &&
+        act.phase != UpdatePhase.done &&
+        act.phase != UpdatePhase.error;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -486,16 +493,37 @@ class _UpdateCardState extends ConsumerState<_UpdateCard> {
             Icon(st.icon, size: 18, color: st.color),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(st.text,
+              child: Text(
+                  actBusy ? (act.message) : st.text,
                   style: theme.textTheme.bodySmall?.copyWith(color: st.color)),
             ),
+            if (upd.hasUpdate && upd.latest != null)
+              FilledButton.icon(
+                onPressed: actBusy
+                    ? null
+                    : () => ref
+                        .read(updateActionProvider.notifier)
+                        .start(upd.latest!),
+                icon: actBusy
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download, size: 16),
+                label: Text(actBusy ? '更新中' : '立即更新'),
+              ),
             TextButton.icon(
-              onPressed: _busy ? null : _check,
+              onPressed: _busy || actBusy ? null : _check,
               icon: const Icon(Icons.refresh, size: 16),
               label: const Text('检查更新'),
             ),
           ],
         ),
+        if (actBusy && act.fraction != null) ...[
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: act.fraction),
+        ],
         const SizedBox(height: 6),
         TextField(
           controller: _url,
