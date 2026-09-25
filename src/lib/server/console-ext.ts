@@ -218,6 +218,8 @@ export interface NoticeDeliveryRow {
 	uid: string;
 	state: string;
 	action_result: string;
+	/** 老师自由回复原文（replyNotice 上报；区别于预设短语 action_result）。 */
+	reply: string;
 	detail: string;
 	created_at: string;
 	updated_at: string;
@@ -227,9 +229,9 @@ export interface NoticeDeliveryRow {
 export function listNoticeDeliveries(noticeId: number): NoticeDeliveryRow[] {
 	return getDb()
 		.prepare(
-			`SELECT id, notice_id, uid, state, action_result, detail, created_at, updated_at
-			 FROM notice_deliveries WHERE notice_id = ? ORDER BY created_at ASC`
-		)
+		`SELECT id, notice_id, uid, state, action_result, reply, detail, created_at, updated_at
+		 FROM notice_deliveries WHERE notice_id = ? ORDER BY created_at ASC`
+	)
 		.all(Number(noticeId ?? 0)) as unknown as NoticeDeliveryRow[];
 }
 
@@ -239,9 +241,10 @@ export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number
 	const ts = nowIso();
 	let n = 0;
 	const stmt = getDb().prepare(
-		`INSERT OR IGNORE INTO notice_deliveries (notice_id, uid, state, action_result, detail, created_at, updated_at)
-		 VALUES (?, ?, 'pending', '', '', ?, ?)`
+		`INSERT OR IGNORE INTO notice_deliveries (notice_id, uid, state, action_result, reply, detail, created_at, updated_at)
+		 VALUES (?, ?, 'pending', '', '', '', ?, ?)`
 	);
+
 	for (const uidRaw of uids) {
 		const uid = String(uidRaw ?? "").trim().toLowerCase();
 		if (!uid) continue;
@@ -298,8 +301,141 @@ export function listPendingTypedNotices(uid: string, limit = 20): ConsoleNotice[
 			 ORDER BY d.created_at DESC
 			 LIMIT ?`
 		)
-		.all(u, Math.min(Math.max(limit, 1), 50)) as unknown as any[];
+			.all(u, Math.min(Math.max(limit, 1), 50)) as unknown as any[];
 	return rows.map((r) => noticeFromRow(r));
+}
+
+/**
+ * 设备侧回报「老师回复了」—— 双向传递的另一半。
+ *
+ * 只把 state 置 replied 是不够的：预设短语（action_result）和自由回复（reply）
+ * 是两种东西。老师在弹窗里打了一整句话，面板若只显示预设列表，她会以为回复丢了。
+ *
+ * 与 markNoticeDelivery 的区别：这里**允许覆盖**已有回复（老师改口或重复提交时
+ * 以最新为准），而 state 一旦终态（read/replied）就不再被回执改写 —— 否则
+ * 「点过确认」会被后来的一句回覆抹掉，紧急通知的确认记录就不可信了。
+ *
+ * 返回是否命中（没这行 = 通知不存在 / 不是发往这台设备的，拒绝）。
+ */
+export function markNoticeReply(noticeId: number, uid: string, text: string): boolean {
+	const nid = Number(noticeId ?? 0);
+	const u = String(uid ?? "").trim().toLowerCase();
+	const t = cut(text, 500).trim();
+	if (!nid || !u || !t) return false;
+	const r = getDb()
+		.prepare(
+			`UPDATE notice_deliveries
+			 SET reply = ?, state = 'replied', action_result = '', updated_at = ?
+			 WHERE notice_id = ? AND LOWER(uid) = ?`
+		)
+		.run(t, nowIso(), nid, u);
+	return Number(r.changes) > 0;
+}
+
+// ── 设备执行回执（被控端「动作做完之后」的上报）───────────────────────────────
+
+export interface DeviceEventRow {
+	id: number;
+	uid: string;
+	event: string;
+	ok: number;
+	detail: string;
+	extra: string;
+	created_at: string;
+}
+
+const DEVICE_EVENT_KEEP = 200;
+
+/**
+ * 记一条执行回执。ok=false **照样落库** —— 失败才是需要被看见的东西，
+ * 只留成功的会让「哪台机器最近老是失败」从账面上彻底消失。
+ */
+export function addDeviceEvent(input: {
+	uid: string;
+	event: string;
+	ok?: boolean;
+	detail?: string;
+	extra?: Record<string, unknown>;
+	at?: string;
+}): DeviceEventRow {
+	const uid = cut(input.uid, 64).trim();
+	const ev = cut(input.event, 64).trim();
+	if (!uid || !ev) throw new Error("uid/event 不能为空");
+	const ts = String(input.at ?? "").trim() || nowIso();
+	let extraRaw = "";
+	if (input.extra && typeof input.extra === "object") {
+		try {
+			extraRaw = JSON.stringify(input.extra).slice(0, 2000);
+		} catch {
+			extraRaw = "";
+		}
+	}
+	const info = getDb()
+		.prepare(
+			`INSERT INTO device_events (uid, event, ok, detail, extra, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		)
+		.run(uid, ev, input.ok === false ? 0 : 1, cut(input.detail, 400), extraRaw, ts);
+	const id = Number(info.lastInsertRowid);
+	pruneDeviceEvents(uid);
+	return {
+		id,
+		uid,
+		event: ev,
+		ok: input.ok === false ? 0 : 1,
+		detail: cut(input.detail, 400),
+		extra: extraRaw,
+		created_at: ts
+	};
+}
+
+/** 取回执流水（按时间倒序）。uid 省略 = 全校（面板总览用，限 300 条）。 */
+export function listDeviceEvents(uid?: string, limit = 100): DeviceEventRow[] {
+	const n = Math.min(Math.max(limit, 1), 300);
+	const u = String(uid ?? "").trim();
+	const where = u ? "WHERE uid = ?" : "";
+	const params: any[] = u ? [u] : [];
+	return getDb()
+		.prepare(`SELECT * FROM device_events ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
+		.all(...params, n) as unknown as DeviceEventRow[];
+}
+
+/**
+ * 每台设备只留最近的 [DEVICE_EVENT_KEEP] 条，其余按时间从老到新删。
+ *
+ * 不做保留期裁剪而只做条数裁剪，是有意的：老师问「上周三下午那台机器到底
+ * 报了什么」时，按时间划线会正好划掉那一小时。条数裁剪只丢最新的记录，
+ * 而最近 200 条覆盖了最近几天，够用；真要长期留档该走审计表，不该塞这里。
+ */
+export function pruneDeviceEvents(uid: string): number {
+	const u = String(uid ?? "").trim();
+	if (!u) return 0;
+	return Number(
+		getDb()
+			.prepare(
+				`DELETE FROM device_events
+				  WHERE uid = ? AND id NOT IN (
+					SELECT id FROM device_events WHERE uid = ? ORDER BY created_at DESC, id DESC LIMIT ?
+				  )`
+			)
+			.run(u, u, DEVICE_EVENT_KEEP).changes ?? 0
+	);
+}
+
+/** 面板「执行回执」页的计数条：这台机器最近多少成功、多少失败。 */
+export function deviceEventStats(uid: string, sinceHours = 24): { total: number; ok: number; failed: number } {
+	const u = String(uid ?? "").trim();
+	if (!u) return { total: 0, ok: 0, failed: 0 };
+	const since = new Date(Date.now() - Math.max(1, sinceHours) * 3600_000).toISOString();
+	const r = getDb()
+		.prepare(
+			`SELECT COUNT(*) AS total, SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok
+			 FROM device_events WHERE uid = ? AND created_at >= ?`
+		)
+		.get(u, since) as { total: number; ok: number | null } | undefined;
+	const total = Number(r?.total ?? 0);
+	const ok = Number(r?.ok ?? 0);
+	return { total, ok, failed: total - ok };
 }
 
 // ── 班级交流 ────────────────────────────────────────────────────────────────

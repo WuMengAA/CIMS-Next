@@ -131,6 +131,10 @@
     // 页内的「审核」按钮另加 data-need="manage" 二次门控，不把整页锁死。
     classes: "control",
     devices: "control", remote: "remote", notify: "broadcast",
+    // 执行回执：通知的逐台送达/回复明细（broadcast 档，老师也能看"谁看了我发的通知"），
+    // 页内「设备执行流水」块用 control 二次门控（见 views.receipts）——两类数据权限不同，
+    // 不能用一个档位把老师关在外面，也不能让只读的人看到设备动作流水。
+    receipts: "broadcast",
     report: "issue", bug: "issue",
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
     // （写操作在页内逐个按钮上再门控，不把整页锁死）。
@@ -187,11 +191,11 @@
     user: ["dashboard", "chat", "report", "bug", "roles"],
     // 老师：设备三关铁律下无任何设备档位 —— 只摆课表、通知、点名、沟通等教学动线，
     // 不再出现「设备控制/远程控制/ClassIsland」入口（点了也 403 的入口是误导）。
-    teacher: ["dashboard", "schedule", "notify", "random", "chat", "report", "bug", "roles"],
+    teacher: ["dashboard", "schedule", "notify", "receipts", "random", "chat", "report", "bug", "roles"],
     // 班主任：本班设备运维 + 教学动线（设备三关之一，与电教委员同档）。
-    homeroom: ["dashboard", "schedule", "devices", "remote", "classisland", "notify", "random", "volume", "swap", "chat", "report", "bug", "roles"],
+    homeroom: ["dashboard", "schedule", "devices", "remote", "classisland", "notify", "receipts", "random", "volume", "swap", "chat", "report", "bug", "roles"],
     // 电教委员：设备运维主力 —— 多了远程控制、ClassIsland 状态页、自检（排查"没反应"是日常）。
-    techrep: ["dashboard", "devices", "remote", "classisland", "notify", "chat", "test", "swap", "report", "bug", "roles"],
+    techrep: ["dashboard", "devices", "remote", "classisland", "notify", "receipts", "chat", "test", "swap", "report", "bug", "roles"],
     // 审核员/编辑无设备档位（设备三关收紧），不摆设备操作入口。
     moderator: ["dashboard", "chat", "report", "bug", "roles"],
     editor: ["dashboard", "classes", "notify", "scheduled", "chat", "filetransfer", "roles"],
@@ -1979,6 +1983,135 @@
             : emptyRow(4, "还没有提交过 Bug")
         }
         </tbody></table></div>`;
+  };
+
+  // ============ 执行回执 ============
+  // 「我发了通知，到底谁看了？」+「我下了指令，教室端做完了没有？」
+  // 两块权限不同，分开门控：
+  //   · 通知逐台回执（broadcast 档，与「通知广播」同档）：老师也能看自己发的通知谁没看。
+  //   · 设备执行流水（control 档，页内二次门控）：只有能碰设备的人看得到动作明细。
+  // 拉不到的块直接给「无权限」人话，**不**用演示数据填充（见红线：禁演示数据冒充真实）。
+  let receiptsNoticeId = "";
+  views.receipts = async () => {
+    const [ns, dv, ev] = await Promise.all([
+      API.listNotices().catch(() => []),
+      receiptsNoticeId ? API.noticeDeliveries(receiptsNoticeId).catch(() => null) : Promise.resolve(null),
+      PERM.control ? API.deviceEvents().catch(() => null) : Promise.resolve(null),
+    ]);
+    const dvBody = dv && dv.notice ? dv : null;
+
+    // 事件名 → 人话（未知的照原样显示）
+    const evLabel = (t) =>
+      ({
+        watchdog_crash: "看门狗 · 崩溃重启", watchdog_hang: "看门狗 · 卡死重启",
+        update_applied: "客户端自更新", screenshot_uploaded: "截屏上报",
+        notice_ack: "通知回执", notice_reply: "回复通知", file_delivered: "文件送达",
+        file_failed: "文件送达失败", command_ok: "指令执行成功", command_fail: "指令执行失败",
+      }[t] || t || "—");
+
+    const stateTag = (st) => {
+      const map = {
+        pending: ["warn", "待送达"], delivered: ["", "已送达"], read: ["ok", "已读"],
+        replied: ["accent", "已回复"], acked_failed: ["err", "失败"],
+      };
+      const [c, label] = map[st] || ["", st || "—"];
+      return `<span class="tag ${c}">${label}</span>`;
+    };
+
+    // 通知回执块（broadcast 档；无数据=没选/查不到，显示引导而非错误）
+    const noticeCard = `
+      <div class="card"><h3>通知回执 · 谁看了</h3>
+        <p class="muted">选一条通知，看每台设备的送达状态与回复内容（老师回复的话会原样显示）。</p>
+        <div class="row" style="margin-bottom:8px">
+          <select id="receipts-notice" style="flex:1">
+            <option value="">— 选择一条历史通知 —</option>
+            ${ns.map((n) => `<option value="${esc(n.id)}" ${String(n.id) === String(receiptsNoticeId) ? "selected" : ""}>${esc(n.title)}（${esc(n.at)}）</option>`).join("")}
+          </select>
+          <button data-act="reload">刷新</button>
+        </div>
+        ${
+          receiptsNoticeId
+            ? dvBody
+              ? (() => {
+                  const dl = dvBody.deliveries || [];
+                  const replied = dl.filter((d) => d.reply || d.state === "replied").length;
+                  return `
+                    <p class="muted">
+                      共 <b>${dl.length}</b> 台 ·
+                      <span class="tag ok">已读 ${dl.filter((d) => d.state === "read").length}</span>
+                      <span class="tag accent">已回复 ${replied}</span>
+                      <span class="tag warn">待送达 ${dl.filter((d) => d.state === "pending").length}</span>
+                      <span class="tag err">失败 ${dl.filter((d) => d.state === "acked_failed").length}</span>
+                    </p>
+                    <table><thead><tr><th>设备</th><th>状态</th><th>回复内容</th><th>时间</th></tr></thead><tbody>
+                    ${
+                      dl.length
+                        ? dl
+                            .map((d) => `<tr>
+                              <td class="muted">${esc(d.uid || "—")}</td>
+                              <td>${stateTag(d.state)}</td>
+                              <td>${
+                                d.reply
+                                  ? `“${esc(d.reply)}”`
+                                  : d.action_result
+                                    ? `“${esc(d.action_result)}”（预设）`
+                                    : d.state === "replied"
+                                      ? "已回复（内容未回传）"
+                                      : '<span class="muted">—</span>'
+                              }</td>
+                              <td class="muted">${esc(d.at || d.updated_at || "—")}</td>
+                            </tr>`)
+                            .join("")
+                        : emptyRow(4, "该通知尚无逐台回执（类型化通知才有）")
+                    }
+                    </tbody></table>`;
+                })()
+              : `<p class="muted">该通知查不到回执明细（不存在或无权限）。</p>`
+            : `<p class="muted">从下拉里挑一条类型化通知（弹窗/全屏/需确认）查看逐台回执。</p>`
+        }
+      </div>`;
+
+    // 设备执行流水块（页内 control 二次门控：没设备权限的人整块隐藏，数据不落屏）
+    const deviceCard = !PERM.control
+      ? `<div class="card"><h3>设备执行流水</h3>
+           <p class="muted">需要「设备控制」权限才能查看（老师账号看不到任何设备动作）。</p></div>`
+      : (() => {
+          const events = (ev && ev.events) || [];
+          const st = (ev && ev.stats) || null;
+          return `
+            <div class="card"><h3>设备执行流水 · 最近动作</h3>
+              <p class="muted">
+                被控端「做完一件事」之后的上报：指令是否执行、截图/文件是否送达、看门狗是否重启过。
+                ${
+                  st
+                    ? `24 小时内 <b>${st.total}</b> 次动作，成功 <span class="tag ok">${st.ok}</span>、失败 <span class="tag err">${st.failed}</span>。`
+                    : ""
+                }
+              </p>
+              <table><thead><tr><th>时间</th><th>设备</th><th>动作</th><th>结果</th><th>说明</th></tr></thead><tbody>
+              ${
+                events.length
+                  ? events
+                      .map((e) => `<tr>
+                        <td class="muted">${esc(e.created_at || "—")}</td>
+                        <td class="muted">${esc(e.uid || "—")}</td>
+                        <td>${esc(evLabel(e.event))}</td>
+                        <td>${
+                          e.ok
+                            ? '<span class="tag ok">成功</span>'
+                            : `<span class="tag err">失败</span>`
+                        }</td>
+                        <td class="muted">${esc((e.detail || "").slice(0, 120) || "—")}</td>
+                      </tr>`)
+                      .join("")
+                  : emptyRow(5, "还没有执行回执上报（被控端升级后开始产生）")
+              }
+              </tbody></table>
+              <p class="muted" style="margin-top:6px">每台设备只保留最近 200 条；全部按时间倒序，最多看 100 条。</p>
+            </div>`;
+        })();
+
+    return noticeCard + deviceCard;
   };
 
   views.audit = async () => {
@@ -3958,6 +4091,12 @@
       if (hi) hi.textContent = t.hint ? `「${t.label}」：${t.hint}` : `已套用「${t.label}」模板。`;
       if (ti) ti.focus();
       return;
+    }
+
+    // 执行回执页：换了通知下拉 → 该通知的逐台回执重拉（改选即重渲染）
+    if (e.target && e.target.id === "receipts-notice") {
+      receiptsNoticeId = String(e.target.value || "").trim();
+      return go("receipts");
     }
 
     // 通知历史按班级筛选：改选即按该班的记录重拉（服务端做精确的逗号项匹配）

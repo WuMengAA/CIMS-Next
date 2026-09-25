@@ -112,6 +112,48 @@ export function deviceActionsOf(role: Role | null | undefined): DeviceAction[] {
 }
 
 /**
+ * 通知类型（v2 通知类型化，2026-09-25）：与 DeviceAction 正交的第二维——
+ * 「能不能发**这种形态**的通知」。服务端逐请求强制；面板按它渲染类型选项。
+ *   notice     普通公告（旧行为，历史兼容）
+ *   island     岛通知：大屏滚动循环展示，非打断（老师也能发本班上课提醒）
+ *   popup      弹窗通知：需确认 / 可回复（打断课堂，班主任级以上才能发）
+ *   fullscreen 全屏紧急通知：置顶屏幕上方（强打断，**仅学校管理员**）
+ * 关闭原则：旧客户端/旧通道收到的 type 一律按 notice 处理，绝不因新字段误伤历史。
+ */
+export type NoticeType = "notice" | "island" | "popup" | "fullscreen";
+
+export const NOTICE_TYPE_LABELS: Record<NoticeType, string> = {
+	notice: "普通公告",
+	island: "岛通知循环",
+	popup: "弹窗确认/回复",
+	fullscreen: "全屏紧急"
+};
+
+const ROLE_NOTICE_TYPES: Record<Role, NoticeType[]> = {
+	owner: ["notice", "island", "popup", "fullscreen"],
+	admin: ["notice", "island", "popup", "fullscreen"],
+	homeroom: ["notice", "island", "popup"],
+	teacher: ["notice", "island"],
+	techrep: [],
+	editor: [],
+	moderator: [],
+	user: [],
+	viewer: []
+};
+
+/** 通知类型判定（纯函数；班级范围由 class-scope 叠加）。 */
+export function canSendNoticeType(role: Role | null | undefined, type: NoticeType): boolean {
+	if (!role) return false;
+	return (ROLE_NOTICE_TYPES[role] ?? []).includes(type);
+}
+
+/** 某角色可用的通知类型（面板渲染类型下拉用）。 */
+export function noticeTypesOf(role: Role | null | undefined): NoticeType[] {
+	if (!role) return [];
+	return [...(ROLE_NOTICE_TYPES[role] ?? [])];
+}
+
+/**
  * 「用户 ↔ 班级」绑定上限（v2：必须绑定的三角色各有限额）。
  *   -1 = 不需要绑定（范围即全校，绑了也不作为权限依据）；
  *    0 = 禁止绑定（该角色没有任何设备/班级能力）；

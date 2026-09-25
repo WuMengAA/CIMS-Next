@@ -67,7 +67,12 @@ import {
 	listNoticeDeliveries,
 	ensureNoticeDeliveries,
 	markNoticeDelivery,
-	listPendingTypedNotices
+	listPendingTypedNotices,
+	// ── 通知回复 / 设备执行回执（2026-09-25 补：双向传递的另一半 + 「动作做完」）──
+	markNoticeReply,
+	addDeviceEvent,
+	listDeviceEvents,
+	deviceEventStats
 } from "$lib/server/console-ext.js";
 
 /**
@@ -95,6 +100,11 @@ function deviceSecretOk(event: RequestEvent): boolean {
  *   POST   /api/console/ext/audit              记一条操作日志
  *   POST   /api/console/ext/audit/prune        按保留期裁剪审计（需 device.manage；裁剪本身也留痕）
  *   GET    /api/console/ext/summary            面板汇总计数
+ *   GET    /api/console/ext/events?uid=xxx     执行回执流水（被控端「动作做完」的上报）
+ *   GET    /api/console/ext/notice-deliveries?notice=id
+ *                                              逐台送达/回复明细（谁没回应、回了什么）
+ *   POST   /api/console/ext/notice-reply       老师自由回复回传（设备密钥，与 ack 互补）
+ *   POST   /api/console/ext/events             被控端执行回执上报（设备密钥）
  *   GET|DELETE /api/console/ext/vnc-session    设备会话回执（面板轮询取教室端 VNC 地址）
  *   POST       /api/console/ext/vnc-session    教室端代理回报 VNC 会话（**设备密钥鉴权，非用户会话**）
  *   GET        /api/console/ext/media-session  媒体直连会话（快照/录像下载用）
@@ -245,6 +255,7 @@ export async function GET(event: RequestEvent) {
 		case "notice-deliveries": {
 			// 类型化通知的逐台回执（面板「谁看了、谁没看」明细；viewConsole 即可，
 			// 与看历史同一权限档 —— 回执含设备 uid 属内部信息，不对外）。
+			// 行里带 reply 字段：老师在弹窗上打的那句话原样出网，操控端才叫「收到回应」。
 			const nid = Number(q.get("notice") ?? 0);
 			if (!nid) return json({ error: "缺少 notice 参数" }, { status: 400 });
 			const n = getNoticeById(nid);
@@ -262,6 +273,17 @@ export async function GET(event: RequestEvent) {
 			return json({ verify: verifyAudit(), policy: auditPolicy() });
 		case "summary":
 			return json(consoleSummary());
+		case "events": {
+			// 执行回执流水（面板「执行回执」页）。
+			// ?uid= 省略 = 全校总览（限 300 条，够看最近几天的动作）。
+			// 权限沿用 viewConsole：回执只含"设备把事情做成什么样"，不含教师身份等敏感信息。
+			const uidQ = (q.get("uid") ?? "").trim();
+			const hours = Number(q.get("hours"));
+			const stats = uidQ
+				? deviceEventStats(uidQ, Number.isFinite(hours) && hours > 0 ? hours : 24)
+				: null;
+			return json({ events: listDeviceEvents(uidQ || undefined, Number(q.get("limit") ?? 100) || 100), stats });
+		}
 		case "permissions":
 			// 「权限与分级」页的唯一数据源：等级轴 + 设备轴 + 管理分级轴 + 广播范围轴，
 			// 以及**当前账号**的已解算快照（me）。服务端算、前端只渲染 ——
@@ -434,7 +456,7 @@ export async function POST(event: RequestEvent) {
 	// 鉴权用部署级共享密钥（`CONSOLE_DEVICE_REPORT_SECRET`），且**未配置即拒绝**：
 	// 这个入口会把 ip/port 写进面板要嵌的 iframe，一旦可被任意伪造，
 	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
-	if (path === "vnc-session" || path === "media-session" || path === "captures" || path === "file-ack" || path === "notice-ack") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures" || path === "file-ack" || path === "notice-ack" || path === "notice-reply" || path === "events") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		// 带了这个头 = 调用方**自称是设备代理**（只有 Rust 代理会发，面板从不发）。
 		// 此时密钥不对必须明确 403，不能落到用户鉴权分支去回「请先登录」——
@@ -520,6 +542,69 @@ export async function POST(event: RequestEvent) {
 					detail: `${st}${st === "replied" ? "：" + String(body.action_result ?? "").slice(0, 120) : ""}`
 				});
 				return json({ ok: okSt, state: st });
+			}
+			if (path === "notice-reply") {
+				// 老师点了预设之外的「自由回复」，或直接在弹窗里打了字 —— 回传给操控端。
+				//
+				// 与 notice-ack 的区别要说清：ack 只说「收到了 / 已读 / 用了哪个预设」，
+				// 是**状态**；reply 说的是「她到底回了什么话」，是**内容**。只做 ack 的话，
+				// 操控端永远看不到老师在弹窗上写的那句话，老师会认定「回复功能坏了」。
+				//
+				// uid 由设备自称（密钥是部署级共享的），所以这里再收敛一层：
+				// 只更新发给**这台设备**的行，虚报 uid 也拿不到别台机器的回复内容。
+				const nid = Number(body.notice_id ?? 0);
+				const duid = String(body.uid ?? "").trim();
+				const text = String(body.text ?? body.body ?? "").trim();
+				if (!nid || !duid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
+				if (!text) return json({ error: "回复内容不能为空" }, { status: 400 });
+				const okRep = markNoticeReply(nid, duid, text);
+				if (!okRep) {
+					// 命中不了不是错误，但要给原因 —— 「回 ok 但什么都没发生」
+					// 正是这类功能最难查的形态（调用方以为成功了，日志一片绿）。
+					return json(
+						{ ok: false, reason: "这条通知不是发往该设备的（或已不存在），回复未记录" },
+						{ status: 404 }
+					);
+				}
+				addAudit({
+					actor: `device:${duid}`,
+					role: "device",
+					action: "notice.reply",
+					target: String(nid),
+					detail: text.slice(0, 120)
+				});
+				return json({ ok: true, notice_id: nid, state: "replied" }, { status: 201 });
+			}
+			if (path === "events") {
+				// 被控端「动作做完之后」的上报（执行回执）。
+				//
+				// ⚠️ 这里**不做按来源 IP 的限流**：站点跑在 cloudflared 隧道后时，服务端
+				// 看到的源 IP 恒为 127.0.0.1（回环转发），按来源封禁会把全校设备当一个
+				// 来源误封 60s。宁可放宽限流，也不能让正常设备因为被判「异常」而断联 ——
+				// 这条踩过，症状是某一时刻全域掉线，极难归因到这一行。
+				// 真正的闸门是部署级共享密钥 + 下面对 extra 的体积收敛。
+				const duid = String(body.uid ?? "").trim();
+				const ev = String(body.event ?? "").trim();
+				if (!duid || !ev) return json({ error: "uid/event 不能为空" }, { status: 400 });
+				const rawExtra =
+					body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)
+						? (body.extra as Record<string, unknown>)
+						: undefined;
+				try {
+					const rec = addDeviceEvent({
+						uid: duid,
+						event: ev,
+						ok: body.ok !== false,
+						detail: String(body.detail ?? ""),
+						extra: rawExtra,
+						at: String(body.at ?? "") || undefined
+					});
+					return json({ ok: true, id: rec.id }, { status: 201 });
+				} catch (e) {
+					// 事件名/uid 非法只在这里报错 —— 绝不让一条回执的坏字段影响设备本身：
+					// 那个动作在机器上是**真的做了**，回执丢了只是少一行日志。
+					return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
+				}
 			}
 			const proto = path === "vnc-session" ? "vnc" : "media";
 			const uid = String(body.uid ?? "").trim();
@@ -654,6 +739,16 @@ export async function POST(event: RequestEvent) {
 			if (typed !== "notice" && !canSendNoticeType(u.role, typed)) {
 				return json(
 					{ error: `当前角色不能发送「${NOTICE_TYPE_LABELS[typed] ?? typed}」通知` },
+					{ status: 403 }
+				);
+			}
+			// 语音播报（TTS）是**会出声**的能力：它直接打断课堂，比文字严重得多。
+			// 判据不另开一套角色表，直接复用「能发弹窗确认」这一档 —— 能敲门的才配按门铃。
+			// 少了这一条，任何能发岛通知的角色都能让全校喇叭开口，而这条路线上
+			// 「谁发的、什么时候发的」事后很难对上。
+			if (body.tts === true && !canSendNoticeType(u.role, "popup")) {
+				return json(
+					{ error: "语音播报需要「弹窗确认/回复」级权限，当前角色不能发送" },
 					{ status: 403 }
 				);
 			}

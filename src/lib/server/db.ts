@@ -296,6 +296,54 @@ CREATE TABLE IF NOT EXISTS file_deliveries (
 );
 CREATE INDEX IF NOT EXISTS idx_filedel_file ON file_deliveries(file_id, uid);
 CREATE INDEX IF NOT EXISTS idx_filedel_uid  ON file_deliveries(uid, created_at);
+
+-- 通知送达回执（通知类型化 v2）：设备每收到一条通知记一行，设备侧按类型回报
+-- received（已收到）→ read（已读）/ replied（已回复，action_result 为预设短语）
+-- / rejected（确认通知被驳回——用户点了取消/不在场）。「谁没回应、谁还没收到」
+-- 在操控端逐台亮出来，不再只是"HTTP 200 = 已送达"的假象。
+CREATE TABLE IF NOT EXISTS notice_deliveries (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  notice_id    INTEGER NOT NULL,
+  uid          TEXT    NOT NULL,
+  state        TEXT    NOT NULL DEFAULT 'pending',  -- pending|received|read|replied|rejected
+  action_result TEXT   NOT NULL DEFAULT '',          -- replied 时的预设短语原文（如 已收到/马上处理）
+  -- 老师自由回复的原文（replyNotice 上报；区别于上面那个"预设短语"）。
+  -- 一个字段存两种回复很容易在面板上串味：预设点是给老师一键点的，自由回复
+  -- 是她打了一整句话，界面上要分开显示，否则「已收到」会被当成回复内容顶替掉。
+  reply        TEXT    NOT NULL DEFAULT '',
+  detail       TEXT    NOT NULL DEFAULT '',
+  created_at   TEXT    NOT NULL,
+  updated_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nd_notice ON notice_deliveries(notice_id);
+CREATE INDEX IF NOT EXISTS idx_nd_uid ON notice_deliveries(uid, created_at);
+
+-- 设备执行回执（v2.1 2026-09-25）：被控端「一个动作做完之后」的上报 ——
+-- 截图存到哪了、语音播了没、收到了哪个文件、哪条通知弹到了老师眼前。
+--
+-- 为什么不能只用 command/ack：ack 回答的是"这条指令收到、结果是成功"，
+-- 回答不了"然后呢"。老师那台机器上截图其实 saving 到了 C:/Users/.../shots/1.png，
+-- 面板却只看到一个绿勾 —— 一旦要追问"图呢"，谁都答不上来。
+-- 与 notice_deliveries 的分工：那边是「通知逐台送达/回复」，这边是「动作结果流水」。
+CREATE TABLE IF NOT EXISTS device_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid        TEXT    NOT NULL,   -- 设备 uid（被控端自称，密钥为部署级共享）
+  event      TEXT    NOT NULL,   -- screenshot | file_receive | notice_shown | notice_reply | …
+  ok         INTEGER NOT NULL DEFAULT 1,  -- 1=成功 0=失败（失败也记：失败才需要被看见）
+  detail     TEXT    NOT NULL DEFAULT '',  -- 人话结论（存到哪了 / 为什么失败）
+  extra      TEXT    NOT NULL DEFAULT '',  -- 结构化补充（notice_id、kind…）JSON
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dev_events ON device_events(uid, created_at);
+
+-- 通知类型化元数据（v2.1）：不 ALTER 既有 console_notices，类型/旗标放这里，
+-- listNotices join 出来。type: notice|island|popup|fullscreen；
+-- flags: JSON（如 {"emergency_confirm":true,"auto_dismiss_seconds":30,"reply_presets":["已收到",…]}）。
+CREATE TABLE IF NOT EXISTS notice_kinds (
+  notice_id  INTEGER PRIMARY KEY,
+  type       TEXT    NOT NULL DEFAULT 'notice',
+  flags      TEXT    NOT NULL DEFAULT '{}'
+);
 `;
 
 export function nowIso(): string {
@@ -337,6 +385,18 @@ function ensureDb(): DatabaseSync {
 	);
 	if (!ncols.has("classes")) db.exec("ALTER TABLE console_notices ADD COLUMN classes TEXT NOT NULL DEFAULT ''");
 	if (!ncols.has("channel")) db.exec("ALTER TABLE console_notices ADD COLUMN channel TEXT NOT NULL DEFAULT ''");
+	// 通知类型化（v2 2026-09-25）：notice=普通公告 / island=岛循环 / popup=弹窗确认回复 /
+	// fullscreen=全屏紧急。flags 为 JSON：{emergency_confirm, auto_dismiss_seconds, reply_presets, expire_at}
+	// 老行统一按「普通公告」处理（channel 是旧的通道标识，与 type 正交）。
+	if (!ncols.has("type")) db.exec("ALTER TABLE console_notices ADD COLUMN type TEXT NOT NULL DEFAULT 'notice'");
+	if (!ncols.has("flags")) db.exec("ALTER TABLE console_notices ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
+
+	// notice_deliveries 自由回复列（2026-09-25）：老行补空串 = 「这台机器没回过话」，
+	// 与 state='pending' 相符，不影响既有的「谁看了」统计。
+	const dcols = new Set(
+		(db.prepare("PRAGMA table_info(notice_deliveries)").all() as { name: string }[]).map((c) => c.name)
+	);
+	if (!dcols.has("reply")) db.exec("ALTER TABLE notice_deliveries ADD COLUMN reply TEXT NOT NULL DEFAULT ''");
 
 	// console_audit 哈希链字段（向后兼容旧库：老行补空串 = 「本行无链」，
 	// verifyAudit 会从第一条有哈希的行开始校验，并如实报告跳过了多少旧行）。

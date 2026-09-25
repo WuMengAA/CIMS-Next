@@ -1430,6 +1430,17 @@
       if (r && r.error) throw new Error(r.error);
       return r || { notice: null, deliveries: [] };
     },
+    // 设备执行回执流水（被控端「动作做完」之后的上报：谁做了、做成没有、失败原因）。
+    // uid 省略 = 全校总览（面板总览/回执页用，限 100 条，够看最近动作）。
+    // hours 仅在有 uid 时生效（24 小时内成败统计）。
+    deviceEvents: async (uid, hours) => {
+      const q = new URLSearchParams();
+      if (uid) q.set("uid", String(uid).trim());
+      if (hours && Number.isFinite(Number(hours)) && Number(hours) > 0) q.set("hours", String(Number(hours)));
+      const r = await ext(`/events${q.toString() ? "?" + q.toString() : ""}`);
+      if (r && r.error) throw new Error(r.error);
+      return r || { events: [], stats: null };
+    },
     sendNotice: async (title, scope, classes, content, seconds, opts = {}) => {
       const body = {
         title,
