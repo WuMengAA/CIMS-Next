@@ -92,8 +92,10 @@ fn main() {
                 agent_fails += 1;
             }
         }
-        // 探活 ClassIsland（同上冷却逻辑）
-        let ci_up = process_exists("ClassIsland.exe");
+        // 探活 ClassIsland（同上冷却逻辑）。
+        // 进程名匹配两个候选：ClassIsland.Desktop.exe（2.1.x 主程序）与 ClassIsland.exe
+        // （旧版 / 根目录启动器）。只查旧名会把 2.1.x 判成 DOWN 反复拉起（T11 遗留实测）。
+        let ci_up = process_exists_any(&["ClassIsland.Desktop.exe", "ClassIsland.exe"]);
         if ci_up {
             classisland_fails = 0;
         } else if classisland_cooldown > 0 {
@@ -181,6 +183,11 @@ fn process_exists(name: &str) -> bool {
     }
 }
 
+/// 任一候选进程名存在即视为存活（ClassIsland 新旧版本进程名不同）。
+fn process_exists_any(names: &[&str]) -> bool {
+    names.iter().any(|n| process_exists(n))
+}
+
 /// 拉起 agent：优先 Start-ScheduledTask（T08 的 AutoStart 任务已带 RestartCount 等加固），
 /// 拉起后 sleep 4s 验证 /status 真的 up；仍 down 再直接执行 run-agent.cmd（detached）。
 /// 返回值为"最终探活是否 up"（不是"命令是否发出"），保证日志里 OK 是真实状态。
@@ -220,7 +227,7 @@ fn relaunch_classisland() -> bool {
     match Command::new(&exe).spawn() {
         Ok(_) => {
             thread::sleep(Duration::from_secs(4));
-            process_exists("ClassIsland.exe")
+            process_exists_any(&["ClassIsland.Desktop.exe", "ClassIsland.exe"])
         }
         Err(_) => false,
     }
