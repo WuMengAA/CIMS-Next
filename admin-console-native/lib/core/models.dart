@@ -66,14 +66,20 @@ class DrawRecord {
   const DrawRecord({required this.names, required this.at});
 }
 
-/// 文件传输历史条目
+/// 文件传输历史条目（v2：fileId 关联回执轮询，delivered/total 为送达摘要）
 class TransferItem {
   final String fileName;
   final int size;
   final String sha256;
   final String target;
   final DateTime at;
-  final String status; // pending / sent / failed
+  final String status; // pending / sent / partial / failed
+  /// 网站 file_objects 的 id（v2 起有值；旧历史为 ''，无法追踪回执）。
+  final String fileId;
+  /// 已确认送达（acked）台数摘要（持久化用；明细在会话内 deliveryDetailProvider）。
+  final int delivered;
+  /// 目标设备总台数。
+  final int total;
   const TransferItem({
     required this.fileName,
     required this.size,
@@ -81,6 +87,9 @@ class TransferItem {
     required this.target,
     required this.at,
     required this.status,
+    this.fileId = '',
+    this.delivered = 0,
+    this.total = 0,
   });
 }
 

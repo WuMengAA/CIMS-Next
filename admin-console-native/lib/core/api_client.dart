@@ -371,6 +371,101 @@ class CimsApi {
     }
   }
 
+  // ---- 文件传输 v2（2026-09-25 班级系统配套）----
+  //
+  // 旧 V1 只发元数据（name/size/sha256），文件本体从未离开发送机，设备永远收不到。
+  // V2 三步：① uploadFile 把实体传到网站（multipart，≤100MB）；
+  //          ② pushFile 让服务端代推 file_push 指令到目标班级的设备；
+  //          ③ fileDeliveries 轮询逐台回执（pending → acked/failed），
+  //            「发完没音讯」在发送端就此终结——桌面上一台一台亮出来。
+
+  /// 拉取网站真实班级列表（GET /api/classes，唯一来源 CIMS，绝不掺演示班）。
+  /// 返回 [{class_id, name, ...}]；CIMS 不可达 → null（调用方必须明示错误，禁假列表）。
+  Future<List<Map<String, dynamic>>?> listSiteClasses() async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty) return null;
+    try {
+      final r = await reqTo(site, '/api/classes');
+      if (r is! Map) return null;
+      final items = r['classes'];
+      if (items is! List) return null;
+      return items
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 上传文件实体（multipart，Bearer 会话）。
+  /// 返回 file_objects 行：{id, name, size, sha256, kind}；失败抛 ApiException。
+  Future<Map<String, dynamic>> uploadFile(String path, {String kind = 'file'}) async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty) {
+      throw ApiException('未登录网站（网站模式才支持传文件）');
+    }
+    final uri = Uri.parse('$site/api/console/ext/files');
+    final req = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer ${s.token}'
+      ..fields['kind'] = kind
+      ..files.add(await http.MultipartFile.fromPath('file', path));
+    Log.api('→ POST $uri ${_clip(path, 120)}');
+    final sw = Stopwatch()..start();
+    final streamed =
+        await _client.send(req).timeout(const Duration(minutes: 10));
+    final res = await http.Response.fromStream(streamed)
+        .timeout(const Duration(minutes: 10));
+    sw.stop();
+    if (res.statusCode == 401) {
+      _settings.clearAuth();
+      throw ApiException('未授权，请重新登录');
+    }
+    if (res.statusCode >= 400) {
+      final why = _clip(utf8.decode(res.bodyBytes), 200);
+      throw ApiException('上传失败（HTTP ${res.statusCode}）$why');
+    }
+    Log.api('← ${res.statusCode} ${sw.elapsedMilliseconds}ms 上传完成');
+    final r = jsonDecode(utf8.decode(res.bodyBytes));
+    final f = (r is Map) ? r['file'] : null;
+    if (f is! Map || (f['id'] ?? '').toString().isEmpty) {
+      throw ApiException('上传响应缺少文件 id');
+    }
+    return Map<String, dynamic>.from(f);
+  }
+
+  /// 推送已上传的文件到目标班级/设备（服务端代推 file_push 指令 + 逐台建档回执）。
+  /// [classes] / [uids] 至少给一个；超范围（未绑定班级）服务端 403 直接拒绝。
+  Future<Map<String, dynamic>> pushFile(
+    String fileId, {
+    List<String> classes = const [],
+    List<String> uids = const [],
+  }) async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty) throw ApiException('未登录网站');
+    // 服务端逐台下发虽已并发化，目标多时仍可能超过通用 8s —— 给足 120s。
+    final r = await reqTo(site, '/api/console/ext/file-push',
+        method: 'POST',
+        body: {'file_id': fileId, 'classes': classes, 'uids': uids});
+    return (r is Map) ? Map<String, dynamic>.from(r) : <String, dynamic>{};
+  }
+
+  /// 拉取某文件的逐台送达回执：[{uid, class_id, state, detail, updated_at}]。
+  /// state ∈ pending（等待设备）/ acked（已接收）/ failed（失败，detail 有人话原因）。
+  Future<List<Map<String, dynamic>>> fileDeliveries(String fileId) async {
+    final site = s.siteHost;
+    if (site.isEmpty || s.token.isEmpty || fileId.isEmpty) return const [];
+    final r = await reqTo(
+        site, '/api/console/ext/file-deliveries?file=${Uri.encodeQueryComponent(fileId)}');
+    if (r is! Map) return const [];
+    final rows = r['deliveries'];
+    if (rows is! List) return const [];
+    return rows
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
   // ---- 扩展网关（协作/上报，可选）----
   Future<List<NoticeItem>> listNotices() async {
     if (s.demo || s.extHost.isEmpty) return const [];

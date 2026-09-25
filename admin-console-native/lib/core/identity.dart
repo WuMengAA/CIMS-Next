@@ -9,10 +9,10 @@ library;
 
 /// 未知角色/未登录时的"全量"行为：primaryNav 为 null 表示不收敛。
 class Identity {
-  /// 原始角色标识（owner/admin/editor/moderator/teacher/techrep/user/viewer）
+  /// 原始角色标识（owner/admin/editor/moderator/teacher/homeroom/techrep/user/viewer）
   final String role;
 
-  /// 人话角色名（站长 / 电教委员 / 老师 / 学生 / 访客）
+  /// 人话角色名（站长 / 班主任 / 老师 / 电教委员 / 学生 / 访客）
   final String roleLabel;
 
   /// 显示秩位（L3 电教委员 之类，仅展示用）
@@ -30,6 +30,20 @@ class Identity {
   final bool canManage;
   final bool canIssue;
 
+  /// v2 动作矩阵（2026-09-25，服务端 /api/me identity.can 下发）：
+  /// watch=监控、playback=回放、voice=发语音、notify=发通知、file=传文件、
+  /// shutdown=关机。旧服务端快照缺这些键时回退到粗档（control/manage），
+  /// 避免新旧两端错位时把管理员的功能也藏掉。
+  final bool canWatch;
+  final bool canPlayback;
+  final bool canVoice;
+  final bool canNotify;
+  final bool canFile;
+  final bool canShutdown;
+
+  /// v2 班级范围：'*'（全校）或真实 class_id 列表（空 = 未绑定/无范围）。
+  final List<String> classScope;
+
   /// 可广播范围：class / grade / school
   final List<String> broadcastScopes;
 
@@ -44,6 +58,13 @@ class Identity {
     this.canRemote = false,
     this.canManage = false,
     this.canIssue = false,
+    this.canWatch = false,
+    this.canPlayback = false,
+    this.canVoice = false,
+    this.canNotify = false,
+    this.canFile = false,
+    this.canShutdown = false,
+    this.classScope = const [],
     this.broadcastScopes = const [],
   });
 
@@ -52,6 +73,20 @@ class Identity {
     final canMap = can is Map ? Map<String, dynamic>.from(can) : const <String, dynamic>{};
     bool flag(String k) => canMap[k] == true;
     final scopes = j['broadcastScopes'];
+    // 兼容三种 classScope 形态：'*' / 数组 / 缺失（缺失=旧服务端，按 className 展示）。
+    final rawScope = j['classScope'];
+    List<String> scope;
+    if (rawScope == '*') {
+      scope = const ['*'];
+    } else if (rawScope is List) {
+      scope = rawScope.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+    } else {
+      scope = const [];
+    }
+    // 旧服务端没有 watch/file/voice/notify 键：粗档兜底，避免管理员被藏功能。
+    final legacyHasCanMap = canMap.isNotEmpty;
+    final coarseControl = flag('control');
+    final coarseManage = flag('manage');
     return Identity(
       role: (j['role'] ?? '').toString(),
       roleLabel: (j['roleLabel'] ?? '').toString(),
@@ -59,10 +94,17 @@ class Identity {
       displayName: (j['displayName'] ?? '').toString(),
       className: (j['className'] ?? '').toString(),
       gradeName: (j['gradeName'] ?? '').toString(),
-      canControl: flag('control'),
+      canControl: coarseControl,
       canRemote: flag('remote'),
-      canManage: flag('manage'),
+      canManage: coarseManage,
       canIssue: flag('issue'),
+      canWatch: flag('watch') || coarseControl || coarseManage,
+      canPlayback: flag('playback') || flag('watch') || coarseControl || coarseManage,
+      canVoice: flag('voice') || (legacyHasCanMap ? false : coarseControl || coarseManage),
+      canNotify: flag('notify') || coarseControl || coarseManage,
+      canFile: flag('file') || (legacyHasCanMap ? false : coarseControl || coarseManage),
+      canShutdown: flag('shutdown'),
+      classScope: scope,
       broadcastScopes: scopes is List
           ? scopes.map((e) => e.toString()).where((e) => e.isNotEmpty).toList()
           : const [],
@@ -81,12 +123,31 @@ class Identity {
           'remote': canRemote,
           'manage': canManage,
           'issue': canIssue,
+          'watch': canWatch,
+          'playback': canPlayback,
+          'voice': canVoice,
+          'notify': canNotify,
+          'file': canFile,
+          'shutdown': canShutdown,
         },
+        'classScope': classScope,
         'broadcastScopes': broadcastScopes,
       };
 
   /// 界面上的"我是谁"（拿不到角色名就退回一个中性说法）。
   String get who => roleLabel.isNotEmpty ? roleLabel : '用户';
+
+  /// 班级范围的人话（面板顶部"我能管哪些班"）。
+  String get scopeText {
+    if (classScope.contains('*')) return '全校';
+    if (classScope.isEmpty) return requiresBinding ? '未绑定班级' : '';
+    return classScope.join('、');
+  }
+
+  /// 该身份是否必须绑定班级才能干活（v2：老师≤2 班、班主任 1 班、电教委员 1 班；
+  /// 管理员免绑=全校；user/viewer 压根禁入不算"待绑定"）。
+  bool get requiresBinding =>
+      const ['teacher', 'homeroom', 'techrep'].contains(role);
 
   /// 一句话说清这个身份在集控里能做什么 —— 界面上要**正着说一遍**，
   /// 否则用户只会觉得"我的功能怎么少了"，而不是"这些本来就不是我的活"。
@@ -94,19 +155,21 @@ class Identity {
     switch (role) {
       case 'owner':
       case 'admin':
-        return '全校设备、用户与站点设置';
+        return '全校设备：远控、监控、回放、语音、通知、传文件、关机';
       case 'editor':
-        return '内容与页面管理，可查看全校设备';
+        return '内容与页面管理';
       case 'moderator':
-        return '审核内容与权限申请，按年级查看设备';
+        return '审核内容与权限申请';
+      case 'homeroom':
+        return '本班：远控、监控、回放、发语音、发通知、传文件';
       case 'teacher':
-        return '看本班设备、发本年级通知、课堂点名';
+        return '向所带班级（≤2 个）传文件';
       case 'techrep':
-        return '运维本班设备、处理报修、本班沟通';
+        return '电教委员面板 + 文件传输';
       case 'user':
-        return '查看本班设备状态、提交报修';
+        return '普通用户不可进入集控';
       case 'viewer':
-        return '只能观看，不能做任何操作';
+        return '游客不可进入集控';
       default:
         return '';
     }
@@ -120,17 +183,21 @@ class Identity {
   List<String>? get primaryNav {
     switch (role) {
       case 'viewer':
-        return const ['devices', 'settings'];
       case 'user':
-        return const ['devices', 'settings'];
+        // 双重严禁（2026-09-25）：游客/普通用户连"看设备"都不给 ——
+        // 前端只剩设置页，后端 /api/console/* 一律 401/403。
+        return const ['settings'];
       case 'teacher':
-        // 安卓老师界面：班级设备 + 广播 + 审核为核心，随机点名/音量/设置收在「更多」。
-        return const ['teacher', 'devices', 'notify', 'review', 'random', 'volume', 'settings'];
+        // v2：传文件是唯一设备动作；设备监控页收回。
+        return const ['file', 'settings'];
       case 'techrep':
-        return const ['teacher', 'devices', 'notify', 'review', 'random', 'file', 'volume', 'settings'];
+        // v2：电教委员面板 + 文件传输。
+        return const ['teacher', 'file', 'settings'];
+      case 'homeroom':
+        return const ['teacher', 'devices', 'file', 'notify', 'volume', 'settings'];
       case 'moderator':
-        // 审核员：审核是主责，班级设备 + 审核默认摆出。
-        return const ['teacher', 'devices', 'review', 'notify', 'settings'];
+        // 审核员：审核是主责（设备页随 v2 收回 —— 无 watch 档）。
+        return const ['teacher', 'review', 'notify', 'settings'];
       case 'owner':
       case 'admin':
       case 'editor':
@@ -150,13 +217,18 @@ class Identity {
         // （create/cancel/rollback=control、approve/reject/config=manage）。
         return canControl || canManage;
       case 'notify':
-      case 'file':
       case 'volume':
-        // 这三项都是对教室设备下发指令，没有设备控制权就没得谈。
-        return canControl || canRemote || canManage;
+        // 对教室设备下发指令：v2 用动作矩阵（notify）兜粗档（旧服务端兼容）。
+        return canNotify || canControl || canRemote || canManage;
+      case 'file':
+        // v2 传文件：动作矩阵明示（老师/班主任/电教委员/站长）。
+        return canFile || canControl || canManage;
       case 'devices':
-        // 看一眼设备状态也算能力（watch 档），任何登录身份都保留。
-        return true;
+        // v2 双重严禁：监控=watch 档，user/viewer 在服务端就没有 watch，
+        // 设备页整页不出现（此前"任何登录身份都保留"违反"游客严禁进入"）。
+        return canWatch;
+      case 'playback':
+        return canPlayback || canWatch;
       default:
         // 随机点名 / 设置是纯本地或身份设置，不设设备门槛。
         return true;

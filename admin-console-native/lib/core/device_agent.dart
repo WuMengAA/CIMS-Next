@@ -24,6 +24,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -405,7 +406,7 @@ class DeviceAgent {
         'POST',
         s.siteHost,
         '/api/console/cims/v1/client/${Uri.encodeComponent(s.deviceUid)}/command/ack',
-        body: {'command_ids': [id], 'status': status},
+        body: {'command_ids': [id], 'status': status, 'detail': detail},
       );
       if (res.statusCode >= 400) {
         Log.w('回报指令 #$id 失败（HTTP ${res.statusCode}）：面板会一直显示"待回执"', 'agent');
@@ -439,6 +440,8 @@ class DeviceAgent {
         );
       case 'screenshot':
         return _screenshot(shotPath);
+      case 'file_push':
+        return _filePush(p);
       case 'ping':
         return ActionResult.yes('心跳');
       default:
@@ -472,8 +475,14 @@ class DeviceAgent {
     // 截图先落盘是主结果，回传是加分项。
     final upload = await _uploadCapture(r.path);
     final uploaded = upload == null || upload.isEmpty;
+    // ⚠️ v2 修复「不能有效上报图片」的静默分支：旧实现里"密钥未配置"与"上传成功"
+    // 返回的 suffix 一样是空串 —— 老师在面板里只看到「已执行 ✓」却永远等不到图，
+    // 而回执里一个字都没提。现在三种状态都进回执详情：
+    //   未配置密钥（null）→ 明说"面板将看不到本图，请配置设备密钥"；
+    //   上传失败          → 带上人话原因；
+    //   成功              → "已回传集控端"。
     final suffix = upload == null
-        ? ''
+        ? '，但未配置设备密钥（设置→设备上报密钥），监控端看不到本图'
         : (uploaded ? '，已回传集控端' : '（回传失败：$upload）');
     await _notify('星集控 · 已截图', '保存到 ${r.path}$suffix');
     return ActionResult.yes('截图已保存：${r.path}$suffix');
@@ -522,6 +531,143 @@ class DeviceAgent {
       return '';
     } catch (e) {
       Log.w('截图回传失败：$e', 'agent');
+      return '$e';
+    }
+  }
+
+  /// 接收目录：`%USERPROFILE%\Downloads\星集控\`（取不到回退到系统临时目录）。
+  /// 必须是老师/学生**看得见**的地方 —— 收到文件没有提示的一半原因是
+  /// 旧版本根本没有下载，另一半原因就是收了也收进无人知晓的目录。
+  Directory _receiveDir() {
+    final home = Platform.environment['USERPROFILE'] ?? '';
+    if (home.isNotEmpty) {
+      return Directory('$home\\Downloads\\星集控');
+    }
+    return Directory(Directory.systemTemp.path);
+  }
+
+  /// 处理 file_push：下载 → 校验 sha256 → 落盘到用户可见目录 →
+  /// 语音类自动播放 → 弹本机通知 → 回执带人话详情。
+  ///
+  /// 「文件传输后没有消息提示」的设备端半边修在这里：旧版本没有 file_push
+  /// 分支，指令被回落成普通通知弹一下，文件本体从未落地。
+  Future<ActionResult> _filePush(Map<dynamic, dynamic> p) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    if (secret.isEmpty) {
+      return ActionResult.no(
+          '未配置设备密钥（设置→设备上报密钥），无法下载推送文件');
+    }
+    final fid = (p['file_id'] ?? '').toString().trim();
+    final name = (p['name'] ?? '').toString().trim();
+    final expectSha = (p['sha256'] ?? '').toString().trim().toLowerCase();
+    final kind = (p['kind'] ?? 'file').toString();
+    if (fid.isEmpty || name.isEmpty) {
+      return ActionResult.no('file_push 指令缺少 file_id/name');
+    }
+    // 落盘文件名做安全清洗：只留常用字符，防路径注入。
+    final safeName = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final dir = _receiveDir();
+    try {
+      await dir.create(recursive: true);
+    } catch (_) {}
+    final dest = File('${dir.path}${Platform.pathSeparator}$safeName');
+
+    // ① 下载（设备密钥鉴权，与截图回传同通道）
+    final base = s.siteHost.endsWith('/')
+        ? s.siteHost.substring(0, s.siteHost.length - 1)
+        : s.siteHost;
+    final uri = Uri.parse('$base/api/console/ext/files?id=${Uri.encodeQueryComponent(fid)}');
+    final req = http.Request('GET', uri);
+    req.headers['x-stelarith-device-secret'] = secret;
+    http.StreamedResponse streamed;
+    try {
+      streamed = await _client.send(req).timeout(const Duration(minutes: 10));
+    } catch (e) {
+      return ActionResult.no('下载失败：$e');
+    }
+    if (streamed.statusCode >= 400) {
+      final body = await streamed.stream.bytesToString().timeout(const Duration(seconds: 5));
+      final why = _clip(body.trim());
+      _ackDetailHint('HTTP ${streamed.statusCode} $why');
+      return ActionResult.no('下载失败（HTTP ${streamed.statusCode}）$why');
+    }
+    final bytes = await streamed.stream.toBytes().timeout(const Duration(minutes: 10));
+    if (bytes.isEmpty) return ActionResult.no('下载内容为空');
+
+    // ② 完整性校验：sha256 不符绝不落盘（防损坏/篡改的包覆盖学生机上的文件）
+    final got = crypto.sha256.convert(bytes).toString();
+    if (expectSha.isNotEmpty && got != expectSha) {
+      _ackDetailHint('校验失败');
+      return ActionResult.no('文件校验失败（sha256 不符），已丢弃');
+    }
+    try {
+      await dest.writeAsBytes(bytes, flush: true);
+    } catch (e) {
+      return ActionResult.no('保存失败：$e');
+    }
+
+    // ③ 语音类：自动播放（wav 走 SoundPlayer 同步播；其余交给系统默认播放器）
+    String played = '';
+    if (kind == 'voice') {
+      final pr = await _playAudio(dest.path);
+      played = pr.isEmpty ? '，已自动播放' : '（自动播放失败：$pr）';
+    }
+
+    // ④ 本机提示 + 回执
+    final title = kind == 'voice' ? '星集控 · 收到语音' : '星集控 · 收到文件';
+    await _notify(title, '${kind == "voice" ? "正在播放" : "已保存"}：${dest.path}$played');
+    return ActionResult.yes(
+        '${kind == "voice" ? "语音已接收" : "文件已接收"}：${dest.path}（${bytes.length} 字节）$played');
+  }
+
+  /// 回执辅助：把「设备侧卡在哪一步」也写进本地日志（ack 在调用方统一发）。
+  void _ackDetailHint(String hint) {
+    Log.w('file_push 中途失败：$hint', 'agent');
+  }
+
+  /// 播放音频。返回空串 = 成功；非空 = 人话失败原因。
+  /// wav 用 PowerShell SoundPlayer（同步播完，无黑窗——脚本内容纯 ASCII）；
+  /// 其他格式（mp3/m4a…）交给系统默认播放器打开。
+  Future<String> _playAudio(String path) async {
+    final lower = path.toLowerCase();
+    final isWav = lower.endsWith('.wav');
+    if (isWav) {
+      final f = File('${Directory.systemTemp.path}'
+          '${Platform.pathSeparator}xjk-play-${DateTime.now().microsecondsSinceEpoch}.ps1');
+      try {
+        // 路径含中文（接收目录"星集控"）→ 走参数传递而非拼进脚本体；
+        // PS5.1 下 SoundPlayer 参数由 -File 传参按系统码页解释，中文路径
+        // 可能乱码 —— 稳妥起见复制为 ASCII 临时名再播。
+        final tmp = File('${Directory.systemTemp.path}'
+            '${Platform.pathSeparator}xjk-voice-${DateTime.now().microsecondsSinceEpoch}.wav');
+        await File(path).copy(tmp.path);
+        await f.writeAsString(
+          '\$p = New-Object Media.SoundPlayer \$args[0]\n'
+          '\$p.PlaySync()\n'
+          'Write-Output OK\n',
+          flush: true,
+          encoding: const SystemEncoding(),
+        );
+        final r = await Process.run(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', f.path, tmp.path],
+        ).timeout(const Duration(minutes: 5));
+        try { await tmp.delete(); } catch (_) {}
+        if (r.exitCode != 0 || !'${r.stdout}'.contains('OK')) {
+          return '播放器退出码 ${r.exitCode}';
+        }
+        return '';
+      } catch (e) {
+        return '$e';
+      } finally {
+        try { await f.delete(); } catch (_) {}
+      }
+    }
+    try {
+      await Process.run('cmd.exe', ['/c', 'start', '', '/min', path]).timeout(const Duration(seconds: 10));
+      return '';
+    } catch (e) {
       return '$e';
     }
   }
