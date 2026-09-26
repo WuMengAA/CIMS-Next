@@ -1,4 +1,4 @@
-import { redirect } from "@sveltejs/kit";
+import { error, redirect } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
 import { can, userCan } from "$lib/permissions.js";
 import { recordActivity } from "$lib/server/activity.js";
@@ -13,15 +13,28 @@ const SKIP_PREFIX = ["/api", "/_app", "/uploads", "/favicon", "/rss.xml", "/.wel
  */
 const NO_PUBLIC_CACHE = ["/admin", "/account", "/api", "/verify", "/register", "/u/"];
 
+/**
+ * /admin 前缀下的**静态资源**白名单：不参与登录态校验，最先判定（先于登录校验与
+ * 路由门槛）。若把 /admin/_app/** 一起 303 到登录页，未登录时后台客户端入口拿不到，
+ * hydration 完全起不来 → onMount 不执行 → 集控面板退回浏览器默认 300×150。
+ * 只放行「文件形态」的路径，因此绝不会命中 /admin/login、/admin/console 这类页面路由。
+ */
+const ADMIN_STATIC_PATTERNS = [
+	/^\/admin\/_app\//,
+	/^\/admin\/favicon\.(?:ico|png)$/i,
+	/^\/admin\/[^/?#]*\.(?:js|mjs|cjs|css|json|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|eot|map|txt|webmanifest)$/i
+];
+
 export async function handle({ event, resolve }) {
 	const url = event.url;
 	let user = null;
 
-	// Protect all /admin routes except login and API auth
+	// Protect all /admin routes except login, static assets and API auth
 	if (url.pathname.startsWith("/admin")) {
+		const isStaticAsset = ADMIN_STATIC_PATTERNS.some((re) => re.test(url.pathname));
 		const isLogin = url.pathname === "/admin/login";
 		const isAuthApi = url.pathname.startsWith("/api/auth");
-		if (!isLogin && !isAuthApi) {
+		if (!isLogin && !isAuthApi && !isStaticAsset) {
 			const token = event.cookies.get("admin_token");
 			const u = verifyToken(token);
 			// 集控面板子页面（/admin/console）走 viewConsole 门槛（L2+：
@@ -30,6 +43,11 @@ export async function handle({ event, resolve }) {
 			const needConsole = url.pathname.startsWith("/admin/console");
 			const ok = u && (needConsole ? userCan(u, "viewConsole") : userCan(u, "viewAdmin"));
 			if (!ok) {
+				// 已登录但权限不足时**绝不能再丢回登录页**——用户会以为「登录没生效」，
+				// 于是反复登录（实测：同一账号 3 分钟内连登 4 次，全是这个假象造成的）。
+				// 有集控面板权限的送去面板，其余给明确的 403，而不是假装未登录。
+				if (u && userCan(u, "viewConsole")) throw redirect(303, "/admin/console");
+				if (u) throw error(403, "当前账号没有后台管理权限");
 				throw redirect(303, "/admin/login");
 			}
 			user = u;

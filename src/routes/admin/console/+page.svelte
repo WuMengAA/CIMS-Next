@@ -2,8 +2,7 @@
 	import { ROLE_LABELS, type Role } from "$lib/permissions.js";
 	import { browser } from "$app/environment";
 	import { onMount } from "svelte";
-	import TeacherQr from "$lib/components/teacher-qr.svelte";
-
+	
 	// 集控面板以 iframe 嵌入 static/console/index.html，作为后台内容区的一页
 	// （不再全屏接管）：由后台外壳提供侧栏 + 顶栏 + 账号体系；面板自身仍带一套完整的
 	// 顶栏 / 左侧设备导航 / 状态栏，其内容是设备级功能，与网站 CMS 导航是两个维度，
@@ -33,8 +32,6 @@
 	}>();
 
 	const roleLabel = $derived(ROLE_LABELS[data.role as Role] || data.role);
-	// 老师手机页二维码弹窗（T09 第二步）：浮动入口 → 扫码直达 /teacher（PWA 套壳）
-	let qrOpen = $state(false);
 
 	// 主题跟随：官网用 ModeWatcher，主题反映在 <html> 的 `dark` 类上。面板是独立
 	// iframe 文档，读不到父文档 class，故这里把当前主题经 ?theme= 注入初始 src，
@@ -64,17 +61,39 @@
 		const header = adminInset?.querySelector('[data-slot="sidebar-header"]') as HTMLElement | null;
 		const apply = () => {
 			if (!root) return;
-			const vh = window.innerHeight;
-			const cr = content?.getBoundingClientRect();
-			const hr = header?.getBoundingClientRect();
-			const top = hr ? hr.bottom : (cr ? cr.top : 0);
-			const left = cr ? cr.left : 0;
-			const width = cr ? cr.width : window.innerWidth;
+			// 先纯计算、再一次性落地：异常只会发生在赋值之前，
+			// 所以首次失败不会把已有尺寸清成空（否则会永久停在 300×150）。
+			let top = 0;
+			let left = 0;
+			let width = window.innerWidth;
+			let height = Math.max(240, window.innerHeight);
+			try {
+				const vh = window.innerHeight;
+				const vw = window.innerWidth;
+				const cr = content?.getBoundingClientRect();
+				const hr = header?.getBoundingClientRect();
+				// 选择器兜底：任一插槽缺失不得静默失败——显式回退到视口并在控制台留痕
+				if (!content || !header) {
+					console.warn("[console] sidebar 插槽未取到，尺寸回退到视口", {
+						content: Boolean(content),
+						header: Boolean(header)
+					});
+				}
+				top = hr ? hr.bottom : cr ? cr.top : 0;
+				left = cr ? cr.left : 0;
+				width = cr && cr.width >= 320 ? cr.width : vw;
+				if (!width || width < 320) width = vw;
+				// 钳位：顶栏底边可能压过视口底 → 负高度被浏览器忽略 → 高度塌成 auto
+				height = Math.max(240, vh - top);
+			} catch (err) {
+				console.warn("[console] 尺寸计算失败，保留上一次有效尺寸", err);
+				return;
+			}
 			root.style.position = "fixed";
 			root.style.top = top + "px";
 			root.style.left = left + "px";
 			root.style.width = width + "px";
-			root.style.height = vh - top + "px";
+			root.style.height = height + "px";
 			root.style.right = "auto";
 			root.style.bottom = "auto";
 		};
@@ -147,15 +166,9 @@
 	<iframe bind:this={frameEl} class="console-frame" src={frameSrc} title="星集控面板"></iframe>
 </div>
 
-<!-- 老师手机页浮动入口（T09 第二步）：扫码直达 /teacher，手机可"添加到主屏幕"像 App 一样用 -->
-<div class="teacher-qr-entry" title="老师手机页：扫码直达（手机同网络即可打开）">
-	<button type="button" class="teacher-qr-btn" onclick={() => (qrOpen = true)}>
-		<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
-		<span>老师手机页</span>
-	</button>
-</div>
-<TeacherQr bind:open={qrOpen} lanHost={data.lanHost} />
-
+<!-- 兜底样式（A 项，不依赖任何 JS）：下方 apply() 会覆写 top/left/width/height，
+     但 JS 一行没跑时（hydration 未启动 / 脚本报错），这两条规则必须自己就能把
+     iframe 铺满，而不是退回浏览器默认的 300×150。类名由编译期生成，不手写哈希。 -->
 <style>
 	.console-root {
 		position: fixed;
@@ -170,29 +183,5 @@
 		width: 100%;
 		border: 0;
 		display: block;
-	}
-	.teacher-qr-entry {
-		position: fixed;
-		top: 54px;
-		right: 14px;
-		z-index: 2000;
-	}
-	.teacher-qr-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		padding: 7px 13px;
-		border-radius: 999px;
-		background: #e8b23d;
-		color: #3a2c08;
-		border: none;
-		font-weight: 700;
-		font-size: 13px;
-		cursor: pointer;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
-		font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-	}
-	.teacher-qr-btn:hover {
-		filter: brightness(1.07);
 	}
 </style>
