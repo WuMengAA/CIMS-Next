@@ -154,6 +154,142 @@ export function noticeTypesOf(role: Role | null | undefined): NoticeType[] {
 }
 
 /**
+ * 能力位（功能开关，2026-09-26）：把「能不能发通知」这种粗粒度矩阵
+ * 拆成**一个个可单独开合的功能点**。
+ *
+ * 三条设计约束：
+ * 1. **裁决只在服务端**。这里的默认值只是"角色默认"，最终能力位由服务端
+ *    `resolveUserFeatures()` 叠加 per-user 覆盖后下发；前端拿到的是结论，
+ *    不是规则，改前端代码开不出任何功能。
+ * 2. **覆盖值三态**：true=强制开 / false=强制关 / 缺省=按角色默认。
+ *    所以可以给某位老师单独开「弹窗」，也可以单独掐掉某位管理员的「关机」，
+ *    而不必改角色（角色一改，其他能力跟着全变）。
+ * 3. **危险项默认收窄**：device_shutdown / notice_fullscreen 这类会打断课堂
+ *    或关掉机器的，只给学校管理员默认开，其余一律 false。
+ */
+export type FeatureKey =
+	| "notice_island"
+	| "notice_popup"
+	| "notice_fullscreen"
+	| "notice_tts"
+	| "notice_reply"
+	| "screenshot"
+	| "screenshot_upload"
+	| "file_push"
+	| "history_sidebar"
+	| "device_restart"
+	| "device_shutdown"
+	| "watchdog";
+
+export const FEATURE_KEYS: FeatureKey[] = [
+	"notice_island",
+	"notice_popup",
+	"notice_fullscreen",
+	"notice_tts",
+	"notice_reply",
+	"screenshot",
+	"screenshot_upload",
+	"file_push",
+	"history_sidebar",
+	"device_restart",
+	"device_shutdown",
+	"watchdog"
+];
+
+export const FEATURE_LABELS: Record<FeatureKey, string> = {
+	notice_island: "岛通知（大屏循环）",
+	notice_popup: "弹窗通知（需确认）",
+	notice_fullscreen: "全屏紧急通知",
+	notice_tts: "语音朗读（TTS）",
+	notice_reply: "允许回复消息",
+	screenshot: "远程截图",
+	screenshot_upload: "截图回传查看",
+	file_push: "文件下发",
+	history_sidebar: "历史消息侧栏",
+	device_restart: "重启设备",
+	device_shutdown: "关闭设备",
+	watchdog: "卡死自动重启"
+};
+
+/** 角色默认能力位（与 ROLE_DEVICE_ACTIONS / ROLE_NOTICE_TYPES 同源推导）。 */
+const ROLE_FEATURES: Record<Role, Record<FeatureKey, boolean>> = {
+	owner: {
+		notice_island: true, notice_popup: true, notice_fullscreen: true, notice_tts: true,
+		notice_reply: true, screenshot: true, screenshot_upload: true, file_push: true,
+		history_sidebar: true, device_restart: true, device_shutdown: true, watchdog: true
+	},
+	admin: {
+		notice_island: true, notice_popup: true, notice_fullscreen: true, notice_tts: true,
+		notice_reply: true, screenshot: true, screenshot_upload: true, file_push: true,
+		history_sidebar: true, device_restart: true, device_shutdown: true, watchdog: true
+	},
+	homeroom: {
+		notice_island: true, notice_popup: true, notice_fullscreen: false, notice_tts: true,
+		notice_reply: true, screenshot: true, screenshot_upload: true, file_push: true,
+		history_sidebar: true, device_restart: true, device_shutdown: false, watchdog: true
+	},
+	teacher: {
+		notice_island: true, notice_popup: false, notice_fullscreen: false, notice_tts: false,
+		notice_reply: false, screenshot: false, screenshot_upload: false, file_push: true,
+		history_sidebar: true, device_restart: false, device_shutdown: false, watchdog: false
+	},
+	techrep: {
+		notice_island: false, notice_popup: false, notice_fullscreen: false, notice_tts: false,
+		notice_reply: false, screenshot: false, screenshot_upload: false, file_push: true,
+		history_sidebar: true, device_restart: false, device_shutdown: false, watchdog: false
+	},
+	editor: {
+		notice_island: false, notice_popup: false, notice_fullscreen: false, notice_tts: false,
+		notice_reply: false, screenshot: false, screenshot_upload: false, file_push: false,
+		history_sidebar: false, device_restart: false, device_shutdown: false, watchdog: false
+	},
+	moderator: {
+		notice_island: false, notice_popup: false, notice_fullscreen: false, notice_tts: false,
+		notice_reply: false, screenshot: false, screenshot_upload: false, file_push: false,
+		history_sidebar: false, device_restart: false, device_shutdown: false, watchdog: false
+	},
+	user: {
+		notice_island: false, notice_popup: false, notice_fullscreen: false, notice_tts: false,
+		notice_reply: false, screenshot: false, screenshot_upload: false, file_push: false,
+		history_sidebar: false, device_restart: false, device_shutdown: false, watchdog: false
+	},
+	viewer: {
+		notice_island: false, notice_popup: false, notice_fullscreen: false, notice_tts: false,
+		notice_reply: false, screenshot: false, screenshot_upload: false, file_push: false,
+		history_sidebar: false, device_restart: false, device_shutdown: false, watchdog: false
+	}
+};
+
+/** 某角色的默认能力位（服务端叠加 per-user 覆盖前的基线）。 */
+export function featureDefaultsOf(role: Role | null | undefined): Record<FeatureKey, boolean> {
+	if (!role) return Object.fromEntries(FEATURE_KEYS.map((k) => [k, false])) as Record<FeatureKey, boolean>;
+	return { ...(ROLE_FEATURES[role] ?? ROLE_FEATURES.user) };
+}
+
+/**
+ * 叠加最终能力位：角色默认 + per-user 覆盖（true 强制开 / false 强制关）。
+ *
+ * 返回值里带 `overridden`，是为了让面板能显示"这条是单独给你开的/关的"——
+ * 否则老师看到自己能发全屏通知会以为是所有老师都能，管理员也无从核对。
+ */
+export function resolveFeatures(
+	role: Role | null | undefined,
+	overrides?: Record<string, unknown> | null
+): { features: Record<FeatureKey, boolean>; overridden: FeatureKey[] } {
+	const base = featureDefaultsOf(role);
+	const overridden: FeatureKey[] = [];
+	const src = overrides && typeof overrides === "object" ? overrides : {};
+	for (const k of FEATURE_KEYS) {
+		const v = (src as Record<string, unknown>)[k];
+		if (v === true || v === false) {
+			base[k] = v;
+			if (v !== featureDefaultsOf(role)[k]) overridden.push(k);
+		}
+	}
+	return { features: base, overridden };
+}
+
+/**
  * 「用户 ↔ 班级」绑定上限（v2：必须绑定的三角色各有限额）。
  *   -1 = 不需要绑定（范围即全校，绑了也不作为权限依据）；
  *    0 = 禁止绑定（该角色没有任何设备/班级能力）；
@@ -213,7 +349,9 @@ export type Action =
 	| "manageUsers" // 用户与角色管理
 	| "manageSettings" // 站点设置
 	| "managePermissions" // 查看/调整权限矩阵
-	| "manageDevices"; // 全量设备管理
+	| "manageDevices" // 全量设备管理
+	| "manageOAuth" // 管理第三方登录授权（客户端与密钥）
+	| "manageStorage"; // 管理附件库与图床（跨账号占用、配额赠送、强制清理）
 
 /** 称号键。权限的真正载体。 */
 export type TitleKey =
@@ -298,7 +436,15 @@ export const TITLES: Record<TitleKey, Title> = {
 		key: "stationmaster",
 		label: "站长",
 		description: "用户、权限、站点设置与全量设备管理（最高权限集合）。",
-		actions: ["manageUsers", "manageSettings", "managePermissions", "manageDevices", "viewConsole"]
+		actions: [
+			"manageUsers",
+			"manageSettings",
+			"managePermissions",
+			"manageDevices",
+			"manageOAuth",
+			"manageStorage",
+			"viewConsole"
+		]
 	}
 };
 
@@ -886,7 +1032,9 @@ export const ACTION_LABELS: Record<Action, string> = {
 	manageUsers: "用户管理",
 	manageSettings: "站点设置",
 	managePermissions: "权限管理",
-	manageDevices: "全量设备管理"
+	manageDevices: "全量设备管理",
+	manageOAuth: "第三方登录授权",
+	manageStorage: "附件库 / 图床管理"
 };
 
 /** 某角色在矩阵中的能力快照（矩阵页逐格打勾）。 */

@@ -14,7 +14,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { CONTENT_DIR } from "./paths.js";
 import { getDb, nowIso } from "./db.js";
+import { resolveFeatures, featureDefaultsOf, FEATURE_KEYS, type FeatureKey, type Role } from "$lib/permissions.js";
 
 export interface ConsoleNotice {
 	id: number;
@@ -287,7 +289,11 @@ export function markNoticeDelivery(
  * 被控端 catch-up 拉取：某台设备还没看到的类型化通知（用于「错过弹窗/重启后补齐」）。
  * 返回该设备仍为 pending/received（未终态）的通知。plain notice 不在此列（无交互语义）。
  */
-export function listPendingTypedNotices(uid: string, limit = 20): ConsoleNotice[] {
+export function listPendingTypedNotices(
+	uid: string,
+	limit = 20,
+	sinceId = 0
+): ConsoleNotice[] {
 	const u = String(uid ?? "").trim().toLowerCase();
 	if (!u) return [];
 	const rows = getDb()
@@ -297,12 +303,61 @@ export function listPendingTypedNotices(uid: string, limit = 20): ConsoleNotice[
 			 FROM notice_deliveries d
 			 JOIN console_notices n ON n.id = d.notice_id
 			 JOIN notice_kinds k ON k.notice_id = n.id
-			 WHERE LOWER(d.uid) = ? AND d.state = 'pending'
-			 ORDER BY d.created_at DESC
+			 WHERE LOWER(d.uid) = ? AND d.state = 'pending' AND d.notice_id > ?
+			 ORDER BY d.notice_id ASC
 			 LIMIT ?`
 		)
-			.all(u, Math.min(Math.max(limit, 1), 50)) as unknown as any[];
+		.all(u, Number(sinceId) || 0, Math.min(Math.max(limit, 1), 50)) as unknown as any[];
 	return rows.map((r) => noticeFromRow(r));
+}
+
+/**
+ * 带游标的 catch-up（2026-09-26）：一次拉不完就分页，客户端下次带 `cursor` 接着来。
+ *
+ * 为什么不能只靠「60 秒节流 + 取前 20 条」：通知批量下发时一次塞不下的那些
+ * 会在下一轮被重新取到（因为仍是 pending），于是同一条被弹两次；而漏掉的
+ * 那条永远排在 20 名之外，机器重启后照样错过。游标（已处理到的最大 notice_id）
+ * 让「拉到哪了」变成可持久化的进度，幂等才有落点。
+ */
+export function listPendingTypedNoticesPage(
+	uid: string,
+	sinceId = 0,
+	limit = 20
+): { notices: ConsoleNotice[]; cursor: number } {
+	const list = listPendingTypedNotices(uid, limit, sinceId);
+	const cursor = list.reduce((m, n) => (n.id > m ? n.id : m), Number(sinceId) || 0);
+	return { notices: list, cursor };
+}
+
+/**
+ * 消息错过提醒（2026-09-26）：这些通知发出去 [minutes] 分钟了，目标机器还是 pending
+ * —— 也就是「它大概率没收到」。面板据此列出来，而不是让老师对着一片空白猜。
+ *
+ * 只报 pending：received/read 说明机器确实收到了；failed 有专门的错误路径。
+ * 默认 10 分钟，短了会把「正在推的路上」误报成错过。
+ */
+export function listStaleDeliveries(
+	minutes = 10,
+	limit = 100
+): { notice_id: number; uid: string; title: string; type: string; created_at: string }[] {
+	const since = new Date(Date.now() - Math.max(1, minutes) * 60_000).toISOString();
+	return getDb()
+		.prepare(
+			`SELECT d.notice_id, d.uid, n.title, COALESCE(k.type, 'notice') AS type, d.created_at
+			 FROM notice_deliveries d
+			 JOIN console_notices n ON n.id = d.notice_id
+			 LEFT JOIN notice_kinds k ON k.notice_id = d.notice_id
+			 WHERE d.state = 'pending' AND d.created_at <= ?
+			 ORDER BY d.created_at ASC
+			 LIMIT ?`
+		)
+		.all(since, Math.min(Math.max(limit, 1), 300)) as unknown as {
+		notice_id: number;
+		uid: string;
+		title: string;
+		type: string;
+		created_at: string;
+	}[];
 }
 
 /**
@@ -604,6 +659,98 @@ export function saveConsoleSettings(patch: Record<string, unknown>): Record<stri
 	metaSet(CONSOLE_SETTINGS_KEY, JSON.stringify(merged));
 	return merged;
 }
+
+/**
+ * 监控参数（截图/录像/远控编码）：从 console settings 取，缺省给默认值。
+ * 设备端（Rust agent）经 GET /ext/monitor-config（设备密钥）拉取后应用。
+ */
+export function getMonitorConfig(): Record<string, unknown> {
+	const s = getConsoleSettings();
+	const num = (k: string, d: number) => {
+		const v = Number(s[k]);
+		return Number.isFinite(v) && v > 0 ? v : d;
+	};
+	return {
+		screenshot_webp_quality: num("screenshot_webp_quality", 75),
+		screenshot_max_width: num("screenshot_max_width", 1280),
+		monitor_interval_sec: num("monitor_interval_sec", 0),
+		monitor_retention_days: num("monitor_retention_days", 7),
+		video_codec: String(s.video_codec ?? "vp9"),
+		video_bitrate_kbps: num("video_bitrate_kbps", 600),
+		video_fps: num("video_fps", 30),
+		video_resolution: String(s.video_resolution ?? "1080p"),
+		p2p_ice_override: String(s.p2p_ice_override ?? ""),
+	};
+}
+
+
+/**
+ * 设备接入码（2026-09-26 统一接入）：管理员生成，设备安装时输入激活码自拉配置。
+ * 存 console_meta（单键 JSON 数组），每码绑定班级 + 有效期 + 已用标记。
+ */
+const ACTIVATE_KEY = "device_activation_codes";
+
+export type ActivationCode = {
+	code: string;
+	classId: string;
+	className: string;
+	createdAt: string;
+	expiresAt: string;
+	used: boolean;
+	usedBy?: string;
+};
+
+export function listActivationCodes(): ActivationCode[] {
+	const raw = metaGet(ACTIVATE_KEY);
+	if (!raw) return [];
+	try {
+		const a = JSON.parse(raw);
+		return Array.isArray(a) ? (a as ActivationCode[]) : [];
+	} catch { return []; }
+}
+
+function saveActivationCodes(list: ActivationCode[]): void {
+	metaSet(ACTIVATE_KEY, JSON.stringify(list));
+}
+
+export function generateActivationCode(opts: { classId: string; className: string; hours: number }): ActivationCode {
+	const code = "XJK-" + Math.random().toString(36).slice(2, 8).toUpperCase() + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+	const now = new Date();
+	const item: ActivationCode = {
+		code,
+		classId: opts.classId,
+		className: opts.className,
+		createdAt: now.toISOString(),
+		expiresAt: new Date(now.getTime() + opts.hours * 3600_000).toISOString(),
+		used: false,
+	};
+	const list = listActivationCodes();
+	list.unshift(item);
+	saveActivationCodes(list.slice(0, 200)); // 只留最近 200 条
+	return item;
+}
+
+export function revokeActivationCode(code: string): boolean {
+	const list = listActivationCodes();
+	const next = list.filter((c) => c.code !== code);
+	if (next.length === list.length) return false;
+	saveActivationCodes(next);
+	return true;
+}
+
+export function consumeActivationCode(code: string, deviceUid: string): ActivationCode | null {
+	const list = listActivationCodes();
+	const idx = list.findIndex((c) => c.code === code.trim().toUpperCase() && !c.used);
+	if (idx < 0) return null;
+	const item = list[idx];
+	if (new Date(item.expiresAt) < new Date()) return null; // 过期
+	item.used = true;
+	item.usedBy = deviceUid;
+	list[idx] = item;
+	saveActivationCodes(list);
+	return item;
+}
+
 
 export function addAudit(input: {
 	actor?: string;
@@ -1104,7 +1251,45 @@ export interface DeviceCaptureMeta {
 const CAPTURE_TTL_MS = Math.max(15, Number(process.env.CONSOLE_CAPTURE_TTL_SECONDS ?? 60)) * 1000;
 const deviceCaptures = new Map<string, DeviceCaptureMeta>();
 
-const CAPTURES_DIR = path.join(path.resolve("content"), "captures");
+const CAPTURES_DIR = path.join(CONTENT_DIR, "captures");
+
+/**
+ * 截图就绪事件（v2.1）：每台设备的新截图登记后，这里留一条最近事件，
+ * 操控端轮询「新截图」时能立刻知道"哪台设备有新图"，而不必逐台查。
+ * 与截图本身同生命周期（内存 + 按 TTL 清理）：截图是瞬态回执，
+ * 事件只是"有新的了"的提醒，图还是走 captures 端点取。
+ */
+export interface CaptureReadyEvent {
+	uid: string;
+	at: number;
+}
+
+const CAPTURE_EVENT_TTL_MS = Math.max(30, Number(process.env.CONSOLE_CAPTURE_EVENT_TTL_SECONDS ?? 120)) * 1000;
+const captureReadyEvents: CaptureReadyEvent[] = [];
+
+/** 登记一条"新截图就绪"事件（幂等：同设备 10 秒内只记一条，防轮询刷屏）。 */
+export function notifyCaptureReady(uid: string): void {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return;
+	const now = Date.now();
+	const recent = captureReadyEvents.find((e) => e.uid === key);
+	if (recent && now - recent.at < 10_000) return; // 10s 去重
+	captureReadyEvents.push({ uid: key, at: now });
+	// 只保留 TTL 内的
+	while (captureReadyEvents.length > 0 && now - captureReadyEvents[0].at > CAPTURE_EVENT_TTL_MS) {
+		captureReadyEvents.shift();
+	}
+}
+
+/** 拉取最近的新截图就绪事件（按时间倒序）。 */
+export function listCaptureReadyEvents(): CaptureReadyEvent[] {
+	const now = Date.now();
+	while (captureReadyEvents.length > 0 && now - captureReadyEvents[0].at > CAPTURE_EVENT_TTL_MS) {
+		captureReadyEvents.shift();
+	}
+	return [...captureReadyEvents].sort((a, b) => b.at - a.at);
+}
+
 
 /** 登记一张设备截图（同设备覆盖旧图），返回元数据。uid 大小写不敏感（面板按 host 查时可能带大写）。 */
 export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): DeviceCaptureMeta {
@@ -1120,6 +1305,8 @@ export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): Devic
 	fs.writeFileSync(file, bytes);
 	const meta: DeviceCaptureMeta = { uid: key, at: Date.now(), bytes: bytes.length, path: file };
 	deviceCaptures.set(key, meta);
+	// v2.1：登记"新截图就绪"事件（操控端据此推送通知，而不是逐台轮询）
+	notifyCaptureReady(key);
 	// v2（监控回放）：除内存 TTL 缓存外，落一行 SQLite 索引（content/captures 的
 	// 文件本身保留，「回放」= 按设备翻时间线）。旧路径只留最新一张 60s，
 	// 老师想回看上午的教室画面时什么都没有 —— 这就是「监控视频回放」的落点。
@@ -1231,4 +1418,204 @@ export function clearDeviceCapture(uid: string): boolean {
 		}
 	}
 	return !!m;
+}
+
+// ── 功能开关（per-user 能力位）─────────────────────────────────────────────
+//
+// 「关键逻辑在服务端」的落点：角色只提供默认值，per-user 覆盖存在库里，
+// 两者叠加后由 resolveUserFeatures 一次性算出结论下发给客户端。
+// 客户端拿到的是结论（true/false），拿不到规则 —— 改前端开不出功能。
+
+/** 读覆盖值。没记录 = 全按角色默认（不给每个人造空行）。 */
+export function getUserFeatureOverrides(uid: string): Record<string, unknown> {
+	const u = String(uid ?? "").trim();
+	if (!u) return {};
+	const r = getDb().prepare("SELECT flags FROM user_features WHERE uid = ?").get(u) as
+		| { flags?: string }
+		| undefined;
+	if (!r?.flags) return {};
+	try {
+		const v = JSON.parse(r.flags);
+		return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * 写覆盖值：只认白名单功能位 + 布尔值，`null` = 恢复按角色默认，其余丢弃。
+ * 不做白名单过滤的话，一个拼错的键会永远留在库里，谁都看不出它为什么没生效。
+ */
+export function setUserFeatureOverrides(
+	uid: string,
+	patch: Record<string, unknown>,
+	actor: string
+): Record<string, unknown> {
+	const u = String(uid ?? "").trim();
+	if (!u) return {};
+	const next: Record<string, unknown> = { ...getUserFeatureOverrides(u) };
+	const src = patch && typeof patch === "object" ? patch : {};
+	for (const k of FEATURE_KEYS) {
+		const v = (src as Record<string, unknown>)[k];
+		if (v === true || v === false) next[k] = v;
+		else if (v === null) delete next[k];
+	}
+	getDb()
+		.prepare(
+			`INSERT INTO user_features (uid, flags, updated_at, updated_by) VALUES (?, ?, ?, ?)
+			 ON CONFLICT(uid) DO UPDATE SET flags = excluded.flags,
+			                               updated_at = excluded.updated_at,
+			                               updated_by = excluded.updated_by`
+		)
+		.run(u, JSON.stringify(next), nowIso(), cut(actor, 64));
+	return next;
+}
+
+/** 最终能力位 —— 服务端唯一的裁决出口（面板/被控端都只能消费它）。 */
+export function resolveUserFeatures(
+	uid: string,
+	role: Role | null | undefined
+): { features: Record<FeatureKey, boolean>; overridden: FeatureKey[]; defaults: Record<FeatureKey, boolean> } {
+	const { features, overridden } = resolveFeatures(role, getUserFeatureOverrides(uid));
+	return { features, overridden, defaults: featureDefaultsOf(role) };
+}
+
+// ── 任务级回执（点击 → 结果，一对一）───────────────────────────────────────
+
+export interface DeviceTaskRow {
+	task_id: string;
+	uid: string;
+	kind: string;
+	actor: string;
+	state: string;
+	result: string;
+	extra: string;
+	created_at: string;
+	updated_at: string;
+}
+
+const TASK_KEEP = 300;
+
+/**
+ * 建档：操控端每次下发动作时开一张「任务单」，把 task_id 随指令下发给设备。
+ * 设备做完之后带着同一个 task_id 回报 —— 这才是「被控端完成操作后给操控端
+ * 上报响应」能落到某个按钮上的前提。
+ */
+export function createTask(input: {
+	uid: string;
+	kind: string;
+	actor?: string;
+	extra?: Record<string, unknown>;
+}): DeviceTaskRow {
+	const uid = cut(input.uid, 64).trim().toLowerCase();
+	const kind = cut(input.kind, 32).trim();
+	if (!uid || !kind) throw new Error("uid/kind 不能为空");
+	const ts = nowIso();
+	let extraRaw = "";
+	if (input.extra && typeof input.extra === "object") {
+		try {
+			extraRaw = JSON.stringify(input.extra).slice(0, 1000);
+		} catch {
+			extraRaw = "";
+		}
+	}
+	const id = crypto.randomUUID();
+	getDb()
+		.prepare(
+			`INSERT INTO device_tasks (task_id, uid, kind, actor, state, result, extra, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, 'pending', '', ?, ?, ?)`
+		)
+		.run(id, uid, kind, cut(input.actor, 64), extraRaw, ts, ts);
+	pruneTasks(uid);
+	return {
+		task_id: id,
+		uid,
+		kind,
+		actor: cut(input.actor, 64),
+		state: "pending",
+		result: "",
+		extra: extraRaw,
+		created_at: ts,
+		updated_at: ts
+	};
+}
+
+/**
+ * 设备回报结果。state 只允许 done / failed / timeout —— 越界一律当 failed，
+ * 绝不让「上报了一个不认识的状态」偷偷把任务留在 pending（那会让面板永远转圈）。
+ */
+export function putTaskResult(
+	taskId: string,
+	state: string,
+	result?: string,
+	extra?: Record<string, unknown>
+): DeviceTaskRow | null {
+	const id = String(taskId ?? "").trim();
+	if (!id) return null;
+	const st = ["done", "failed", "timeout"].includes(state) ? state : "failed";
+	let extraRaw = "";
+	if (extra && typeof extra === "object") {
+		try {
+			extraRaw = JSON.stringify(extra).slice(0, 1000);
+		} catch {
+			extraRaw = "";
+		}
+	}
+	const r = getDb()
+		.prepare(
+			`UPDATE device_tasks SET state = ?, result = ?, extra = CASE WHEN ? <> '' THEN ? ELSE extra END, updated_at = ?
+			 WHERE task_id = ?`
+		)
+		.run(st, cut(result, 400), extraRaw, extraRaw, nowIso(), id);
+	if (Number(r.changes) <= 0) return null;
+	return getTask(id);
+}
+
+export function getTask(taskId: string): DeviceTaskRow | null {
+	const r = getDb().prepare("SELECT * FROM device_tasks WHERE task_id = ?").get(String(taskId ?? "").trim()) as
+		| DeviceTaskRow
+		| undefined;
+	return r ?? null;
+}
+
+/** 列任务（uid 省略 = 全校最近若干条，面板总览与排障用）。 */
+export function listTasks(uid?: string, limit = 50): DeviceTaskRow[] {
+	const n = Math.min(Math.max(limit, 1), 200);
+	const u = String(uid ?? "").trim();
+	const where = u ? "WHERE uid = ?" : "";
+	const params: any[] = u ? [u] : [];
+	return getDb()
+		.prepare(`SELECT * FROM device_tasks ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+		.all(...params, n) as unknown as DeviceTaskRow[];
+}
+
+/**
+ * 超时判死：挂了 [minutes] 分钟仍 pending 的任务一律置 timeout。
+ * 没有这一步，一次网络抖动就会让按钮卡在「等待回执」上永远不落地 ——
+ * 老师只会看到转圈，不会知道这次其实已经失败了。
+ */
+export function timeoutTasks(minutes = 5): number {
+	const since = new Date(Date.now() - Math.max(1, minutes) * 60_000).toISOString();
+	return Number(
+		getDb()
+			.prepare(
+				`UPDATE device_tasks SET state = 'timeout', result = '设备未在 5 分钟内回执', updated_at = ?
+				 WHERE state = 'pending' AND created_at <= ?`
+			)
+			.run(nowIso(), since).changes ?? 0
+	);
+}
+
+/** 每台设备只留最近 [TASK_KEEP] 条，理由同 pruneDeviceEvents（按条数而非按时间）。 */
+function pruneTasks(uid: string): void {
+	const u = String(uid ?? "").trim();
+	if (!u) return;
+	getDb()
+		.prepare(
+			`DELETE FROM device_tasks
+			  WHERE uid = ? AND rowid NOT IN (
+				SELECT rowid FROM device_tasks WHERE uid = ? ORDER BY created_at DESC, rowid DESC LIMIT ?
+			  )`
+		)
+		.run(u, u, TASK_KEEP);
 }

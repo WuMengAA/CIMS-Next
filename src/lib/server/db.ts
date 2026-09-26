@@ -11,12 +11,9 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
-
-const CONTENT_DIR = path.resolve("content");
-const DB_FILE = path.join(CONTENT_DIR, "stelarith.db");
-const USERS_JSON = path.join(CONTENT_DIR, "users.json");
+// 运行时数据路径统一由 paths.ts 推导 —— 环境隔离只需改 STELARITH_DATA_ROOT 一处。
+import { CONTENT_DIR, DB_FILE, USERS_JSON, describeDataLayout } from "./paths.js";
 
 let _db: DatabaseSync | null = null;
 
@@ -55,6 +52,35 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_seen   ON sessions(last_seen_at);
+
+-- 第三方登录授权（本站作为 OAuth2 授权服务器的客户端注册表）。
+-- 表出现之前清单只活在 content/oauth-clients.json（无密钥）与 .env 的密钥变量里，
+-- 二者都在仓库/部署层，站内部署上改不动。管理页要能增删客户端、重置密钥、临时停用，
+-- 就必须有一个运行时可写的真源，于是落库。JSON 降级为「首次播种的种子」。
+--
+-- secret 存明文是刻意的取舍：授权服务器需要常量时间比对，且管理页要「重置后一次性
+-- 展示」，哈希存储会让这两件事都变复杂；而密钥的可见性本来就只开放给 manageOAuth
+-- 的站长，与原先放在 .env 里的暴露面相当。
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id            TEXT    PRIMARY KEY,
+  name          TEXT    NOT NULL,
+  description   TEXT    NOT NULL DEFAULT '',
+  -- 密钥；空串 = 未配置，该客户端一律拒绝发放令牌
+  secret        TEXT    NOT NULL DEFAULT '',
+  -- JSON 数组字符串：允许的回拨地址（精确匹配）
+  redirect_uris TEXT    NOT NULL DEFAULT '[]',
+  -- 是否允许原生应用回拨 http://127.0.0.1:<任意端口>/oauth-callback
+  loopback      INTEGER NOT NULL DEFAULT 0,
+  -- JSON 数组字符串：允许申请的 scope
+  scopes        TEXT    NOT NULL DEFAULT '[]',
+  default_scope TEXT    NOT NULL DEFAULT 'profile',
+  -- 0 = 停用：authorize / token 阶段直接拒绝，已在用的令牌不受影响
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  -- 1 = 内置兜底客户端（如已发布在外的桌面端），页面上不可删除
+  builtin       INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL,
+  updated_at    TEXT    NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS activities (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,6 +370,86 @@ CREATE TABLE IF NOT EXISTS notice_kinds (
   type       TEXT    NOT NULL DEFAULT 'notice',
   flags      TEXT    NOT NULL DEFAULT '{}'
 );
+
+-- 功能开关（per-user 能力位，2026-09-26）：「谁能用哪个功能」的唯一裁决点在服务端。
+--
+-- 为什么不放前端判：前端判权限等于把门禁画在门上，改一行 JS 就全开。
+-- 这里存的只是**覆盖值**（true=强制开 / false=强制关 / 缺省=按角色默认），
+-- 角色默认值仍由 permissions.ts 的矩阵算出，两者叠加才是最终能力位。
+-- uid 是 users.id 的文本形式（不是设备 uid —— 管的是「人」，不是「机器」）。
+CREATE TABLE IF NOT EXISTS user_features (
+  uid        TEXT PRIMARY KEY,
+  flags      TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT ''
+);
+
+-- 任务级回执（2026-09-26）：操控端「点了一个动作」→ 被控端「做完了」→ 结果回到这一个点上。
+--
+-- 为什么不够用 device_events：那条表是流水，面板只能拿"最近一条截图事件"去猜
+-- 这次点击的结果 —— 点了两次截图，分不清哪张是哪次的。task_id 让"这次点击"
+-- 和"那次上报"对得上号，也让"点了但一直没回"能超时判死，而不是永远转圈。
+CREATE TABLE IF NOT EXISTS device_tasks (
+  task_id    TEXT PRIMARY KEY,
+  uid        TEXT    NOT NULL,              -- 目标设备 uid
+  kind       TEXT    NOT NULL,              -- screenshot|notify|file|restart|…
+  actor      TEXT    NOT NULL DEFAULT '',    -- 谁点的（留痕，出问题能问到人）
+  state      TEXT    NOT NULL DEFAULT 'pending',  -- pending|done|failed|timeout
+  result     TEXT    NOT NULL DEFAULT '',    -- 人话结果（存到哪了 / 为什么失败）
+  extra      TEXT    NOT NULL DEFAULT '',    -- JSON 补充（capture_id、notice_id…）
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_uid ON device_tasks(uid, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_state ON device_tasks(state, created_at);
+
+-- ============================================================================
+-- 个人附件库 / 图床（用户自己的文件仓库）
+-- 设计铁律：
+--   1) 一切文件都带 owner_id，**每一次读写都必须按 owner 过滤**——隔离是靠查询条件保证的，
+--      不是靠"约定"；后台跨账号管理是唯一例外，且必须显式走管理员路径（admin/library）。
+--   2) 对象实体在 Cloudflare R2（见 lib/server/storage/r2.ts），表只存元数据 + 存储键。
+--      表是元数据真源，R2 里的对象可以重建、可以换域名，元数据丢了才真丢。
+--   3) 文件夹可无限层嵌套（parent_id 自引用）；删除文件夹时子文件夹一并带走。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS attachment_folders (
+  id         TEXT    PRIMARY KEY,
+  owner_id   INTEGER NOT NULL,
+  parent_id  TEXT,
+  name       TEXT    NOT NULL,
+  -- general=普通目录 / avatar=头像专用 / imagehub=图床推荐展示
+  purpose    TEXT    NOT NULL DEFAULT 'general',
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_folders_owner ON attachment_folders(owner_id, parent_id);
+
+CREATE TABLE IF NOT EXISTS attachments (
+  id             TEXT    PRIMARY KEY,
+  owner_id       INTEGER NOT NULL,
+  folder_id      TEXT,
+  filename       TEXT    NOT NULL,
+  storage_key    TEXT    NOT NULL,   -- R2 内的对象键（也是本文件在存储里的唯一坐标）
+  url            TEXT    NOT NULL,   -- 可公开访问的外链
+  mime           TEXT    NOT NULL DEFAULT 'application/octet-stream',
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  sha256         TEXT    NOT NULL DEFAULT '',
+  width          INTEGER,             -- 仅图片
+  height         INTEGER,
+  is_image       INTEGER NOT NULL DEFAULT 0,
+  -- 图片水印（默认开）：仅对图片生效
+  watermark      INTEGER NOT NULL DEFAULT 1,
+  -- 压缩产物：original=未动过 / avif / webp
+  variant        TEXT    NOT NULL DEFAULT 'original',
+  -- 一键压缩「保留原图」时，原图另存一份在这里，可随时还原
+  original_key   TEXT    NOT NULL DEFAULT '',
+  original_bytes INTEGER NOT NULL DEFAULT 0,
+  purpose        TEXT    NOT NULL DEFAULT 'upload',   -- upload=附件库 / avatar=头像
+  created_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_att_owner      ON attachments(owner_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_att_folder     ON attachments(folder_id);
+CREATE INDEX IF NOT EXISTS idx_att_owner_kind ON attachments(owner_id, is_image, created_at);
 `;
 
 export function nowIso(): string {
@@ -356,6 +462,10 @@ function hashPassword(password: string, salt: string): string {
 
 function ensureDb(): DatabaseSync {
 	if (_db) return _db;
+	// 启动标识：一行说清"这次进程读的到底是哪个数据根"。
+	// 见 docs/架构评估与落地路线.md 5.6 —— 一次启动只允许一个环境标识，
+	// 且必须在**建库之前**打出来，否则出错时反而看不到自己连的是哪个库。
+	console.log(describeDataLayout());
 	fs.mkdirSync(CONTENT_DIR, { recursive: true });
 	const db = new DatabaseSync(DB_FILE);
 	// WAL：读写并发更友好；busy_timeout 规避偶发锁等待。
@@ -377,6 +487,8 @@ function ensureDb(): DatabaseSync {
 	if (!cols.has("grade_name")) db.exec("ALTER TABLE users ADD COLUMN grade_name TEXT NOT NULL DEFAULT ''");
 	// 经验值（#248）：经验等级的数据源。旧库补 0 = 从 Lv.1 起步。
 	if (!cols.has("xp")) db.exec("ALTER TABLE users ADD COLUMN xp INTEGER NOT NULL DEFAULT 0");
+	// 个人空间「额外配额」（字节）。0/空 = 只用等级配额；管理员可在后台 /admin/library 赠送。
+	if (!cols.has("quota_bonus_bytes")) db.exec("ALTER TABLE users ADD COLUMN quota_bonus_bytes INTEGER NOT NULL DEFAULT 0");
 
 	// console_notices 定向广播字段（向后兼容旧库：老行补空串，等价于「不限班级」）。
 	// 有了这两列，历史通知才能「分班级、按通道」正确展示，也多通道重复推送有了判据。
