@@ -186,7 +186,7 @@ export function getUser(username: string): User | null {
 	return row ? rowToUser(row) : null;
 }
 
-/** 按自增主键取用户（OAuth token 端点用）。 */
+/** 按数据库主键取用户（OAuth token 端点用）。 */
 export function getUserById(id: number): User | null {
 	if (id == null || Number.isNaN(id)) return null;
 	const row = getDb().prepare(`${SELECT_USER} WHERE id = ?`).get(id) as unknown as UserRow | undefined;

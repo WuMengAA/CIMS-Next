@@ -2,6 +2,7 @@
 	import { ROLE_LABELS, type Role } from "$lib/permissions.js";
 	import { browser } from "$app/environment";
 	import { onMount } from "svelte";
+	import TeacherQr from "$lib/components/teacher-qr.svelte";
 
 	// 集控面板以 iframe 嵌入 static/console/index.html，作为后台内容区的一页
 	// （不再全屏接管）：由后台外壳提供侧栏 + 顶栏 + 账号体系；面板自身仍带一套完整的
@@ -24,13 +25,16 @@
 			className: string;
 			gradeName: string;
 			accountId: string;
-			can: { control: boolean; remote: boolean; manage: boolean; issue: boolean };
+			can: { control: boolean; remote: boolean; manage: boolean; issue: boolean; broadcast: boolean };
 			broadcastScopes: string[];
 			userId: number;
+			lanHost: string;
 		};
 	}>();
 
 	const roleLabel = $derived(ROLE_LABELS[data.role as Role] || data.role);
+	// 老师手机页二维码弹窗（T09 第二步）：浮动入口 → 扫码直达 /teacher（PWA 套壳）
+	let qrOpen = $state(false);
 
 	// 主题跟随：官网用 ModeWatcher，主题反映在 <html> 的 `dark` 类上。面板是独立
 	// iframe 文档，读不到父文档 class，故这里把当前主题经 ?theme= 注入初始 src，
@@ -118,6 +122,7 @@
 			remote: data.can.remote ? "1" : "0",
 			manage: data.can.manage ? "1" : "0",
 			issue: data.can.issue ? "1" : "0",
+			broadcast: data.can.broadcast ? "1" : "0",
 			readonly: data.readonly ? "1" : "0",
 			// 广播可达范围（class/grade/school）逗号分隔：面板据此只列可选范围
 			bscopes: (data.broadcastScopes || []).join(","),
@@ -142,6 +147,15 @@
 	<iframe bind:this={frameEl} class="console-frame" src={frameSrc} title="星集控面板"></iframe>
 </div>
 
+<!-- 老师手机页浮动入口（T09 第二步）：扫码直达 /teacher，手机可"添加到主屏幕"像 App 一样用 -->
+<div class="teacher-qr-entry" title="老师手机页：扫码直达（手机同网络即可打开）">
+	<button type="button" class="teacher-qr-btn" onclick={() => (qrOpen = true)}>
+		<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
+		<span>老师手机页</span>
+	</button>
+</div>
+<TeacherQr bind:open={qrOpen} lanHost={data.lanHost} />
+
 <style>
 	.console-root {
 		position: fixed;
@@ -156,5 +170,29 @@
 		width: 100%;
 		border: 0;
 		display: block;
+	}
+	.teacher-qr-entry {
+		position: fixed;
+		top: 54px;
+		right: 14px;
+		z-index: 2000;
+	}
+	.teacher-qr-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 7px 13px;
+		border-radius: 999px;
+		background: #e8b23d;
+		color: #3a2c08;
+		border: none;
+		font-weight: 700;
+		font-size: 13px;
+		cursor: pointer;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+		font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+	}
+	.teacher-qr-btn:hover {
+		filter: brightness(1.07);
 	}
 </style>

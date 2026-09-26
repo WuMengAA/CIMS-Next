@@ -491,6 +491,47 @@
     });
   }
 
+  // ---- 班级列表缓存（`/class/list` 拿不到时的唯一合法兜底）----
+  //
+  // 为什么需要：CIMS 的 CCProtect 会按 IP 限流（60 秒窗口内 ≥5 次异常响应即封 60 秒），
+  // 封禁期间 `/class/list` 一律 429。没有缓存时面板只剩两条路：显示**演示班级**（假）
+  // 或者显示空白 —— 前者会让老师对着不存在的班下发指令，后者会让人以为"学校没建班级"。
+  // 缓存给的是**上一次真实成功的结果**，并配一句「可能不是最新」的说明，这才诚实。
+  const CLASS_CACHE_KEY = "stelarith.classes.cache.v1";
+
+  function writeClassCache(list) {
+    try {
+      localStorage.setItem(CLASS_CACHE_KEY, JSON.stringify({
+        at: Date.now(),
+        host: state.mgmtHost || "",
+        accountId: state.accountId || "",
+        list,
+      }));
+    } catch (_) { /* 隐私模式 / 配额满：缓存是尽力而为，失败不影响主流程 */ }
+  }
+
+  function readClassCache() {
+    try {
+      const raw = localStorage.getItem(CLASS_CACHE_KEY);
+      if (!raw) return [];
+      const obj = JSON.parse(raw);
+      // 缓存必须绑定「哪台后端 + 哪个账户」：否则换一所学校登录时，
+      // 下拉里会冒出上一所学校的班级 —— 这是最不能容忍的一类串档。
+      if (obj.host !== (state.mgmtHost || "") || obj.accountId !== (state.accountId || "")) return [];
+      return Array.isArray(obj.list) ? obj.list : [];
+    } catch (_) { return []; }
+  }
+
+  /** 把上游异常翻成一句老师能照着做的话（尽量给出"等多久/怎么办"）。 */
+  function describeClassErr(e) {
+    const m = String((e && e.message) || e || "");
+    if (/429|100429|异常封禁|限流/.test(m)) return "服务正在限流，请等 1 分钟后再试";
+    if (/401|未授权/.test(m)) return "登录状态已失效，请重新登录";
+    if (/timeout|abort|超时/i.test(m)) return "后端响应超时（本机 CIMS 可能没在跑）";
+    if (/该账户下暂无班级/.test(m)) return "该账户名下还没有班级";
+    return m || "未知错误";
+  }
+
   // ---- 星璃功能模块目录（面板展示用） ----
   //
   // 与插件端 `StelarithModules.All` 一一对应（id 必须完全一致 —— 三处共用同一套字符串：
@@ -754,11 +795,53 @@
     return { envelope, dropped };
   }
 
-  // ---- stelarith_task 令牌签名（HMAC-SHA256，浏览器原生实现，无依赖）----
-  // 与 ext/stelarith-agent 的 verify() 对齐：token = hex(HMAC_SHA256(action + "|" + ts, secret))。
-  // 生产环境：secret 为「网站—设备」共享密钥；更高安全用网站私钥 Ed25519 签名（见 sync/sign-task.mjs），
-  // 代理侧持网站公钥验签。未配置 secret 时退回时间戳占位（仅联调用，不可用于生产）。
+  // ---- 归一化单一命名空间（2026-09-23 T07.6 数据卫生收敛）----
+  //
+  // 视图契约 → 官方信封的全部归一化逻辑（norm*/denorm* 及配套辅助）聚合于此，
+  // 作为面板内部与对外的**统一入口**：新代码一律走 NORM.*，不再散落自由函数名。
+  // 旧函数名保留（见各成员注释），API 导出保持 `API.normModules` 等兼容名
+  // （app.js 至今仍用 API.normModules 渲染模块开关），因此本收敛对外行为零变化。
+  // 配套防漂移工具：`D:\Stelarith\_probe\console-copy-diff.mjs`（web 权威 vs 副本比对）。
+  const NORM = Object.freeze({
+    fmtTime,
+    ago,
+    auditActionLabel,
+    subjectNameMap,
+    notices: normNotices,       // 通知列表 → 面板形态
+    chat: normChat,             // 聊天消息 → 面板形态
+    audit: normAudit,           // 操作日志 → 面板形态
+    resources: normResources,   // CIMS 资源列表 → {id,name}
+    device: normDevice,         // device-status 一条 → 面板设备结构
+    demoDevice,
+    modules: normModules,       // 模块快照 {id:bool} → 有序数组（含目录文案）
+    schedule: normSchedule,     // 官方 Profile 信封 → 面板课表形态
+    denormSchedule,             // 面板课表形态 → 官方信封（回写方向）
+  });
+
+  // ---- stelarith_task 令牌签名 ----
+  // 双模（与 ext/stelarith-agent 的 verify() 对齐）：
+  //   ① 生产默认：POST /api/console/sign-task（服务端持 Ed25519 私钥，档案持久在
+  //      .env 的 SITE_TASK_PRIVATE_KEY），token = base64url(Ed25519_sign(action|ts))，
+  //      教室代理持**公钥**验签 —— 无需再往教室机手工配「指令密钥」；
+  //   ② 联调/降级：本地 HMAC-SHA256（state.taskSecret），token = hex(HMAC(action|ts))；
+  //   ③ 仍未配置 → 时间戳占位（仅联调用，不可用于生产）。
+  // 该端点同源（面板本就由网站伺服），fetch 自动带会话 cookie，靠服务端鉴权收口，
+  // 前端不做任何权限判断；端点要求设备控制档，避免绕过 UI 手工签发指令。
   async function signTask(action, ts) {
+    try {
+      const r = await fetch("/api/console/sign-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ts }),
+        credentials: "same-origin",
+      });
+      if (r.ok) {
+        const j = await r.json();
+        if (j && j.ok && j.token) return j.token;
+      }
+    } catch (_) {
+      /* 服务端签名端点不可达 → 回落 HMAC（联调路径） */
+    }
     if (!state.taskSecret) return String(Date.now());
     const data = action + "|" + ts;
     const enc = new TextEncoder();
@@ -811,7 +894,9 @@
   const API = {
     state, setHost, setMgmtHost, setClientHost, setExtHost, setVoicehubHost, setVoicehubKey, setSiteHost, setNoVncUrl, setTaskSecret, setEmbedded, setToken, setAccountId, setClass, setDemo, clearAuth, acct, canUseBackend, wantDemo, markOffline, markOnline,
     // 展示层辅助（面板渲染设备状态/模块开关直接用，避免在 app.js 里各写一套格式化）
-    normModules, ago, MODULE_CATALOG,
+    // NORM = 归一化单一命名空间（T07.6 收敛）：所有 norm*/denorm* 从这里取；
+    // normModules/ago 等旧名保留兼容（app.js 至今仍用 API.normModules）。
+    NORM, normModules, ago, MODULE_CATALOG,
     // 对外名 voicehub* ← 内部实现 vhub*（app.js 用 API.voicehubList / voicehubRequest / voicehubPush）。
     // 曾经写成 `voicehubList, voicehubRequest, voicehubPush,` 的简写属性：这几个标识符并不存在，
     // 对象字面量一求值就抛 ReferenceError，导致 global.API 从未赋值、整个面板 API 层全废。
@@ -850,31 +935,75 @@
     // putSchedule 的既有契约一致，改语义会连带打断聊天房间号等下游），
     // 另给 classId / displayCode 供界面显示。
     listClasses: async () => {
+      state.classListError = null;
       if (wantDemo()) return D.classes();
       if (canUseBackend()) {
-        try {
-          const r = await reqTo(state.mgmtHost, "/class/list");
-          if (Array.isArray(r) && r.length) {
-            const mapped = r
-              .map((c) => ({
-                id: c.class_plan || "",
-                name: c.name || c.class_id || "",
-                code: c.code || "",
-                classId: c.class_id || "",
-                displayCode: c.display_code || c.name || c.class_id || "",
-                deviceCount: c.device_count || 0,
-                sortOrder: c.sort_order || 0,
-              }))
-              // 没有课表资源名的班级不进下拉：选中它会用空 name 去取资源，
-              // 客户端只会拿到 404 / 空课表 —— 与其列出来误导人，不如不列。
-              .filter((c) => c.id && c.name)
-              .sort((a, b) => a.sortOrder - b.sortOrder || String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
-            if (mapped.length) return mapped;
+        let lastErr = null;
+        let notFound = false;
+        // 重试：429（CCProtect 封禁）与瞬时 5xx 都是**短时**故障，隔几百毫秒重试即可。
+        // 不重试的代价在 2026-09-22 被用户当场抓到：面板一打开，班级下拉里是演示班级
+        // （「高一(1)班」这种根本不存在的班），切也切不动 —— 因为真实请求被限流后，
+        // 旧实现直接静默换成了演示数据。
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const r = await reqTo(state.mgmtHost, "/class/list");
+            if (Array.isArray(r)) {
+              const mapped = r
+                .map((c) => ({
+                  id: c.class_plan || "",
+                  name: c.name || c.class_id || "",
+                  code: c.code || "",
+                  classId: c.class_id || "",
+                  displayCode: c.display_code || c.name || c.class_id || "",
+                  deviceCount: c.device_count || 0,
+                  sortOrder: c.sort_order || 0,
+                }))
+                // 没有课表资源名的班级不进下拉：选中它会用空 name 去取资源，
+                // 客户端只会拿到 404 / 空课表 —— 与其列出来误导人，不如不列。
+                .filter((c) => c.id && c.name)
+                .sort((a, b) => a.sortOrder - b.sortOrder || String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
+              if (mapped.length) { writeClassCache(mapped); return mapped; }
+              // 后端应答了、但该账户名下确实没有班级 → 重试不会有别的结果
+              lastErr = new Error("该账户下暂无班级");
+              break;
+            }
+            lastErr = new Error("班级列表返回了非数组");
+          } catch (e) {
+            lastErr = e;
+            // 404 = 后端根本没有这个接口（老版本），重试无意义，交给下面的兼容分支
+            if (/HTTP 404/.test(String((e && e.message) || ""))) { notFound = true; break; }
           }
-        } catch (_) { /* 老后端没有 class_plan 字段 → 回退资源名清单，至少不空 */ }
+          if (attempt < 2) await new Promise((r2) => setTimeout(r2, 350 * (attempt + 1)));
+        }
+
+        if (!notFound) {
+          // ① 有上次成功加载的结果 → 用它顶着，并**明确标注"不是最新"**。
+          //    老师看到的是真班级（只是可能少一个新建的），而不是凭空出现的假班级。
+          const cached = readClassCache();
+          if (cached.length) {
+            state.classListError = {
+              stale: true,
+              message: "班级列表暂时取不到（" + describeClassErr(lastErr) + "），当前显示的是上次成功加载的结果",
+            };
+            return cached;
+          }
+          // ② 没有缓存 → 显式报错并给空列表。**绝不**用演示班级冒充真实班级：
+          //    对着错误的班级下指令，比看到"加载失败"危险得多。
+          state.classListError = {
+            stale: false,
+            message: "班级列表获取失败：" + describeClassErr(lastErr),
+          };
+          return [];
+        }
       }
-      const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
-      return Array.isArray(r) ? normResources(r) : D.classes();
+      // 只有「后端没有 /class/list 这个接口」才退回资源名清单（老后端兼容路径）。
+      // 这条路径给出的是 `cp_class01` 这类机器名，不是给人看的班级名，仅作最后兜底。
+      try {
+        const r = await cims(`/account/${acct()}/ClassPlan/list`, {}, "classes");
+        return Array.isArray(r) ? NORM.resources(r) : [];
+      } catch (_) {
+        return [];
+      }
     },
 
     // ---- 课表（ClassPlan 资源）----
@@ -891,7 +1020,7 @@
       try {
         subEnv = await cli(`/v1/client/Subjects?name=sub_school`, {}, null);
       } catch (_) { /* 科目表缺失：退化为显示短 GUID，不阻断课表 */ }
-      return normSchedule(env, subEnv);
+      return NORM.schedule(env, subEnv);
     },
     putSchedule: async (cls, panelOrEnvelope) => {
       const name = cls || state.classId || "default_classplan";
@@ -900,7 +1029,7 @@
       let payload = panelOrEnvelope;
       let dropped = [];
       if (panelOrEnvelope && Array.isArray(panelOrEnvelope.days)) {
-        const r = denormSchedule(panelOrEnvelope);
+        const r = NORM.denormSchedule(panelOrEnvelope);
         payload = r.envelope;
         dropped = r.dropped;
       }
@@ -909,6 +1038,31 @@
       // 把「没能落地的格子」一并回给调用方，由 UI 明确提示，而不是静默丢弃
       return { ...(out && typeof out === "object" ? out : { result: out }), dropped };
     },
+
+    // ---- 自助切班（互换 / 单切：申请 → 审批 → 执行，到期自动回退）----
+    // 全部走 cimsThrow：切换课表方案是**有副作用的写操作**，失败必须让老师看到，
+    // 不得像 cims() 那样吞掉异常返回 {} 造成「显示成功其实没切」的假象。
+    swapCreate: async (payload) =>
+      cimsThrow(`/class/swap`, { method: "POST", body: JSON.stringify(payload) }),
+    swapList: async (q = {}) => {
+      const qs = new URLSearchParams();
+      if (q.status) qs.set("status", q.status);
+      if (q.page) qs.set("page", String(q.page || 1));
+      qs.set("size", String(q.size || 50));
+      const s = qs.toString();
+      return cimsThrow(`/class/swap${s ? "?" + s : ""}`, {});
+    },
+    swapApprove: async (id) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/approve`, { method: "POST", body: "{}" }),
+    swapReject: async (id, reason) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/reject`, { method: "POST", body: JSON.stringify({ reason }) }),
+    swapCancel: async (id) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/cancel`, { method: "POST", body: "{}" }),
+    swapRollback: async (id) =>
+      cimsThrow(`/class/swap/${encodeURIComponent(id)}/rollback`, { method: "POST", body: "{}" }),
+    swapGetConfig: async () => cims(`/class/swap/config`, {}, null),
+    swapSetConfig: async (cfg) =>
+      cimsThrow(`/class/swap/config`, { method: "POST", body: JSON.stringify(cfg) }),
 
     // ---- ClassIsland 组件配置（Components 资源）----
     getConfig: async (cls) => {
@@ -963,7 +1117,7 @@
         markOnline();
         return {
           fresh: Number((r && r.fresh_seconds) || 90) || 90,
-          devices: list.map(normDevice),
+          devices: list.map(NORM.device),
         };
       } catch (e) {
         // 原实现在这里回落演示设备（仅挂 error:true，UI 并不读它），
@@ -1119,10 +1273,24 @@
       return out;
     },
     // 轮询扩展网关，取设备最新 VNC 会话回执：{ip, port, token} 或 null
-    deviceRemoteStatus: async (uid) => {
+    // ⚠️ 双 key（#T07.7 步骤 5 脱节修复）：CIMS 下发指令用的是 client_id（lab-pc-001），
+    // 教室端代理回报会话用的是 device_uid（主机名 n7-20091211）。只查 client_id
+    // 会永远拿不到回执。先按 uid 查，miss 再按 host（= agent 的 UID）查 —— 与
+    // waitForCapture 的截图双 key 同一套路；host 传大写也能命中（服务端已归一化）。
+    deviceRemoteStatus: async (uid, host) => {
       try {
-        const r = await ext(`/vnc-session?uid=${encodeURIComponent(uid)}`);
+        const q = "/vnc-session?uid=" + encodeURIComponent(uid) +
+          (host && host !== uid ? "&host=" + encodeURIComponent(host) : "");
+        const r = await ext(q);
         return r && r.session ? r.session : null;
+      } catch (_) { return null; }
+    },
+    // #T07.7 步骤 3：拉取教室端截图回传（ext 网关 /captures，同设备会话回执通道）。
+    // 返回 {capture: {at, bytes, image_base64}} 或 null（未报/失败不抛错）。
+    getCapture: async (uid) => {
+      try {
+        const r = await ext(`/captures?uid=${encodeURIComponent(uid)}`);
+        return r && r.capture ? r.capture : null;
       } catch (_) { return null; }
     },
     /**
@@ -1255,8 +1423,25 @@
     // 定向解析 → 去重 → 下发 → 留痕 → 审计」一条龙。面板只管发一次。
     // 只有「独立打开面板且未配站点后端」时才退化为直连 CIMS 的旧路径。
     listNotices: async (classId) =>
-      normNotices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
-    sendNotice: async (title, scope, classes, content, seconds) => {
+      NORM.notices(await ext("/notices" + (classId ? "?class=" + encodeURIComponent(classId) : ""), {}, "notices")),
+    // v2.1 类型化通知的逐台回执（谁看了 / 谁没看；需登录）。
+    noticeDeliveries: async (noticeId) => {
+      const r = await ext(`/notice-deliveries?notice=${encodeURIComponent(noticeId)}`);
+      if (r && r.error) throw new Error(r.error);
+      return r || { notice: null, deliveries: [] };
+    },
+    // 设备执行回执流水（被控端「动作做完」之后的上报：谁做了、做成没有、失败原因）。
+    // uid 省略 = 全校总览（面板总览/回执页用，限 100 条，够看最近动作）。
+    // hours 仅在有 uid 时生效（24 小时内成败统计）。
+    deviceEvents: async (uid, hours) => {
+      const q = new URLSearchParams();
+      if (uid) q.set("uid", String(uid).trim());
+      if (hours && Number.isFinite(Number(hours)) && Number(hours) > 0) q.set("hours", String(Number(hours)));
+      const r = await ext(`/events${q.toString() ? "?" + q.toString() : ""}`);
+      if (r && r.error) throw new Error(r.error);
+      return r || { events: [], stats: null };
+    },
+    sendNotice: async (title, scope, classes, content, seconds, opts = {}) => {
       const body = {
         title,
         scope: scope || "本班",
@@ -1267,6 +1452,16 @@
       // CIMS 侧 NotificationPayload.DurationSeconds 本就存在（0~3600），一路透传即可。
       const sec = Number(seconds);
       if (Number.isFinite(sec) && sec > 0) body.duration_seconds = sec;
+      // v2.1 通知类型与旗标（服务端按角色矩阵强制；传了不支持的会被 403 拒）。
+      //   type: notice | island | popup | fullscreen
+      //   popup 额外：reply_presets（预设回复短语 1~6 条）、emergency_confirm（需确认）
+      //   popup/fullscreen：auto_dismiss_seconds（自动关屏，1~300）
+      const tp = String(opts.type || "");
+      if (["island", "popup", "fullscreen"].includes(tp)) body.type = tp;
+      if (Array.isArray(opts.reply_presets) && opts.reply_presets.length) body.reply_presets = opts.reply_presets;
+      if (opts.emergency_confirm === true) body.emergency_confirm = true;
+      const ads = Number(opts.auto_dismiss_seconds);
+      if (Number.isFinite(ads) && ads > 0 && ads <= 300) body.auto_dismiss_seconds = Math.round(ads);
       // ① 内嵌网站 / 配了站点后端：走服务端（推荐路径，含定向与去重）
       if (state.embedded || state.siteHost) {
         return ext("/notices", { method: "POST", body: JSON.stringify(body) }, "notices");
@@ -1309,6 +1504,59 @@
         const r = await cims("/class/device-map", {}, null);
         return r && typeof r === "object" ? r : { devices: {}, classes: [] };
       } catch (_) { return { devices: {}, classes: [] }; }
+    },
+
+    // ---- 班级系统 v2（2026-09-25）：真实班级唯一来源 + 文件传输 v2 ----
+    //
+    // 「班级选择列表没有确切真实获取班级」收口：所有"选班"界面一律走
+    // GET /api/classes（站点服务端直读 CIMS /class/list，45s 缓存）。
+    // 取不到（CIMS 不可达/未导班）→ 抛人话错误，调用方明示，
+    // 绝不回退演示班（旧"高一(1)班"兜底已废除）。
+    listSiteClasses: async () => {
+      const r = await siteFetch("/api/classes");
+      if (r && r.error) throw new Error(r.error);
+      return (r && r.classes) || [];
+    },
+    // 管理员读写某用户的班级绑定（user_class_bindings；teacher≤2/homeroom≤1/techrep≤1）
+    adminUserClasses: async (username) => {
+      const r = await siteFetch(`/api/admin/users/classes?username=${encodeURIComponent(username)}`);
+      if (r && r.error) throw new Error(r.error);
+      return r || { bindings: [] };
+    },
+    adminSetUserClasses: async (username, classIds) => {
+      const r = await siteFetch(`/api/admin/users/classes?username=${encodeURIComponent(username)}`, {
+        method: "PUT", body: JSON.stringify({ class_ids: classIds })
+      });
+      if (r && r.error) throw new Error(r.error);
+      return r || {};
+    },
+
+    // 文件传输 v2：上传实体 → 服务端代推 file_push → 逐台回执。
+    // 旧链路只发元数据、文件本体从未离开发送机（设备永远收不到），v2 三环补齐。
+    uploadFile: async (file, kind = "file") => {
+      const base = state.siteHost ? state.siteHost.replace(/\/+$/, "") : "";
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      fd.append("kind", kind);
+      const res = await fetch(base + "/api/console/ext/files", {
+        method: "POST", credentials: "include", body: fd,
+      });
+      const txt = await res.text();
+      const d = txt ? JSON.parse(txt) : {};
+      if (!res.ok) throw new Error(d.error || "HTTP " + res.status);
+      return d.file || {};
+    },
+    filePush: async (fileId, classIds) => {
+      const r = await siteFetch("/api/console/ext/file-push", {
+        method: "POST", body: JSON.stringify({ file_id: fileId, classes: classIds })
+      });
+      if (r && r.error) throw new Error(r.error);
+      return r || {};
+    },
+    fileDeliveries: async (fileId) => {
+      const r = await siteFetch(`/api/console/ext/file-deliveries?file=${encodeURIComponent(fileId)}`);
+      if (r && r.error) throw new Error(r.error);
+      return (r && r.deliveries) || [];
     },
 
     // ---- 文件夹式班级：创建 / 审核 / 详情（#182）----
@@ -1410,7 +1658,7 @@
     // 正文含 @全体 / @all 时，服务端会自动把这条升级为教室大屏广播（见
     // src/routes/api/console/ext/[...path]/+server.ts 的 chat 分支）——
     // 即「不要把重要消息只留在群里」，喊一句就上屏幕，不必再切页手工重发。
-    listChat: async (room) => normChat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
+    listChat: async (room) => NORM.chat(await ext("/chat?room=" + encodeURIComponent(room || "techrep-global"), {}, "chat"), state.classId || "电教委员"),
     sendChat: async (text, from, room) => {
       const me = from || (state.classId || "电教委员");
       const r = await ext("/chat", {
@@ -1517,7 +1765,7 @@
 
     // ---- 操作日志（站点侧 SQLite）----
     listAudit: async (action) =>
-      normAudit(await ext("/audit" + (action ? "?action=" + encodeURIComponent(action) : ""), {}, "audit")),
+      NORM.audit(await ext("/audit" + (action ? "?action=" + encodeURIComponent(action) : ""), {}, "audit")),
     /** 记一条集控操作日志；失败不抛（审计不应阻断主流程）。 */
     audit: async (action, target, detail) => {
       try {

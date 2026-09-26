@@ -1,0 +1,160 @@
+name: ci
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 反馈回路分两级，别再把 continue-on-error 挂在 job 级（那是自欺）：
+#
+#   ① 阻断级（默认，什么都不加）：构建、Node 代理端到端自测、静态门禁。
+#      它们稳定通过，一旦失败**必须让 workflow 变红**。
+#   ② 报告级（step 级 continue-on-error）：svelte-check 存量问题未清完，暂不阻断，
+#      但**必须可见** —— 用 steps.<id>.outcome（豁免生效前的真实结论）+ 步骤摘要穿透，
+#      避免"界面全绿、其实一直在报错"。
+#
+# 历史教训：本文件初版把 continue-on-error 挂在 **job 级**，导致构建/测试失败时
+#   workflow 结论仍是 success —— 等同于没有反馈回路，比没有 CI 更有害
+#   （"CI 全绿"会被当成证据）。切勿再这样写。
+#
+# runs-on 为何钉 ubuntu-24.04 而不是 ubuntu-latest：
+#   run 页公告（2026-09-24 读到）："ubuntu-latest will migrate to Ubuntu 26
+#   beginning October 19, 2026"。镜像迁移会连带换掉 Node/glibc/预装工具版本，
+#   属于"没人改代码、构建却突然挂"的典型来源。钉住版本 = 把这类变化变成显式动作。
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  website:
+    name: 网站构建 + 类型检查
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9          # 与 pnpm-lock.yaml 的 lockfileVersion 9.0 对齐（v6 只是新增 pnpm v11 支持，version 语义未变）
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --no-frozen-lockfile
+
+      # 阻断级：构建失败必须变红
+      - name: 构建（SvelteKit / vite）
+        env:
+          # 本机因内存紧张要限堆；CI 内存充裕，给足避免 OOM 误报
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: pnpm run build
+
+      # 报告级：存量问题未清完，不阻断；但真实结论要能被看见
+      - name: svelte-check（类型与语法）
+        id: sveltecheck
+        continue-on-error: true
+        run: |
+          set +e
+          pnpm run check > /tmp/svelte-check.log 2>&1
+          code=$?
+          cat /tmp/svelte-check.log
+          echo "svelte-check 退出码: $code"
+          exit $code
+
+      # 穿透汇报：outcome 是 continue-on-error 生效**之前**的真实结论
+      - name: 汇报 svelte-check 真实结论（穿透 continue-on-error）
+        if: always()
+        run: |
+          summary=$(grep -E 'svelte-check found|Error:|Warn' /tmp/svelte-check.log 2>/dev/null | tail -5 || true)
+          if [ -z "$summary" ]; then summary="（未匹配到摘要行，见上方步骤日志）"; fi
+          echo "::warning::svelte-check 真实结论 outcome=${{ steps.sveltecheck.outcome }}（步骤显示 conclusion=${{ steps.sveltecheck.conclusion }}）—— 存量问题，暂不阻断"
+          {
+            echo "### svelte-check（报告级 / 不阻断）"
+            echo ""
+            echo "| 真实结论 outcome | 步骤显示 conclusion |"
+            echo "|---|---|"
+            echo "| \`${{ steps.sveltecheck.outcome }}\` | \`${{ steps.sveltecheck.conclusion }}\` |"
+            echo ""
+            echo '```'
+            echo "$summary"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  static-gates:
+    name: 静态门禁（脚本编码 / 缓存戳 / 静态资源）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 面板缓存戳检查需要 base..head 两个 commit 都在本地。
+          # 本仓库全量历史仅约 2 MB，全量克隆成本可忽略。
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # 阻断级：.ps1 含中文必须有 UTF-8 BOM（无 BOM → PS5.1 按 ANSI 解析，解析期崩、
+      # 计划任务返 4294967295 且日志零行）；.bat/.cmd 必须纯 ASCII。
+      - name: 启动器脚本编码
+        run: node scripts/check-script-encoding.mjs
+
+      # 阻断级：改了 static/console 下被 ?v= 引用的资源，就必须同提交递增 ?v=，
+      # 否则 Cloudflare 边缘缓存 4 小时 → 代码改了、用户端仍是旧版（2026-09-19 事故）。
+      # 非 push 事件（PR / 手动触发）无比对范围，脚本会自动跳过并说明。
+      - name: 面板资源缓存戳（?v=）
+        env:
+          V_BASE: ${{ github.event.before }}
+          V_HEAD: ${{ github.sha }}
+        run: node scripts/check-console-asset-version.mjs
+
+      # 阻断级：面板静态资源的「引用 ⊆ 存在 ⊆ 同步」完整性。
+      # 本仓库因"遍历范围 < 引用范围"踩过**两次同形态**事故：
+      #   · 2026-09-20 同步器允许列表漏 `protocol.mjs` → remote-webrtc 整页加载失败；
+      #   · 2026-09-24 同步器不递归漏 `vendor/qrcode.min.js` → 老师页扫码失败。
+      # 两次都是**静默 404**（无报错、无日志，只有用户端白屏）。
+      # 此步把同步器真跑进**临时目录**再核对集合，不碰任何生产/构建目录。
+      - name: 面板静态资源完整性
+        run: node scripts/check-console-assets.mjs
+
+  agent-node:
+    name: Node 代理链路自测
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ext/stelarith-agent-node
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # 阻断级：签名 → 验签 → 回执 全链路自测
+      - name: 跑端到端自测（签名 → 验签 → 回执）
+        run: node test/end2end.mjs
+
+  # ── 以下两项暂不启用，原因记在这里，避免后人重复踩 ──────────────────────
+  #
+  # 1) C# 插件（ext/stelarith-classisland-plugin）
+  #    无法在 CI 构建：csproj 用**硬编码绝对路径**引用运行版 ClassIsland 的 Avalonia 程序集
+  #        <HintPath>D:\Classlsland\app-2.1.0.1-0\Avalonia.Base.dll</HintPath>
+  #    即「插件只能在装了 ClassIsland 的那台机器上编译」。
+  #    修法（建议，需在 monorepo 工作副本改 ext/）：
+  #         <PropertyGroup>
+  #           <ClassIslandDir Condition="'$(ClassIslandDir)' == ''">D:\Classlsland\app-2.1.0.1-0</ClassIslandDir>
+  #         </PropertyGroup>
+  #      并把 HintPath 改成 $(ClassIslandDir)\Avalonia.Base.dll
+  #      → 本机行为不变，CI 可用 -p:ClassIslandDir=… 指向解包目录。
+  #
+  # 2) Rust 代理（ext/stelarith-agent）
+  #    可构建，但 webrtc 依赖体量大、构建时间长（本机实测约数十分钟），
+  #    作为每次 push 的门禁不划算。建议改为「仅在改动 ext/stelarith-agent/** 时触发」
+  #    之后再启用（用 paths 过滤）。

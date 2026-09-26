@@ -17,10 +17,17 @@ import { readFileSync } from 'node:fs';
 const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 const BUILD_ID = process.env.BUILD_ID || "v" + (pkg.version || "0.0.0");
 
+// ── 构建输出目录可覆盖（原子发布用，见 scripts/release-site.mjs）──────────────
+// 默认仍是 "build"，与历史行为完全一致。
+// 发布时传 STELLARITH_BUILD_OUT=build.next，把新版本构到**旁路目录**，
+// 全程不碰正在服务的 build/ —— 这样"构建中恰好重启"永远不会撞到半成品产物
+// （症状：node 启动后 0.15 秒即退出、连崩 20+ 次 = 数分钟打不开）。
+const BUILD_OUT = process.env.STELLARITH_BUILD_OUT || "build";
+
 const config = {
 	preprocess: vitePreprocess(),
 	kit: {
-		adapter: adapter(),
+		adapter: adapter({ out: BUILD_OUT }),
 		version: { name: BUILD_ID },
 		// ── CSRF origin 校验 ──────────────────────────────────────────────────
 		// 集控面板以内网多来源访问（127.0.0.1 / localhost / 局域网 IP）为前提。

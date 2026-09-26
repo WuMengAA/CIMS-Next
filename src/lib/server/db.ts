@@ -11,12 +11,9 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
-import path from "node:path";
 import crypto from "node:crypto";
-
-const CONTENT_DIR = path.resolve("content");
-const DB_FILE = path.join(CONTENT_DIR, "stelarith.db");
-const USERS_JSON = path.join(CONTENT_DIR, "users.json");
+// 运行时数据路径统一由 paths.ts 推导 —— 环境隔离只需改 STELARITH_DATA_ROOT 一处。
+import { CONTENT_DIR, DB_FILE, USERS_JSON, describeDataLayout } from "./paths.js";
 
 let _db: DatabaseSync | null = null;
 
@@ -38,7 +35,9 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_ip TEXT,
   login_count   INTEGER NOT NULL DEFAULT 0,
   class_name    TEXT NOT NULL DEFAULT '',
-  grade_name    TEXT NOT NULL DEFAULT ''
+  grade_name    TEXT NOT NULL DEFAULT '',
+  -- 经验值（#248：经验等级 xp→Lv 的唯一数据源；纯展示，与权限/角色零耦合）
+  xp            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -53,6 +52,35 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_seen   ON sessions(last_seen_at);
+
+-- 第三方登录授权（本站作为 OAuth2 授权服务器的客户端注册表）。
+-- 表出现之前清单只活在 content/oauth-clients.json（无密钥）与 .env 的密钥变量里，
+-- 二者都在仓库/部署层，站内部署上改不动。管理页要能增删客户端、重置密钥、临时停用，
+-- 就必须有一个运行时可写的真源，于是落库。JSON 降级为「首次播种的种子」。
+--
+-- secret 存明文是刻意的取舍：授权服务器需要常量时间比对，且管理页要「重置后一次性
+-- 展示」，哈希存储会让这两件事都变复杂；而密钥的可见性本来就只开放给 manageOAuth
+-- 的站长，与原先放在 .env 里的暴露面相当。
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id            TEXT    PRIMARY KEY,
+  name          TEXT    NOT NULL,
+  description   TEXT    NOT NULL DEFAULT '',
+  -- 密钥；空串 = 未配置，该客户端一律拒绝发放令牌
+  secret        TEXT    NOT NULL DEFAULT '',
+  -- JSON 数组字符串：允许的回拨地址（精确匹配）
+  redirect_uris TEXT    NOT NULL DEFAULT '[]',
+  -- 是否允许原生应用回拨 http://127.0.0.1:<任意端口>/oauth-callback
+  loopback      INTEGER NOT NULL DEFAULT 0,
+  -- JSON 数组字符串：允许申请的 scope
+  scopes        TEXT    NOT NULL DEFAULT '[]',
+  default_scope TEXT    NOT NULL DEFAULT 'profile',
+  -- 0 = 停用：authorize / token 阶段直接拒绝，已在用的令牌不受影响
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  -- 1 = 内置兜底客户端（如已发布在外的桌面端），页面上不可删除
+  builtin       INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL,
+  updated_at    TEXT    NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS activities (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +227,229 @@ CREATE TABLE IF NOT EXISTS user_titles (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_user_titles_user ON user_titles(user_id);
+
+-- ── 项目展板 · 站内 Issues（类 GitHub）────────────────────────────────────
+-- 为什么放 DB：issue 需要「每个项目内自增编号」（#1、#2…）、状态流转与评论计数，
+-- 这些都是关系型语义；放 content/*.json 会退化成全量读写 + 手工算编号，
+-- 并发下必然撞号。
+--
+-- number 是「项目内」编号，用 (project_slug, number) 唯一索引约束；
+-- 分配编号时在事务里取 MAX(number)+1，配合 SQLite 的写锁即可保证不重号。
+CREATE TABLE IF NOT EXISTS board_issues (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_slug  TEXT    NOT NULL,
+  number        INTEGER NOT NULL,
+  title         TEXT    NOT NULL,
+  body          TEXT    NOT NULL DEFAULT '',
+  author        TEXT    NOT NULL DEFAULT '',
+  state         TEXT    NOT NULL DEFAULT 'open',   -- open | closed
+  labels        TEXT    NOT NULL DEFAULT '[]',     -- JSON 数组，如 ["bug","enhancement"]
+  pinned        INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT    NOT NULL,
+  updated_at    TEXT    NOT NULL,
+  closed_at     TEXT    NOT NULL DEFAULT '',
+  closed_by     TEXT    NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_board_issues_num    ON board_issues(project_slug, number);
+CREATE INDEX        IF NOT EXISTS idx_board_issues_state  ON board_issues(project_slug, state, created_at);
+
+CREATE TABLE IF NOT EXISTS board_issue_comments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  issue_id    INTEGER NOT NULL,
+  author      TEXT    NOT NULL DEFAULT '',
+  body        TEXT    NOT NULL DEFAULT '',
+  created_at  TEXT    NOT NULL,
+  FOREIGN KEY (issue_id) REFERENCES board_issues(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_board_comments_issue ON board_issue_comments(issue_id, created_at);
+
+-- ── 班级系统 v2：结构化的「用户 ↔ 班级」绑定 ─────────────────────────────────
+-- 旧模型 users.class_name 是自由文本（一人一班、写错没人拦），权限层只能靠
+-- 「数字启发式」去猜用户说的是哪个班 —— 这正是「班级选择列表没有确切真实获取班级」
+-- 的根源。v2 的规矩：
+--   · class_id 必须是 **CIMS 真实班级实体**（/class/list 里的 class_id，如 class_3p1），
+--     绑定接口在写入前会实时校验存在性，绝不允许自由文本进这张表；
+--   · 一人可绑多班（老师带两个班），上限按角色收敛（班主任=1、电教委员=1、老师=2）；
+--   · 站长（owner/admin）不需要绑定 —— 他们的范围就是全校。
+CREATE TABLE IF NOT EXISTS user_class_bindings (
+  uid        INTEGER NOT NULL,
+  class_id   TEXT    NOT NULL,
+  class_name TEXT    NOT NULL DEFAULT '',
+  bound_by   TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL,
+  PRIMARY KEY (uid, class_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ucb_class ON user_class_bindings(class_id);
+
+-- 截图回放索引：设备每回传一张截图，除了进内存 TTL 缓存（面板实时看），
+-- 再落一行 SQLite + 磁盘文件（content/captures/），「监控视频回放」= 按设备翻时间线。
+-- 不存图片字节进库（PNG 动辄几百 KB，SQLite 存 blob 会让库迅速膨胀），只存索引。
+CREATE TABLE IF NOT EXISTS captures (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid        TEXT    NOT NULL,
+  path       TEXT    NOT NULL,
+  bytes      INTEGER NOT NULL DEFAULT 0,
+  sha256     TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_captures_uid ON captures(uid, created_at);
+
+-- 文件传输 v1 实体表：此前「传文件」只发元数据（name/size/sha256），文件本体从未
+-- 离开发送机 —— 设备端自然永远收不到。现在：发送方先把文件上传到这里（磁盘
+-- content/files/ + 本表登记），再经 file_push 指令让设备按 id 下载。
+CREATE TABLE IF NOT EXISTS file_objects (
+  id         TEXT    PRIMARY KEY,
+  name       TEXT    NOT NULL,
+  size       INTEGER NOT NULL DEFAULT 0,
+  sha256     TEXT    NOT NULL DEFAULT '',
+  kind       TEXT    NOT NULL DEFAULT 'file',   -- file | voice（语音走同一通道，设备端自动播放）
+  path       TEXT    NOT NULL,
+  uploader   TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL
+);
+
+-- 送达回执：file_push 每指向一台设备就记一行 pending，设备下载/播放后回 ack 更新。
+-- 「文件传输后没有消息提示」的发送方那一半修在这里 —— 老师能看到每台设备收没收到。
+CREATE TABLE IF NOT EXISTS file_deliveries (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  file_id    TEXT    NOT NULL,
+  uid        TEXT    NOT NULL,
+  class_id   TEXT    NOT NULL DEFAULT '',
+  state      TEXT    NOT NULL DEFAULT 'pending',  -- pending | acked | failed
+  detail     TEXT    NOT NULL DEFAULT '',
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_filedel_file ON file_deliveries(file_id, uid);
+CREATE INDEX IF NOT EXISTS idx_filedel_uid  ON file_deliveries(uid, created_at);
+
+-- 通知送达回执（通知类型化 v2）：设备每收到一条通知记一行，设备侧按类型回报
+-- received（已收到）→ read（已读）/ replied（已回复，action_result 为预设短语）
+-- / rejected（确认通知被驳回——用户点了取消/不在场）。「谁没回应、谁还没收到」
+-- 在操控端逐台亮出来，不再只是"HTTP 200 = 已送达"的假象。
+CREATE TABLE IF NOT EXISTS notice_deliveries (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  notice_id    INTEGER NOT NULL,
+  uid          TEXT    NOT NULL,
+  state        TEXT    NOT NULL DEFAULT 'pending',  -- pending|received|read|replied|rejected
+  action_result TEXT   NOT NULL DEFAULT '',          -- replied 时的预设短语原文（如 已收到/马上处理）
+  -- 老师自由回复的原文（replyNotice 上报；区别于上面那个"预设短语"）。
+  -- 一个字段存两种回复很容易在面板上串味：预设点是给老师一键点的，自由回复
+  -- 是她打了一整句话，界面上要分开显示，否则「已收到」会被当成回复内容顶替掉。
+  reply        TEXT    NOT NULL DEFAULT '',
+  detail       TEXT    NOT NULL DEFAULT '',
+  created_at   TEXT    NOT NULL,
+  updated_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nd_notice ON notice_deliveries(notice_id);
+CREATE INDEX IF NOT EXISTS idx_nd_uid ON notice_deliveries(uid, created_at);
+
+-- 设备执行回执（v2.1 2026-09-25）：被控端「一个动作做完之后」的上报 ——
+-- 截图存到哪了、语音播了没、收到了哪个文件、哪条通知弹到了老师眼前。
+--
+-- 为什么不能只用 command/ack：ack 回答的是"这条指令收到、结果是成功"，
+-- 回答不了"然后呢"。老师那台机器上截图其实 saving 到了 C:/Users/.../shots/1.png，
+-- 面板却只看到一个绿勾 —— 一旦要追问"图呢"，谁都答不上来。
+-- 与 notice_deliveries 的分工：那边是「通知逐台送达/回复」，这边是「动作结果流水」。
+CREATE TABLE IF NOT EXISTS device_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  uid        TEXT    NOT NULL,   -- 设备 uid（被控端自称，密钥为部署级共享）
+  event      TEXT    NOT NULL,   -- screenshot | file_receive | notice_shown | notice_reply | …
+  ok         INTEGER NOT NULL DEFAULT 1,  -- 1=成功 0=失败（失败也记：失败才需要被看见）
+  detail     TEXT    NOT NULL DEFAULT '',  -- 人话结论（存到哪了 / 为什么失败）
+  extra      TEXT    NOT NULL DEFAULT '',  -- 结构化补充（notice_id、kind…）JSON
+  created_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dev_events ON device_events(uid, created_at);
+
+-- 通知类型化元数据（v2.1）：不 ALTER 既有 console_notices，类型/旗标放这里，
+-- listNotices join 出来。type: notice|island|popup|fullscreen；
+-- flags: JSON（如 {"emergency_confirm":true,"auto_dismiss_seconds":30,"reply_presets":["已收到",…]}）。
+CREATE TABLE IF NOT EXISTS notice_kinds (
+  notice_id  INTEGER PRIMARY KEY,
+  type       TEXT    NOT NULL DEFAULT 'notice',
+  flags      TEXT    NOT NULL DEFAULT '{}'
+);
+
+-- 功能开关（per-user 能力位，2026-09-26）：「谁能用哪个功能」的唯一裁决点在服务端。
+--
+-- 为什么不放前端判：前端判权限等于把门禁画在门上，改一行 JS 就全开。
+-- 这里存的只是**覆盖值**（true=强制开 / false=强制关 / 缺省=按角色默认），
+-- 角色默认值仍由 permissions.ts 的矩阵算出，两者叠加才是最终能力位。
+-- uid 是 users.id 的文本形式（不是设备 uid —— 管的是「人」，不是「机器」）。
+CREATE TABLE IF NOT EXISTS user_features (
+  uid        TEXT PRIMARY KEY,
+  flags      TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT ''
+);
+
+-- 任务级回执（2026-09-26）：操控端「点了一个动作」→ 被控端「做完了」→ 结果回到这一个点上。
+--
+-- 为什么不够用 device_events：那条表是流水，面板只能拿"最近一条截图事件"去猜
+-- 这次点击的结果 —— 点了两次截图，分不清哪张是哪次的。task_id 让"这次点击"
+-- 和"那次上报"对得上号，也让"点了但一直没回"能超时判死，而不是永远转圈。
+CREATE TABLE IF NOT EXISTS device_tasks (
+  task_id    TEXT PRIMARY KEY,
+  uid        TEXT    NOT NULL,              -- 目标设备 uid
+  kind       TEXT    NOT NULL,              -- screenshot|notify|file|restart|…
+  actor      TEXT    NOT NULL DEFAULT '',    -- 谁点的（留痕，出问题能问到人）
+  state      TEXT    NOT NULL DEFAULT 'pending',  -- pending|done|failed|timeout
+  result     TEXT    NOT NULL DEFAULT '',    -- 人话结果（存到哪了 / 为什么失败）
+  extra      TEXT    NOT NULL DEFAULT '',    -- JSON 补充（capture_id、notice_id…）
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_uid ON device_tasks(uid, created_at);
+CREATE INDEX IF NOT EXISTS idx_task_state ON device_tasks(state, created_at);
+
+-- ============================================================================
+-- 个人附件库 / 图床（用户自己的文件仓库）
+-- 设计铁律：
+--   1) 一切文件都带 owner_id，**每一次读写都必须按 owner 过滤**——隔离是靠查询条件保证的，
+--      不是靠"约定"；后台跨账号管理是唯一例外，且必须显式走管理员路径（admin/library）。
+--   2) 对象实体在 Cloudflare R2（见 lib/server/storage/r2.ts），表只存元数据 + 存储键。
+--      表是元数据真源，R2 里的对象可以重建、可以换域名，元数据丢了才真丢。
+--   3) 文件夹可无限层嵌套（parent_id 自引用）；删除文件夹时子文件夹一并带走。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS attachment_folders (
+  id         TEXT    PRIMARY KEY,
+  owner_id   INTEGER NOT NULL,
+  parent_id  TEXT,
+  name       TEXT    NOT NULL,
+  -- general=普通目录 / avatar=头像专用 / imagehub=图床推荐展示
+  purpose    TEXT    NOT NULL DEFAULT 'general',
+  created_at TEXT    NOT NULL,
+  updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_folders_owner ON attachment_folders(owner_id, parent_id);
+
+CREATE TABLE IF NOT EXISTS attachments (
+  id             TEXT    PRIMARY KEY,
+  owner_id       INTEGER NOT NULL,
+  folder_id      TEXT,
+  filename       TEXT    NOT NULL,
+  storage_key    TEXT    NOT NULL,   -- R2 内的对象键（也是本文件在存储里的唯一坐标）
+  url            TEXT    NOT NULL,   -- 可公开访问的外链
+  mime           TEXT    NOT NULL DEFAULT 'application/octet-stream',
+  bytes          INTEGER NOT NULL DEFAULT 0,
+  sha256         TEXT    NOT NULL DEFAULT '',
+  width          INTEGER,             -- 仅图片
+  height         INTEGER,
+  is_image       INTEGER NOT NULL DEFAULT 0,
+  -- 图片水印（默认开）：仅对图片生效
+  watermark      INTEGER NOT NULL DEFAULT 1,
+  -- 压缩产物：original=未动过 / avif / webp
+  variant        TEXT    NOT NULL DEFAULT 'original',
+  -- 一键压缩「保留原图」时，原图另存一份在这里，可随时还原
+  original_key   TEXT    NOT NULL DEFAULT '',
+  original_bytes INTEGER NOT NULL DEFAULT 0,
+  purpose        TEXT    NOT NULL DEFAULT 'upload',   -- upload=附件库 / avatar=头像
+  created_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_att_owner      ON attachments(owner_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_att_folder     ON attachments(folder_id);
+CREATE INDEX IF NOT EXISTS idx_att_owner_kind ON attachments(owner_id, is_image, created_at);
 `;
 
 export function nowIso(): string {
@@ -211,6 +462,10 @@ function hashPassword(password: string, salt: string): string {
 
 function ensureDb(): DatabaseSync {
 	if (_db) return _db;
+	// 启动标识：一行说清"这次进程读的到底是哪个数据根"。
+	// 见 docs/架构评估与落地路线.md 5.6 —— 一次启动只允许一个环境标识，
+	// 且必须在**建库之前**打出来，否则出错时反而看不到自己连的是哪个库。
+	console.log(describeDataLayout());
 	fs.mkdirSync(CONTENT_DIR, { recursive: true });
 	const db = new DatabaseSync(DB_FILE);
 	// WAL：读写并发更友好；busy_timeout 规避偶发锁等待。
@@ -230,6 +485,10 @@ function ensureDb(): DatabaseSync {
 	// 班级绑定（集控面板「新账号引导补充班级身份」字段）：仅面板/管理端可写，用户自填。
 	if (!cols.has("class_name")) db.exec("ALTER TABLE users ADD COLUMN class_name TEXT NOT NULL DEFAULT ''");
 	if (!cols.has("grade_name")) db.exec("ALTER TABLE users ADD COLUMN grade_name TEXT NOT NULL DEFAULT ''");
+	// 经验值（#248）：经验等级的数据源。旧库补 0 = 从 Lv.1 起步。
+	if (!cols.has("xp")) db.exec("ALTER TABLE users ADD COLUMN xp INTEGER NOT NULL DEFAULT 0");
+	// 个人空间「额外配额」（字节）。0/空 = 只用等级配额；管理员可在后台 /admin/library 赠送。
+	if (!cols.has("quota_bonus_bytes")) db.exec("ALTER TABLE users ADD COLUMN quota_bonus_bytes INTEGER NOT NULL DEFAULT 0");
 
 	// console_notices 定向广播字段（向后兼容旧库：老行补空串，等价于「不限班级」）。
 	// 有了这两列，历史通知才能「分班级、按通道」正确展示，也多通道重复推送有了判据。
@@ -238,6 +497,18 @@ function ensureDb(): DatabaseSync {
 	);
 	if (!ncols.has("classes")) db.exec("ALTER TABLE console_notices ADD COLUMN classes TEXT NOT NULL DEFAULT ''");
 	if (!ncols.has("channel")) db.exec("ALTER TABLE console_notices ADD COLUMN channel TEXT NOT NULL DEFAULT ''");
+	// 通知类型化（v2 2026-09-25）：notice=普通公告 / island=岛循环 / popup=弹窗确认回复 /
+	// fullscreen=全屏紧急。flags 为 JSON：{emergency_confirm, auto_dismiss_seconds, reply_presets, expire_at}
+	// 老行统一按「普通公告」处理（channel 是旧的通道标识，与 type 正交）。
+	if (!ncols.has("type")) db.exec("ALTER TABLE console_notices ADD COLUMN type TEXT NOT NULL DEFAULT 'notice'");
+	if (!ncols.has("flags")) db.exec("ALTER TABLE console_notices ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
+
+	// notice_deliveries 自由回复列（2026-09-25）：老行补空串 = 「这台机器没回过话」，
+	// 与 state='pending' 相符，不影响既有的「谁看了」统计。
+	const dcols = new Set(
+		(db.prepare("PRAGMA table_info(notice_deliveries)").all() as { name: string }[]).map((c) => c.name)
+	);
+	if (!dcols.has("reply")) db.exec("ALTER TABLE notice_deliveries ADD COLUMN reply TEXT NOT NULL DEFAULT ''");
 
 	// console_audit 哈希链字段（向后兼容旧库：老行补空串 = 「本行无链」，
 	// verifyAudit 会从第一条有哈希的行开始校验，并如实报告跳过了多少旧行）。

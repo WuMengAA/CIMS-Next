@@ -12,7 +12,7 @@
 	import { ArrowUpDown, Plus, Trash2, KeyRound, Users, Search, Pencil, ShieldOff, Circle, X, Check } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
 	import { confirmDelete } from "$lib/components/admin/confirm.svelte";
-	import { ROLE_LABELS, ASSIGNABLE_ROLES, roleLevelLabel, type Role } from "$lib/permissions.js";
+	import { ROLE_LABELS, ASSIGNABLE_ROLES, roleRank, type Role } from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -48,6 +48,63 @@
 	let pwdTarget = $state("");
 	let newPwd = $state("");
 	let showPwdForm = $state(false);
+
+	// 班级绑定（v2 2026-09-25：老师≤2 班 / 班主任 1 班 / 电教委员 1 班必须绑班；
+	// 站长/管理员免绑=全校。数据来源只有 CIMS 真实班级，取不到就明示）
+	const NEEDS_BINDING = ["teacher", "homeroom", "techrep"];
+	let bindTarget = $state<UserInfo | null>(null);
+	let bindOptions = $state<{ class_id: string; name?: string }[]>([]);
+	let bindPicked = $state<string[]>([]);
+	let bindBusy = $state(false);
+	let bindErr = $state("");
+
+	async function openBind(u: UserInfo) {
+		bindTarget = u;
+		bindErr = "";
+		bindBusy = true;
+		bindOptions = [];
+		try {
+			const [cls, cur] = await Promise.all([
+				fetch("/api/classes").then(async (r) => {
+					const d = await r.json();
+					if (!r.ok) throw new Error(d.error || "班级列表不可用");
+					return (d.classes || []) as { class_id: string; name?: string }[];
+				}),
+				fetch(`/api/admin/users/classes?username=${encodeURIComponent(u.username)}`).then(async (r) => {
+					const d = await r.json();
+					if (!r.ok) throw new Error(d.error || "绑定读取失败");
+					return d as { bindings?: { class_id: string }[] };
+				})
+			]);
+			bindOptions = cls;
+			bindCurrent = (cur.bindings || []).map((b) => b.class_id);
+			bindPicked = [...bindCurrent];
+		} catch (e) {
+			bindErr = e instanceof Error ? e.message : String(e);
+		}
+		bindBusy = false;
+	}
+
+	async function saveBind() {
+		if (!bindTarget) return;
+		bindBusy = true;
+		bindErr = "";
+		try {
+			const r = await fetch(`/api/admin/users/classes?username=${encodeURIComponent(bindTarget.username)}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ class_ids: bindPicked })
+			});
+			const d = await r.json();
+			if (!r.ok || d.error) throw new Error(d.error || "保存失败");
+			toast.success("班级绑定已保存");
+			bindTarget = null;
+			load();
+		} catch (e) {
+			bindErr = e instanceof Error ? e.message : String(e);
+		}
+		bindBusy = false;
+	}
 
 	// TanStack table
 	let sorting = $state<SortingState>([{ id: "createdAt", desc: true }]);
@@ -196,13 +253,17 @@
 		return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 	}
 
-	// 角色选项来自权限模型（按等级从高到低）。避免在此硬编码 ——
+	// 角色选项来自权限模型（按角色秩从高到低）。避免在此硬编码 ——
 	// 权限模型演进时这里漏改，就会出现"能选中但服务端不认"的角色。
-	const ROLE_OPTIONS: Role[] = ASSIGNABLE_ROLES;
+	// admin/owner 同为「站长」（历史等价角色，DB 存量两个值都可能有），
+	// 下拉只展示一个「站长」选项，避免无法区分的重复项（展示层去重）。
+	const ROLE_OPTIONS: Role[] = ASSIGNABLE_ROLES.filter(
+		(r, i, arr) => arr.findIndex((x) => ROLE_LABELS[x] === ROLE_LABELS[r]) === i
+	);
 
-	/** 下拉里显示「站长 · L5」这类带等级的标签，便于按等级选人。 */
+	/** 下拉里显示「站长 · 秩6」这类标签，便于按角色秩选人（#248：不再显示等级）。 */
 	function roleOptionLabel(r: Role): string {
-		return `${ROLE_LABELS[r]} · ${roleLevelLabel(r).replace(/^L(\d) .*$/, "L$1")}`;
+		return `${ROLE_LABELS[r]} · 秩${roleRank(r)}`;
 	}
 </script>
 
@@ -225,8 +286,8 @@
 			<div class="grid gap-2"><Label>显示名称</Label><Input bind:value={newDisplay} placeholder="昵称（可选）" /></div>
 			<div class="grid gap-2"><Label>邮箱</Label><Input bind:value={newEmail} placeholder="邮箱（可选）" /></div>
 			<div class="grid gap-2"><Label>密码（至少 6 位）</Label><Input type="password" bind:value={newPassword} placeholder="密码" /></div>
-			<div class="grid gap-2"><Label>角色</Label><Select.Root type="single" bind:value={newRole}>
-				<Select.Trigger class="w-full">{ROLE_LABELS[newRole as Role] || newRole} · {roleLevelLabel(newRole as Role)}</Select.Trigger>
+			<div class="grid gap-2"><Label>角色</Label>			<Select.Root type="single" bind:value={newRole}>
+				<Select.Trigger class="w-full">{roleOptionLabel(newRole as Role)}</Select.Trigger>
 				<Select.Content>
 					{#each ROLE_OPTIONS as r (r)}
 						<Select.Item value={r} label={roleOptionLabel(r)} />
@@ -248,7 +309,7 @@
 			<div class="grid gap-2"><Label>显示名称</Label><Input bind:value={editDisplay} /></div>
 			<div class="grid gap-2"><Label>邮箱</Label><Input bind:value={editEmail} /></div>
 			<div class="grid gap-2"><Label>角色</Label><Select.Root type="single" bind:value={editRole}>
-				<Select.Trigger class="w-full">{ROLE_LABELS[editRole as Role] || editRole} · {roleLevelLabel(editRole as Role)}</Select.Trigger>
+				<Select.Trigger class="w-full">{roleOptionLabel(editRole as Role)}</Select.Trigger>
 				<Select.Content>
 					{#each ROLE_OPTIONS as r (r)}
 						<Select.Item value={r} label={roleOptionLabel(r)} />
@@ -279,6 +340,41 @@
 		<div class="mt-4 flex gap-2">
 			<Button onclick={changePwd} disabled={!newPwd}>确认修改</Button>
 			<Button variant="ghost" onclick={() => (showPwdForm = false)}>取消</Button>
+		</div>
+	</div>
+{/if}
+
+{#if bindTarget}
+	<div class="mb-6 rounded-xl border border-border/60 bg-card p-5">
+		<div class="mb-4 flex items-center justify-between">
+			<h3 class="flex items-center gap-2 font-heading font-medium">
+				<Users class="size-4" /> 班级绑定 · {bindTarget.username}
+				<Badge variant="outline">{ROLE_LABELS[bindTarget.role as Role] || bindTarget.role}</Badge>
+			</h3>
+			<Button variant="ghost" size="sm" onclick={() => (bindTarget = null)}><X class="size-4" /></Button>
+		</div>
+		{#if bindErr}<p class="mb-3 text-sm text-destructive">{bindErr}</p>{/if}
+		{#if bindBusy && !bindOptions.length}
+			<p class="text-sm text-muted-foreground">加载班级中…</p>
+		{:else if !bindOptions.length}
+			<p class="text-sm text-muted-foreground">班级列表不可用：请确认 CIMS 服务在线且已导入班级（只显示真实班级，不使用演示数据）。</p>
+		{:else}
+			<div class="flex flex-wrap gap-2">
+				{#each bindOptions as c (c.class_id)}
+					<label class="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm {bindPicked.includes(c.class_id) ? 'border-primary bg-primary/10' : 'border-border'}">
+						<input type="checkbox" class="accent-primary" bind:group={bindPicked} value={c.class_id} />
+						{c.name || c.class_id}
+					</label>
+				{/each}
+			</div>
+		{/if}
+		<p class="mt-2 text-xs text-muted-foreground">
+			老师最多绑 2 个班、班主任 1 个、电教委员 1 个；站长/管理员无需绑定（全校可管）。
+			绑定后该用户才能对班级设备执行其角色允许的动作（传文件 / 远控 / 监控 / 语音 / 通知）。
+		</p>
+		<div class="mt-4 flex gap-2">
+			<Button onclick={saveBind} disabled={bindBusy}>保存绑定</Button>
+			<Button variant="ghost" onclick={() => (bindTarget = null)}>取消</Button>
 		</div>
 	</div>
 {/if}
@@ -338,7 +434,7 @@
 									<div class="flex min-w-0 flex-col">
 										<div class="flex items-center gap-2">
 											<span class="truncate font-medium">{u.displayName || u.username}</span>
-											<Badge variant={u.role === "admin" || u.role === "owner" ? "default" : "outline"}>{ROLE_LABELS[u.role as Role] || u.role} · {roleLevelLabel(u.role as Role).replace(/^L(\d) .*$/, "L$1")}</Badge>
+											<Badge variant={u.role === "admin" || u.role === "owner" ? "default" : "outline"}>{ROLE_LABELS[u.role as Role] || u.role}</Badge>
 											{#if u.username === current}<Badge variant="secondary">当前</Badge>{/if}
 											{#if u.online}<span class="text-[11px] text-emerald-400">在线</span>{/if}
 										</div>
@@ -347,7 +443,7 @@
 								</div>
 							</TableCell>
 							<TableCell class="text-muted-foreground">@{u.username}</TableCell>
-							<TableCell class="text-muted-foreground">{roleLevelLabel(u.role as Role)}</TableCell>
+							<TableCell class="text-muted-foreground">{ROLE_LABELS[u.role as Role] || u.role}</TableCell>
 							<TableCell>
 								{#if (u.status || "active") === "active"}
 									<Badge variant="outline">正常</Badge>

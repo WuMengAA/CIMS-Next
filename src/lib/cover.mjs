@@ -3,6 +3,12 @@
 // 同时被「服务端批量脚本」与「客户端封面生成器页面」复用，保证所见即所得。
 import { COVER_ICONS } from "./cover-icons.mjs";
 
+/** 放宽为可索引字典（COVER_ICONS 是字面量键对象，直接用 string 索引会报隐式 any） */
+/** @type {Record<string, string>} */
+const ICONS = COVER_ICONS;
+
+/** 放宽为可索引字典：字面量键对象无法用 string 索引（svelte-check 会报隐式 any） */
+/** @type {Record<string, [number, number]>} */
 const RATIOS = {
 	"16:9": [1200, 675],
 	"4:3": [1200, 900],
@@ -13,6 +19,7 @@ const RATIOS = {
 const FONT =
 	"Inter, 'Noto Sans SC', 'Microsoft YaHei', 'PingFang SC', 'Source Han Sans SC', sans-serif";
 
+/** @param {string} s */
 function hashStr(s) {
 	let h = 2166136261;
 	for (let i = 0; i < s.length; i++) {
@@ -22,6 +29,7 @@ function hashStr(s) {
 	return h >>> 0;
 }
 
+/** @param {number} a */
 function mulberry32(a) {
 	return function () {
 		a |= 0;
@@ -32,11 +40,14 @@ function mulberry32(a) {
 	};
 }
 
+/** @param {string} ch */
 function isCJK(ch) {
-	const c = ch.codePointAt(0);
+	const c = ch.codePointAt(0) ?? 0;
 	return (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3000 && c <= 0x30ff);
 }
 
+/** @param {string} ch
+ * @param {number} fs */
 function charWidth(ch, fs) {
 	if (isCJK(ch)) return fs;
 	if (/[A-Za-z0-9]/.test(ch)) return fs * 0.56;
@@ -45,7 +56,13 @@ function charWidth(ch, fs) {
 }
 
 // 把文本按像素宽度换行（CJK 按字断、拉丁按词断），最多 maxLines 行，超出截断加省略号。
+/** @param {string} text
+ * @param {number} fs
+ * @param {number} maxWidth
+ * @param {number} maxLines
+ * @returns {{ text: string, width: number }[]} */
 function wrapText(text, fs, maxWidth, maxLines) {
+	/** @type {{ text: string, width: number }[]} */
 	const lines = [];
 	let line = "";
 	let width = 0;
@@ -107,13 +124,18 @@ function wrapText(text, fs, maxWidth, maxLines) {
 	return lines.slice(0, maxLines);
 }
 
+/** 放宽为可索引字典（正则仅匹配这 5 个字符，索引恒有值，行为与原内联字面量一致） */
+/** @type {Record<string, string>} */
+const XML_ESCAPES = { "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" };
+
+/** @param {unknown} s */
 function escapeXml(s) {
-	return String(s).replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
+	return String(s).replace(/[<>&'"]/g, (c) => XML_ESCAPES[c]);
 }
 
 /**
  * @param {object} opts
- * @param {string} opts.title
+ * @param {string} [opts.title]
  * @param {string} [opts.subtitle]
  * @param {string} [opts.category]
  * @param {string} [opts.icon]  COVER_ICONS 的键
@@ -126,11 +148,12 @@ export function buildCoverSvg(opts = {}) {
 	const title = opts.title || "Untitled";
 	const subtitle = opts.subtitle || "";
 	const category = opts.category || "";
-	const iconKey = opts.icon && COVER_ICONS[opts.icon] ? opts.icon : "image";
+	const iconKey = typeof opts.icon === "string" && ICONS[opts.icon] ? opts.icon : "image";
 	const accent = opts.accent || "#cc785c";
 	const bg = opts.bg || "#1b1b19";
 	const bg2 = opts.bg2 || "#141413";
-	const [W, H] = RATIOS[opts.ratio] || RATIOS["16:9"];
+	const ratioKey = typeof opts.ratio === "string" ? opts.ratio : "";
+	const [W, H] = RATIOS[ratioKey] || RATIOS["16:9"];
 
 	const seed = hashStr(title + "|" + (category || ""));
 	const rng = mulberry32(seed);
@@ -157,7 +180,7 @@ export function buildCoverSvg(opts = {}) {
 	}
 
 	// 图标（右上，带柔光底）
-	const icon = COVER_ICONS[iconKey];
+	const icon = ICONS[iconKey];
 	const S = Math.round(Math.min(W, H) * 0.22);
 	const s = S / 24;
 	const ix = W - S - 72;

@@ -26,14 +26,18 @@
 		MessagesSquare,
 		LogIn,
 		FileText,
-		Search
+		Search,
+		School,
+		GraduationCap,
+		Radio,
+		MonitorSmartphone
 	} from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
 	import { ChevronDown, ChevronUp } from "lucide";
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import { can, userCan } from "$lib/permissions.js";
-	import { readMoreOpen, writeMoreOpen } from "$lib/sidebar-memory.js";
+	import { readMoreOpen, writeMoreOpen, readCampusOpen, writeCampusOpen } from "$lib/sidebar-memory.js";
 	import SidebarResizer from "$lib/components/sidebar-resizer.svelte";
 	import { ICON_MAP } from "$lib/icon-library.js";
 	
@@ -82,6 +86,12 @@
 		{ title: "管理后台", url: "/admin", icon: "admin" },
 		{ title: "账号", url: "/account", icon: "account" }
 	];
+	const defaultCampus = [
+		{ title: "学校一览", url: "/campus/school", icon: "school" },
+		{ title: "班级风貌", url: "/campus/classes", icon: "graduation" },
+		{ title: "校园广播", url: "/campus/broadcast", icon: "radio" },
+		{ title: "集控面板", url: "/admin/console", icon: "console" }
+	];
 
 	const navIconMap: Record<string, any> = {
 		"home": Home, "blog": BookOpen, "posts": BookOpen, "bookopen": BookOpen,
@@ -93,7 +103,9 @@
 		"archive": Archive, "archives": Archive, "feedback": MessageSquare, "messagesquare": MessageSquare,
 		"admin": Wrench, "wallet": Wallet, "user": User, "account": User, "users": User,
 		"music": Music2, "forum": MessagesSquare, "news": Newspaper, "pages": FileText,
-		"search": Search, "layoutdashboard": FileText
+		"search": Search, "layoutdashboard": FileText,
+		"school": School, "graduation": GraduationCap, "graduationcap": GraduationCap,
+		"radio": Radio, "broadcast": Radio, "console": MonitorSmartphone, "monitor": MonitorSmartphone
 	};
 
 	const workspace = $derived(
@@ -108,11 +120,18 @@
 		(data?.nav?.bottom && data.nav.bottom.length > 0 ? data.nav.bottom : defaultBottom)
 			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || Globe }))
 	);
+	const campus = $derived(
+		(data?.nav?.campus && data.nav.campus.length > 0 ? data.nav.campus : defaultCampus)
+			.map(i => ({ ...i, icon: navIconMap[(i.icon || i.title).toLowerCase()] || ICON_MAP[(i.icon || "").toLowerCase()] || School }))
+	);
 
 	// 「更多」展开态从本地记忆恢复（前后台共用），并在切换时写回 ——
 	// 否则用户每次刷新都要重新点开「更多」找同一批入口。
 	let moreOpen = $state(false);
 	let moreHydrated = $state(false);
+	// 「校园」分组：默认折叠，展开态从本地记忆恢复（与「更多」共用记忆机制）。
+	let campusOpen = $state(false);
+	let campusHydrated = $state(false);
 	// 管理类入口（后台/钱包/账号）仅登录用户可见：登录态由根 layout 的 load 同步下发
 	// （data.user），服务端已判定，无需客户端再发请求，侧边栏零闪烁、彻底常驻。
 	const authed = $derived(!!(data?.user));
@@ -135,6 +154,8 @@
 		if (moreHydrated) return;
 		moreHydrated = true;
 		moreOpen = readMoreOpen();
+		campusOpen = readCampusOpen();
+		campusHydrated = true;
 	});
 
 	const path = $derived(page.url.pathname);
@@ -194,9 +215,36 @@
 							</Sidebar.MenuSub>
 						{/if}
 					</Sidebar.MenuItem>
-				</Sidebar.Menu>
-			</Sidebar.GroupContent>
-		</Sidebar.Group>
+			</Sidebar.Menu>
+		</Sidebar.GroupContent>
+	</Sidebar.Group>
+	<Sidebar.Separator />
+	<Sidebar.Group>
+		<Sidebar.GroupContent>
+			<Sidebar.Menu>
+				<Sidebar.MenuItem>
+					<Sidebar.MenuButton onclick={() => { campusOpen = !campusOpen; writeCampusOpen(campusOpen); }} aria-expanded={campusOpen} tooltipContent="校园">
+						<School />
+						<span class="group-data-[collapsible=icon]:hidden">校园</span>
+						<span class="ml-auto group-data-[collapsible=icon]:hidden"></span>
+						<MorphIcon icon={campusOpen ? ChevronUp : ChevronDown} spring="snappy" reducedMotion="user" size={16} aria-hidden="true" />
+					</Sidebar.MenuButton>
+					{#if campusOpen}
+						<Sidebar.MenuSub>
+							{#each campus as item (item.url)}
+								<Sidebar.MenuSubItem>
+									<Sidebar.MenuSubButton href={item.url} isActive={isActive(item.url)}>
+										<item.icon />
+										<span>{item.title}</span>
+									</Sidebar.MenuSubButton>
+								</Sidebar.MenuSubItem>
+							{/each}
+						</Sidebar.MenuSub>
+					{/if}
+				</Sidebar.MenuItem>
+			</Sidebar.Menu>
+		</Sidebar.GroupContent>
+	</Sidebar.Group>
 	{#if authed}
 	<Sidebar.Separator />
 	<Sidebar.Group>

@@ -75,6 +75,13 @@
       remote: flag("remote"),
       manage: flag("manage"),
       issue: flag("issue"),
+      // 广播位（2026-09-23 新增）：能发通知/广播 = 内容轴 sendBroadcast 称号
+      // 或设备轴 control 档任一。与设备三关铁律解耦 —— 老师没有设备档也能发本班通知。
+      broadcast: flag("broadcast"),
+      // v2 传文件位（2026-09-25）：老师/电教委员/班主任/管理员的 file 动作。
+      // 旧宿主 URL 不带 file=1 时按设备档兜底（control/manage 本来就在旧模型的
+      // 传文件档里），避免升级间隙把能传文件的人挡在门外。
+      file: flag("file") || flag("control") || flag("manage"),
       // 广播可达范围（class/grade/school）。宿主按角色等级算好后下发；
       // 内嵌态拿不到就视为「仅本班」，宁可少列也不给未授权的大范围。
       bscopes: (q.get("bscopes") || "").split(",").map((s) => s.trim()).filter(Boolean),
@@ -83,13 +90,16 @@
     };
     // readonly 有两种来源：宿主显式下发的 readonly=1（只读观看态），
     // 或内嵌但一个设备写权限位都没有 —— 两者归一，避免各自为政。
-    p.readonly = embedded && (flag("readonly") || (!p.control && !p.remote && !p.manage));
+    // ⚠️ 2026-09-23（#249 设备三关）：teacher 收回全部设备档后仍持有 broadcast
+    // （能发本班通知）—— 广播位不算"纯只读"，否则 readonly-mode 会把通知入口
+    // （data-need="broadcast"）一并藏掉，老师连通知都发不了。
+    p.readonly = embedded && (flag("readonly") || (!p.control && !p.remote && !p.manage && !p.broadcast));
     return p;
   })();
 
   // 只读观看态：整体套一层标记，供 CSS 收敛一切写操作入口的样式。
   if (PERM.readonly) document.documentElement.classList.add("readonly-mode");
-  const NEED_LABEL = { control: "设备控制", remote: "远程控制", manage: "设备管理", issue: "提交上报" };
+  const NEED_LABEL = { control: "设备控制", remote: "远程控制", manage: "设备管理", issue: "提交上报", broadcast: "通知广播" };
   /** 设备档位 → 中文（权限页展示用；与 NEED_LABEL 同源但含未用于门控的 watch）。 */
   const NEED_LABEL_DEVICE = { watch: "观看", control: "设备控制", remote: "远程控制", manage: "设备管理" };
   /**
@@ -99,17 +109,42 @@
    */
   const MOD_CORE = new Set(((API && API.MODULE_CATALOG) || []).filter((m) => m.core).map((m) => m.id));
   const allow = (need) => !need || !PERM.embedded || !!PERM[need];
-  /** 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。 */
+  /**
+   * 整个视图所需的权限（视图级门控，避免点进去只有一片禁用按钮）。
+   *
+   * **约定：导航里的每个视图都必须在这里有一条**，哪怕是显式的 `null`（表示"任何能进
+   * 面板的人都可看"）。写 null 不是为了形式，而是因为「漏写」与「故意不设限」在代码里
+   * 长得一模一样 —— 只能靠 `_probe/console-identity-check.mjs` 把两者区分开。
+   */
   const VIEW_NEED = {
-    schedule: "control", config: "control", plugins: "manage",
+    // 明确不需要权限：只有总览、权限说明、点歌（点歌的"推送"按钮另行门控）。
+    // chat（师生沟通）2026-09-23 起按 issue 位门控：能参与交流 = 拥有 participant
+    // 称号（它同时授予 submitIssue 与 chatClass），游客/只读观看态不该有沟通入口。
+    dashboard: null, roles: null, chat: "issue", voicehub: null,
+    // 课表 / 点名：纯教学功能（看课表、抽人），不碰设备 —— 任何能进面板的人可用；
+    // 课表里的「保存并下发」按钮另行 data-need="control" 二次门控（下发才碰设备）。
+    schedule: null, random: null,
+    // 通知广播：**内容轴广播能力**（broadcast 位 = sendBroadcast 称号或设备 control 档），
+    // 不与设备轴绑定 —— 老师没有设备档也要能发本班通知（方案表：teacher 发本班消息/广播）。
+    config: "manage", plugins: "manage",
     // 班级管理：看+登记班级是电教委员/老师的日常（control）；
     // 页内的「审核」按钮另加 data-need="manage" 二次门控，不把整页锁死。
     classes: "control",
-    devices: "control", remote: "remote", notify: "control",
+    devices: "control", remote: "remote", notify: "broadcast",
+    // 执行回执：通知的逐台送达/回复明细（broadcast 档，老师也能看"谁看了我发的通知"），
+    // 页内「设备执行流水」块用 control 二次门控（见 views.receipts）——两类数据权限不同，
+    // 不能用一个档位把老师关在外面，也不能让只读的人看到设备动作流水。
+    receipts: "broadcast",
     report: "issue", bug: "issue",
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
     // （写操作在页内逐个按钮上再门控，不把整页锁死）。
     classisland: "control",
+    // 自助切班：互换/单切申请是班主任、电教委员的日常操办；审批同样控制档
+    // （换课表方案 ≈ 给设备下指令，不上升到设备管理档，站长本来就全档）。
+    swap: "control",
+    // 定时广播 / 操作日志：都建在"能给设备下指令"之上，按 control 档门控。
+    scheduled: "control", audit: "control",
+    filetransfer: "control", volume: "control",
     // 权限与分级页是纯读信息，不需要设备权限 —— 任何能进面板的人
     // 都该看得到"自己到底能做什么"，否则权限不透明会变成猜谜。
     // 自检页同理：它只是"把每段各探一次"，本身不改任何东西。
@@ -120,6 +155,160 @@
     media: "remote",
   };
 
+  // ============ 身份适配（同一个系统，不同身份，界面不一样）============
+  //
+  // 权限门控回答「**能不能**做」；身份适配回答「**该不该摆在他面前**」。
+  // 这两件事必须分开：一个 L4 老师完全可能有 control 位（能管本班设备），
+  // 但「插件 / 开发者选项 / 配置下发 / ClassIsland 专页」不该出现在他日常的侧栏里
+  // —— 那不是他的工作，摆着只会让他以为"要学的东西这么多"。
+  //
+  // 所以规则是：**能力是底线，身份决定默认**。
+  // 主列表只放这个身份日常用得到的；其余**仍然可用**的入口收进「更多功能」，
+  // 点一下就展开。隐藏的是"注意力占用"，不是"权限"。
+  //
+  // 未识别的身份（role 为空，例如技术人员单独打开面板排障）→ 不收敛，全量平铺，
+  // 免得排障时还得先找菜单。
+  const ROLE_IDENTITY = {
+    owner: { who: "站长", panel: "管理面板", blurb: "全校设备、用户与站点设置" },
+    admin: { who: "站长", panel: "管理面板", blurb: "全校设备、用户与站点设置" },
+    editor: { who: "编辑", panel: "管理面板", blurb: "内容与页面管理" },
+    moderator: { who: "审核员", panel: "管理面板", blurb: "审核内容与权限申请" },
+    teacher: { who: "老师", panel: "教师面板", blurb: "看课表、发本班通知、课堂点名" },
+    // 班主任：本班设备运维主力（设备三关之一，与电教委员同档）。
+    homeroom: { who: "班主任", panel: "班主任面板", blurb: "本班设备与远程控制、本班/年级通知" },
+    techrep: { who: "电教委员", panel: "电教委员面板", blurb: "运维本班设备、处理报修、本班点歌与沟通" },
+    user: { who: "学生", panel: "学生面板", blurb: "查看本班设备状态、提交报修" },
+    viewer: { who: "访客", panel: "只读面板", blurb: "只能观看，不能做任何操作" },
+  };
+
+  /**
+   * 各身份的**主列表**（写在这个身份日常动线里的视图）。
+   * 不在此表内、但权限允许的视图 → 归入「更多功能」。`null` = 不收敛。
+   */
+  const ROLE_PRIMARY = {
+    // 访客/学生：能看的只有总览（设备状态在上面的卡片里）和自己的权限说明。
+    viewer: ["dashboard", "roles"],
+    user: ["dashboard", "chat", "report", "bug", "roles"],
+    // 老师：设备三关铁律下无任何设备档位 —— 只摆课表、通知、点名、沟通等教学动线，
+    // 不再出现「设备控制/远程控制/ClassIsland」入口（点了也 403 的入口是误导）。
+    teacher: ["dashboard", "schedule", "notify", "receipts", "random", "chat", "report", "bug", "roles"],
+    // 班主任：本班设备运维 + 教学动线（设备三关之一，与电教委员同档）。
+    homeroom: ["dashboard", "schedule", "devices", "remote", "classisland", "notify", "receipts", "random", "volume", "swap", "chat", "report", "bug", "roles"],
+    // 电教委员：设备运维主力 —— 多了远程控制、ClassIsland 状态页、自检（排查"没反应"是日常）。
+    techrep: ["dashboard", "devices", "remote", "classisland", "notify", "receipts", "chat", "test", "swap", "report", "bug", "roles"],
+    // 审核员/编辑无设备档位（设备三关收紧），不摆设备操作入口。
+    moderator: ["dashboard", "chat", "report", "bug", "roles"],
+    editor: ["dashboard", "classes", "notify", "scheduled", "chat", "filetransfer", "roles"],
+    admin: null,
+    owner: null,
+  };
+
+  const IDENT = ROLE_IDENTITY[PERM.role] || null;
+  const PRIMARY_VIEWS = (PERM.role && PERM.role in ROLE_PRIMARY)
+    ? ROLE_PRIMARY[PERM.role]
+    : null;
+  let navMoreOpen = false;
+
+  /** 身份一句话：给顶栏 title / 抽屉身份条用。 */
+  function identityLine() {
+    if (!IDENT) return "";
+    const level = PERM.levelLabel ? PERM.levelLabel + " · " : "";
+    return level + IDENT.who + " — " + IDENT.blurb;
+  }
+
+  /**
+   * 按身份收拾侧栏：品牌副标题改成对应面板名，非主列表项收进「更多功能」。
+   * 正在浏览的那一项永远显示 —— 否则会出现"高亮项消失了"的诡异状态。
+   */
+  function applyIdentityNav() {
+    if (IDENT) {
+      // 「· 电教委员面板」写死会让老师和站长第一眼就怀疑自己进错了地方
+      document.title = "星集控 · " + IDENT.panel;
+      const sub = document.querySelector(".brand .sub");
+      if (sub) sub.textContent = "· " + IDENT.panel;
+      const shSub = document.querySelector(".sidebar-head .sh-sub");
+      if (shSub) shSub.textContent = IDENT.panel;
+      const who = $("#nav-who");
+      if (who) {
+        who.textContent = IDENT.who + " · " + IDENT.blurb;
+        who.hidden = false;
+      }
+    }
+    if (!PRIMARY_VIEWS) return; // 未识别身份 → 不收敛
+    const set = new Set(PRIMARY_VIEWS);
+    const items = document.querySelectorAll("#sidebar .nav[data-view]");
+    let extra = 0;
+    items.forEach((b) => {
+      const isPrimary = set.has(b.dataset.view);
+      const active = b.classList.contains("active");
+      b.classList.toggle("nav-extra", !isPrimary);
+      b.classList.toggle("nav-extra-hide", !isPrimary && !navMoreOpen && !active);
+      if (!isPrimary) extra++;
+    });
+    const btn = $("#nav-more");
+    if (btn) {
+      btn.classList.toggle("hidden", extra === 0);
+      const label = btn.querySelector(".nav-label");
+      if (label) label.textContent = navMoreOpen ? "收起更多功能" : "更多功能（" + extra + "）";
+      btn.setAttribute("aria-expanded", navMoreOpen ? "true" : "false");
+    }
+    refreshGroupVisibility();
+  }
+
+  /** 分组标题随成员显隐：组内所有视图项都被权限/身份隐藏时，整组（含标题）一起隐藏，
+   *  避免出现「空标题分组」。在权限收拾与「更多功能」开合后都要重算。 */
+  function refreshGroupVisibility() {
+    document.querySelectorAll("#sidebar .nav-group").forEach((g) => {
+      const anyVisible = [...g.querySelectorAll(".nav[data-view]")].some(
+        (b) => !b.classList.contains("hidden") && !b.classList.contains("nav-extra-hide")
+      );
+      g.classList.toggle("hidden", !anyVisible);
+    });
+  }
+
+  /** 取侧栏上某一项的人话名称（唯一来源就是导航本身，不另写一份标签表）。 */
+  function viewLabel(view) {
+    const b = document.querySelector(`#sidebar .nav[data-view="${view}"]`);
+    const l = b && b.querySelector(".nav-label");
+    return l ? l.textContent.trim() : view;
+  }
+
+  /**
+   * 总览页顶部的「我的身份」卡。
+   *
+   * 存在的理由：身份适配如果只体现在"少几个菜单"，用户是感觉不到的 —— 他只会
+   * 觉得"功能不全"。所以这里把「你是谁 / 你能做什么 / 常去哪几页」正着说一遍，
+   * 并把入口直接摆出来。少即是明示，不是隐藏。
+   */
+  function identityCard() {
+    if (!IDENT) return "";
+    const skip = new Set(["dashboard", "roles"]);
+    const quick = (PRIMARY_VIEWS || [])
+      .filter((v) => !skip.has(v))
+      .slice(0, 7)
+      .map((v) => `<button class="id-act" data-act="go" data-v="${esc(v)}">${esc(viewLabel(v))}</button>`)
+      .join("");
+    const name = PERM.displayName || PERM.user || "";
+    return `
+      <div class="card id-card">
+        <div class="id-head">
+          <span class="id-avatar" aria-hidden="true">${esc((name || IDENT.who).slice(0, 1))}</span>
+          <div class="id-text">
+            <div class="id-who">${esc(IDENT.who)}${name ? `<span class="id-sub"> · ${esc(name)}</span>` : ""}</div>
+            <div class="id-blurb">${esc(IDENT.blurb)}</div>
+          </div>
+          <span class="grow"></span>
+          <span class="chip">${esc(PERM.levelLabel || "未登录")}</span>
+        </div>
+        ${quick ? `<div class="id-actions">${quick}</div>` : ""}
+        <p class="id-note muted">${
+          PRIMARY_VIEWS
+            ? "侧栏「更多功能」里还收着其它可用入口。"
+            : "当前是管理身份，全部入口都在侧栏。"
+        }能点得了的都能做，点不了的确实是没权限 —— 权限由服务端判定，不是界面藏起来的。</p>
+      </div>`;
+  }
+
   function renderPermChip() {
     const el = $("#perm-chip");
     if (!el) return;
@@ -128,11 +317,14 @@
     if (PERM.manage) parts.push("设备管理");
     if (PERM.control) parts.push("设备控制");
     if (PERM.remote) parts.push("远程控制");
+    if (PERM.broadcast) parts.push("通知广播");
     if (PERM.issue) parts.push("上报");
-    // 等级标签（L1–L5）单独前置：它属于内容轴，与后面的设备档位是两个维度。
+    // 经验等级标签（#248：xp→Lv，纯展示）单独前置：与后面的设备档位是两个维度。
     const level = PERM.levelLabel ? PERM.levelLabel + " · " : "";
     el.textContent = level + (PERM.roleLabel || PERM.role || "只读") + " · " + (parts.length ? parts.join(" / ") : "仅查看");
     el.classList.toggle("readonly", !!PERM.readonly);
+    // 身份一句话进 title：不占地方，但鼠标一停就知道"我在这儿能干什么"。
+    if (IDENT) el.title = identityLine() + "｜可执行：" + (parts.length ? parts.join("、") : "仅查看");
     if (PERM.readonly) el.title = "当前为只读观看，所有设备写操作已隐藏";
     el.classList.remove("hidden");
   }
@@ -150,6 +342,9 @@
       el.title = "当前账号（" + (PERM.roleLabel || PERM.role || "只读") + "）无「" +
         (NEED_LABEL[el.dataset.need] || el.dataset.need) + "」权限";
     });
+    // 权限收拾完再按身份收拾一次：顺序不能反 —— 身份适配是在"能用什么"之上
+    // 再做"默认摆什么"，先跑会把无权限项也算进"更多功能"的计数里。
+    applyIdentityNav();
   }
 
   // ============ 视图 ============
@@ -189,6 +384,8 @@
           <div class="hero-small">设备在线率</div>
         </div>
       </div>
+
+      ${identityCard()}
 
       <div class="grid g4">
         <div class="kpi"><div class="n" style="color:var(--ok)">${online}</div><div class="l">🖥 在线设备</div></div>
@@ -284,8 +481,7 @@
       .join("");
 
     return `
-      <div class="card"><h3>课表 · ${esc(currentClassLabel() || "（未选择班级）")}
-        ${API.state.classId ? `<span class="muted" style="font-size:12px;font-weight:400">（资源 ${esc(API.state.classId)}）</span>` : ""}</h3>
+      <div class="card"><h3>时间表 · 课程表 · ${esc(currentClassLabel() || "（未选择班级）")}</h3>
         <p class="muted">
           竖向列表：每天一块，节次自上而下。直接改科目名后点「保存并下发」，
           配置将推送到本班所有设备。科目名需与全校科目表一致（见「配置下发」），
@@ -326,7 +522,7 @@
           <textarea id="cfg-json">${esc(JSON.stringify(c,null,2))}</textarea>
         </div>
         <div class="row" style="margin-top:8px">
-          <button class="primary" data-act="save-config" data-need="control">保存并下发</button>
+          <button class="primary" data-act="save-config" data-need="manage">保存并下发</button>
           <button data-act="reload">重新拉取</button>
         </div>
       </div>`;
@@ -399,6 +595,23 @@
     `<td>${d.hostKnown ? esc(d.host) : `<span class="muted">（尚未上报主机名）</span>`}` +
     `<br><span class="muted" style="font-size:12px">${esc(d.id)}</span></td>`;
 
+  /**
+   * 账号/属主的显示：给不出人话名字时退回一个**短编号**，完整编号放 title。
+   *
+   * 后端目前只回 `owner_user_id`（一串 UUID）。整串摆进表格既占地方又没人认得，
+   * 所以截前 8 位 + 悬停看全；等接口补上姓名/邮箱后，这里直接换成名字即可。
+   */
+  const shortId = (v, fallback = "—") => {
+    const s = String(v || "").trim();
+    if (!s) return fallback;
+    return s.length > 8 ? s.slice(0, 8) + "…" : s;
+  };
+  const idCell = (v) => {
+    const s = String(v || "").trim();
+    if (!s) return `<td class="muted">—</td>`;
+    return `<td class="muted" title="${esc(s)}">${esc(shortId(s))}</td>`;
+  };
+
   // 设备表的交互状态**外提**到模块作用域：`go()` 是整块替换 `view.innerHTML`，
   // 状态若留在闭包里，用户输好搜索词点一次「刷新」就白输了 —— 60 班时这很烦。
   let devQuery = "";
@@ -460,8 +673,8 @@
           <td>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="restart" ${d.online ? "" : "disabled"}>重启</button>
             <button data-act="dev" data-need="control" data-id="${d.id}" data-a="refresh" ${d.online ? "" : "disabled"}>刷新</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
-            <button data-act="dev" data-need="control" data-id="${d.id}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-host="${esc(d.host || d.id)}" data-a="lock" ${d.online ? "" : "disabled"}>锁屏</button>
+            <button data-act="dev" data-need="control" data-id="${d.id}" data-host="${esc(d.host || d.id)}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
             <button class="danger" data-act="dev" data-need="control" data-id="${d.id}" data-a="shutdown" data-confirm="1" ${d.online ? "" : "disabled"}>关机</button>
             <button data-act="shutdown-sched" data-need="control" data-id="${esc(d.id)}" data-name="${esc(d.host || d.id)}" ${d.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
           </td></tr>`;
@@ -485,13 +698,11 @@
     return `
       <div class="card"><h3>设备控制</h3>
         <p class="muted">
-          一班一号：每台设备在任一时刻只属于一个班级（数据层由
-          <code>client_profiles.class_id</code> 单值字段保证，不靠人工约定）。
-          同一台设备若要换班，需先在管理端解绑/转移，不会静默抢占。
+          每台教室电脑同一时刻只属于一个班级。要换班，先在下面解绑再绑到新班，不会悄悄抢走别的班。
         </p>
         <p class="muted">
-          状态全部来自设备<b>真实心跳</b>（<code>client_status</code> 表，判定阈值 ${esc(String(st.fresh || 90))} 秒）：
-          在线 ${online} / 共 ${ds.length} 台${never ? `，其中 <b>${never}</b> 台从未上报（尚未接入集控）` : ""}。
+          在线 ${online} / 共 ${ds.length} 台${never ? `，其中 <b>${never}</b> 台从未上报（还没接入集控）` : ""}。
+          状态取自设备真实心跳：超过 ${esc(String(st.fresh || 90))} 秒没有心跳即判离线。
         </p>
         ${
           unbound
@@ -508,7 +719,13 @@
         </div>
         <table><thead><tr><th>设备</th><th>所属班级</th><th>IP</th><th>版本</th><th>最后心跳</th><th>状态</th><th>绑定班级</th><th>操作</th></tr></thead>
         <tbody id="dev-body">${body}</tbody></table>
-        <p class="muted">重启/刷新经 CIMS management 原生指令通道；锁屏/截图经命令队列下发 <code>stelarith_task</code>，由本机 ClassIsland 插件 + 本地代理执行。</p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            「一班一号」由 <code>client_profiles.class_id</code> 单值字段保证；在线判定取自
+            <code>client_status</code> 表。重启/刷新走 CIMS management 原生指令通道；
+            锁屏/截图经命令队列下发 <code>stelarith_task</code>，由本机 ClassIsland 插件 + 本地代理执行。
+          </p>
+        </details>
       </div>`;
   };
 
@@ -719,8 +936,14 @@
     const ds = st.devices || [];
     return `
       <div class="card"><h3>远程屏幕控制</h3>
-        <p class="muted">点「远程控制」→ 经命令队列下发 <code>remote_control_start</code> → ClassIsland 插件 → 本地代理<b>按需启动 VNC</b> → 面板内嵌 noVNC 连接。会话级端口 + 令牌，结束即关；每次控制写审计。</p>
-        <p class="muted">一班一号：远程控制按设备所属班级归属，一台设备只服务一个班，不共享会话。</p>
+        <p class="muted">点「远程控制」即可在本页看到那台教室电脑的画面，可操作鼠标键盘。会话用完即关，每次控制都会留下记录。</p>
+        <p class="muted">一台电脑只服务一个班，不同班级不会共用同一个远程会话。</p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            流程：命令队列下发 <code>remote_control_start</code> → ClassIsland 插件 → 本地代理按需启动 VNC
+            → 面板内嵌 noVNC 连接。会话级端口 + 一次性令牌，结束即销毁；每次控制写审计。
+          </p>
+        </details>
         <table><thead><tr><th>设备</th><th>所属班级</th><th>最后心跳</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${
           ds.length
@@ -731,7 +954,7 @@
           <td><span class="tag ${c.bound ? "ok" : "warn"}">${esc(c.label)}</span></td>
           <td>${esc(d.last)}</td>
           <td>${stateTag(d)}</td>
-          <td><button class="primary" data-act="remote-start" data-need="remote" data-id="${d.id}" ${d.online ? "" : "disabled"}>远程控制</button></td></tr>`;
+          <td><button class="primary" data-act="remote-start" data-need="remote" data-id="${d.id}" data-host="${esc(d.host || d.id)}" ${d.online ? "" : "disabled"}>远程控制</button></td></tr>`;
                 })
                 .join("")
             : emptyRow(5, "该账户下暂无已注册设备")
@@ -832,9 +1055,11 @@
           <button data-act="shutdown-sched" data-need="control" data-id="${esc(cur.id)}" data-name="${esc(cur.host || cur.id)}" ${cur.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
         </div>
         <p class="muted" style="margin-top:8px">
-          <b>切班</b>：把本机档案的当前课表群切到指定班级（集控通道下发不了
-          <code>SelectedClassPlanGroupId</code>，只能由本地插件改档案）。
+          <b>切班</b>：把这台电脑正在用的课表换成另一个班的。选好班再点「切换课表群」。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">集控通道下发不了 <code>SelectedClassPlanGroupId</code>，只能由设备上的本地插件改写本机档案。</p>
+        </details>
         <div class="row">
           <select id="ci-group" style="min-width:220px"><option value="">（不改变）</option>${classOpts}</select>
           <button data-act="ci-switch-class" data-need="control" data-id="${cur.id}">切换课表群</button>
@@ -844,9 +1069,12 @@
       <div class="card">
         <h3>星璃功能模块开关</h3>
         <p class="muted">
-          这些开关<b>立刻生效</b>（写本机 <code>stelarith-modules.json</code> 并即时应用，无需重启）。
+          这些开关<b>立刻生效</b>，不用重启那台电脑。
           带「核心」标记的模块不允许关闭 —— 关掉之后这台设备将无法被集控发现或控制。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">开关写入设备本机 <code>stelarith-modules.json</code> 并由插件即时应用。</p>
+        </details>
         <table><thead><tr><th>模块</th><th>说明</th><th>状态</th><th>操作</th></tr></thead><tbody>
         ${modules.map((m) => `<tr>
           <td>${esc(m.label)}${m.core ? ' <span class="tag">核心</span>' : ""}</td>
@@ -861,10 +1089,16 @@
       <div class="card">
         <h3>宿主插件清单</h3>
         <p class="muted">
-          由插件的 <code>IPluginService.LoadedPlugins</code> 反射采集，是宿主的真实加载结果。
-          <b>ClassIsland 没有运行时启停第三方插件的公开接口</b> —— 插件在 Plugins 目录里即加载，
-          禁用只能改宿主自己的配置并重启。星集控插件标记为「核心」，面板对它只读。
+          这里列的是这台电脑上 ClassIsland 实际加载到的插件。
+          <b>插件装上就是加载状态，面板不能在这儿启停它</b> —— 要禁用得改那台电脑上的 ClassIsland 配置再重启。
+          星集控插件标记为「核心」，面板只读。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            清单由插件的 <code>IPluginService.LoadedPlugins</code> 反射采集，是宿主的真实加载结果。
+            ClassIsland 没有运行时启停第三方插件的公开接口。
+          </p>
+        </details>
         <table><thead><tr><th>插件</th><th>ID</th><th>版本</th><th>加载状态</th></tr></thead><tbody>
         ${plugins.length
           ? plugins.map((p) => `<tr>
@@ -884,12 +1118,15 @@
     const m = await API.permissions();
     if (!m) {
       return `<div class="card"><h3>权限与分级</h3>
-        <p class="muted">权限信息不可用 —— 面板需在内嵌态（经网站 <code>/admin/console</code>）打开才能读取服务端解算的权限矩阵。</p></div>`;
+        <p class="muted">读不到权限信息。请从网站的「集控面板」入口进入本页（而不是单独打开面板网址）。</p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">权限矩阵由服务端解算，需在内嵌态（经网站 <code>/admin/console</code>）打开才能读取。</p>
+        </details></div>`;
     }
     const me = m.me || {};
     const rows = (m.roles || []).map((r) => `<tr>
         <td><b>${esc(r.label)}</b></td>
-        <td>${esc(r.levelLabel)}</td>
+        <td>${(r.titleLabels || []).map((t) => esc(t)).join(" / ") || '<span class="muted">—</span>'}</td>
         <td>${esc(r.managementTierLabel)}</td>
         <td>${(r.deviceTiers || []).map((t) => `<span class="tag">${esc(t)}</span>`).join(" ") || '<span class="muted">—</span>'}</td>
         <td>${esc(r.broadcastScopeLabel)}</td>
@@ -898,10 +1135,15 @@
     return `
       <div class="card"><h3>我的权限快照</h3>
         <p class="muted">
-          等级只是<b>显示秩位</b>；<b>称号</b>才是权限的载体。网站在服务端按同一套门控逻辑解算后下发
-          （<code>userCan()</code> / <code>canDevice()</code> / <code>canBroadcastTo()</code>），
-          因此界面显示的能力与服务端实际放行**永远一致**。
+          你能做什么，由下面的<b>称号</b>决定；等级只是显示用的高低次序。
+          界面上显示得出来的能力，服务端一定放行；显示不出来的，点了也会被拒。
         </p>
+        <details class="tech"><summary>技术说明</summary>
+          <p class="muted">
+            网站服务端按同一套门控逻辑解算后下发（<code>userCan()</code> / <code>canDevice()</code> /
+            <code>canBroadcastTo()</code>），因此界面显示与服务端实际放行永远一致。
+          </p>
+        </details>
         <div class="grid2">
           <div class="kv">
             <div><span class="muted">角色</span><b>${esc(me.roleLabel || "—")}</b></div>
@@ -919,8 +1161,8 @@
 
       <div class="card"><h3>管理分级（谁管到哪一级）</h3>
         <p class="muted">
-          分级回答「管到哪一级」，与「称号（能做什么）」「设备轴（设备多敏感）」「广播范围（能喊多远）」
-          是四条独立轴。分级只是<b>上限</b>：校级管理员若没有 <code>device.remote</code>，依然不能远控。
+          分级回答「管到哪一级」，和「称号（能做什么）」「设备（能碰多敏感的设备）」「广播范围（能喊多远）」
+          是四个互不替代的维度。分级只是<b>上限</b>：校级管理员如果没有远控这个称号，一样不能远控。
         </p>
         <table><thead><tr><th>分级</th><th>职责边界</th><th>对应角色</th></tr></thead><tbody>
           ${(m.managementTiers || []).map((t) => `<tr>
@@ -932,15 +1174,18 @@
       </div>
 
       <div class="card"><h3>角色 → 能力对照</h3>
-        <table><thead><tr><th>角色</th><th>内容等级</th><th>管理分级</th><th>设备能力</th><th>广播范围</th></tr></thead><tbody>${rows}</tbody></table>
+        <table><thead><tr><th>角色</th><th>称号（权限来源）</th><th>管理分级</th><th>设备能力</th><th>广播范围</th></tr></thead><tbody>${rows}</tbody></table>
       </div>
 
-      <div class="card"><h3>内容等级轴（L1–L5）</h3>
-        <p class="muted">纵向：等级高的自动继承低等级的全部能力。这是「在一个个叠加」，不是另起一类。</p>
-        ${(m.levels || []).map((g) => `
+      <div class="card"><h3>称号轴（权限只来自称号）</h3>
+        <p class="muted">
+          等级（经验值 Lv）只是显示「参与程度」，与权限、与角色都<b>零耦合</b>——Lv.6 传奇的游客
+          也只是游客。权限只来自称号：每个称号显式授予一组动作，角色等于若干称号的并集。
+        </p>
+        ${(m.titles || []).map((t) => `
           <div style="margin-bottom:10px">
-            <b>${esc(g.label)}</b> <span class="muted">— ${esc(g.description)}</span><br>
-            ${(g.actions || []).map((a) => `<span class="tag">${esc(a.label)}</span>`).join(" ")}
+            <b>${esc(t.label)}</b> <span class="muted">— ${esc(t.description)}</span><br>
+            ${(t.actions || []).map((a) => `<span class="tag">${esc(a.label)}</span>`).join(" ") || '<span class="muted">无动作</span>'}
           </div>`).join("")}
       </div>
 
@@ -994,6 +1239,72 @@
    * 两个条件缺一不可：过审（未过审的班不该被下发）+ 有课表资源
    * （没有资源时选中它 = 课表页打开是空白，而标题显示一个与班级无关的资源名）。
    */
+  /**
+   * #T07.7 步骤 3：截图指令下发后轮询设备回传（最长约 20 秒），命中即弹窗展示。
+   * 教室端代理截屏 → PNG 回传 ext 网关 → 这里轮询 GET /captures?uid= 取图。
+   * 超时不当作硬错误：设备可能离线/没配 STELARITH_EXT_URL，toast 说明即可。
+   *
+   * ⚠️ uid 双 key（2026-09-24 实测发现）：CIMS 设备用 client_id（如 lab-pc-001）
+   * 下发指令，而教室端代理回传时用的是自己的 device_uid（= 主机名，如 n7-20091211）。
+   * 两者在部署里是**两个不同的串**，只查 client_id 会永远「等待回传超时」。
+   * 所以先按 client_id 查，miss 再按 host 查（host 字段就是 agent 的 UID）。
+   */
+  async function waitForCapture(uid, host) {
+    const keys = [uid, host && host !== uid ? host : null].filter(Boolean);
+    const TOTAL = 10, STEP = 2000;
+    for (let i = 0; i < TOTAL; i++) {
+      await new Promise((r) => setTimeout(r, STEP));
+      for (const k of keys) {
+        const cap = await API.getCapture(k);
+        if (!cap) continue;
+        showCaptureImage(uid, cap);
+        return true;
+      }
+    }
+    toast(
+      `等待截图回传超时（${uid} 未回报图片）。` +
+      "请检查：① 教室端代理已部署新版（含截图回传）；② STELARITH_EXT_URL/EXT_SECRET 配置；③ 设备在线。"
+    );
+    return false;
+  }
+
+  /** 把回传的 base64 PNG 弹窗展示（内存 Blob，不落盘、不留痕）。 */
+  function showCaptureImage(uid, cap) {
+    try {
+      const bin = atob(cap.image_base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "image/png" });
+      const url = URL.createObjectURL(blob);
+      const box = document.createElement("div");
+      box.style.cssText =
+        "position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;" +
+        "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px";
+      box.innerHTML =
+        `<b style="color:#fff;font-size:15px">教室端截图 · ${esc(uid)}</b>` +
+        `<img src="${url}" alt="教室端截图" style="max-width:92vw;max-height:76vh;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);background:#000"/>` +
+        `<div style="display:flex;gap:10px">` +
+        `<button class="chip-btn" style="min-width:110px">关闭</button>` +
+        `<button class="chip-btn" id="capture-refresh" style="min-width:110px">重新截图</button></div>`;
+      const close = () => { URL.revokeObjectURL(url); box.remove(); };
+      box.querySelector("button").onclick = close;
+      box.addEventListener("click", (e) => { if (e.target === box) close(); });
+      document.body.appendChild(box);
+      const again = box.querySelector("#capture-refresh");
+      if (again) again.onclick = () => {
+        const row = document.querySelector(`[data-act="dev"][data-a="screenshot"][data-id="${cssEscape(uid)}"]`);
+        box.remove();
+        if (row) row.click(); else waitForCapture(uid);
+      };
+      toast(`已收到 ${uid} 的截图（${cap.bytes} bytes）`);
+    } catch (e) {
+      toast("截图数据解码失败：" + ((e && e.message) || e));
+    }
+  }
+  function cssEscape(s) {
+    return String(s).replace(/["\\\n\r]/g, (c) => "\\" + c);
+  }
+
   function classSelectable(c) {
     return !!c && c.review_status === "approved" && !!c.class_plan && !/^default_/i.test(c.class_plan);
   }
@@ -1068,10 +1379,9 @@
                       <span class="tag ${badge.cls}">${esc(badge.text)}</span>
                     </header>
                     <div class="cls-meta">
-                      <span><i>主键</i><em>${esc(c.class_id || "—")}</em></span>
-                      <span><i>课表</i><em>${esc(c.class_plan || "（尚未生成）")}</em></span>
+                      <span><i>课表</i><em>${c.class_plan ? "已生成" : "尚未生成"}</em></span>
                       <span><i>设备</i><em>${c.device_count || 0} 台</em></span>
-                      <span><i>属主</i><em>${esc(c.owner_user_id || "系统 / 无属主")}</em></span>
+                      <span><i>属主</i><em title="${esc(c.owner_user_id || "")}">${esc(shortId(c.owner_user_id, "系统 / 无属主"))}</em></span>
                     </div>
                     ${c.review_status === "rejected" && c.reject_reason
                       ? `<div class="muted" style="font-size:12px;color:var(--err)">驳回原因：${esc(c.reject_reason)}</div>`
@@ -1122,9 +1432,9 @@
           ${(pending.classes || [])
             .map(
               (p) => `<tr>
-            <td><b>${esc(p.code || p.name || p.class_id)}</b><br><span class="muted" style="font-size:12px">${esc(p.class_id)}</span></td>
+            <td><b>${esc(p.code || p.name || p.class_id)}</b></td>
             <td>${esc(String(p.graduation_year ?? "—"))} / ${esc(String(p.class_number ?? "—"))}</td>
-            <td class="muted">${esc(p.owner_user_id || "—")}</td>
+            ${idCell(p.owner_user_id)}
             <td><input class="cls-rej" data-rej="${esc(p.class_id)}" placeholder="（可选）" aria-label="驳回原因" /></td>
             <td class="row">
               <button class="chip-btn" data-act="cls-approve" data-id="${esc(p.class_id)}">通过</button>
@@ -1192,7 +1502,7 @@
     const sandbox = "allow-scripts allow-same-origin allow-forms allow-modals";
     const sameOriginWarn =
       host && location.origin && host.indexOf(location.origin) === 0
-        ? `<p class="muted" style="color:var(--warn)">⚠ 点歌站与本站同源：此时 sandbox 的 allow-same-origin + allow-scripts 组合会削弱隔离效果，建议把点歌站放在独立域/端口。</p>`
+        ? `<p class="muted" style="color:var(--warn)">⚠ 点歌站和本面板在同一个网址下，隔离效果会打折。建议把点歌站放到独立的域名或端口。</p>`
         : "";
 
     return `
@@ -1282,7 +1592,34 @@
           <input id="nt-duration" type="number" min="0" max="3600" step="1" placeholder="时长(秒)"
                  title="教室大屏显示时长（秒）。留空 = 按正文字数自适应（3~20s）"
                  style="width:96px"/>
-          <button class="primary" data-act="send-notice" data-need="control">发布</button>
+          <button class="primary" data-act="send-notice" data-need="broadcast">发布</button>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <span class="muted" style="width:88px">呈现方式</span>
+          <select id="nt-type" title="通知在教室电脑上怎么显示（按账号角色限制，服务端强制校验）">
+            <option value="">普通通知</option>
+            <option value="island">课表岛 · 顶部滚动</option>
+            ${
+              PERM.role === "admin" || PERM.role === "owner" || PERM.role === "homeroom"
+                ? `<option value="popup">弹窗 · 需要确认</option>`
+                : ""
+            }
+            ${
+              PERM.role === "admin" || PERM.role === "owner"
+                ? `<option value="fullscreen">全屏 · 置顶紧急</option>`
+                : ""
+            }
+          </select>
+          <span class="muted" style="font-size:12px" id="nt-type-hint">普通通知：教室端横幅显示，不打断教学。</span>
+        </div>
+        <div class="row" style="margin-top:6px" id="nt-presets-row" style="display:none">
+          <span class="muted" style="width:88px">预设回复</span>
+          <input id="nt-presets" placeholder="逗号分隔，最多 6 条（如：下课再处理,已收到）" style="flex:1"/>
+          <label class="row" style="gap:4px"><input type="checkbox" id="nt-emergency"/> 需确认</label>
+        </div>
+        <div class="row" style="margin-top:6px" id="nt-ads-row" style="display:none">
+          <span class="muted" style="width:88px">自动关屏</span>
+          <input id="nt-ads" type="number" min="1" max="300" step="1" placeholder="秒（1~300，留空=不自动关）" style="width:220px"/>
         </div>
         <textarea id="nt-content" placeholder="通知正文（可空）" style="min-height:64px"></textarea>
 
@@ -1319,8 +1656,8 @@
         <p class="muted" style="margin-top:8px">
           本账号可广播的最大范围：<b>${esc(maxLabel)}</b>
           ${
-            PERM.embedded && !PERM.control
-              ? "（无设备控制权限，无法发布）"
+            PERM.embedded && !PERM.broadcast
+              ? "（无通知广播权限，无法发布）"
               : "。范围由内容等级决定：L2 仅本班 · L3 本年级 · L4+ 全校。"
           }
         </p>
@@ -1373,12 +1710,19 @@
       API.listFriends().catch(() => ({ friends: [], incoming: [], outgoing: [] })),
     ]);
     const classId = API.state.classId || "";
+    // 房间标题一律用人话：班级名、年级名。房间 id 是内部的（本班房间用的就是
+    // 课表资源名），直接摆到界面上老师看不懂，所以只在找不到人话名字时才退到
+    // 一个中性说法，绝不显示资源名本身。
+    const ownCls = currentClassLabel();
     const roomOpts = [
       { id: API.CHAT_ROOM_GLOBAL || "techrep-global", name: "全校电教委员群" },
       PERM.gradeName ? { id: API.gradeRoom(PERM.gradeName), name: "本年级（" + PERM.gradeName + "）" } : null,
-      classId ? { id: classId, name: "本班（" + classId + "）" } : null,
+      classId
+        ? { id: classId, name: ownCls ? "本班（" + ownCls + "）" : "本班" }
+        : null,
     ].filter(Boolean);
-    const curName = (roomOpts.find((r) => r.id === chatRoom) || {}).name || chatRoom;
+    const curName =
+      (roomOpts.find((r) => r.id === chatRoom) || {}).name || "当前会话";
 
     // 好友区：待处理请求置顶（需要动作），然后是好友列表（点「私聊」进会话）
     const reqRows = fr.incoming
@@ -1639,6 +1983,135 @@
             : emptyRow(4, "还没有提交过 Bug")
         }
         </tbody></table></div>`;
+  };
+
+  // ============ 执行回执 ============
+  // 「我发了通知，到底谁看了？」+「我下了指令，教室端做完了没有？」
+  // 两块权限不同，分开门控：
+  //   · 通知逐台回执（broadcast 档，与「通知广播」同档）：老师也能看自己发的通知谁没看。
+  //   · 设备执行流水（control 档，页内二次门控）：只有能碰设备的人看得到动作明细。
+  // 拉不到的块直接给「无权限」人话，**不**用演示数据填充（见红线：禁演示数据冒充真实）。
+  let receiptsNoticeId = "";
+  views.receipts = async () => {
+    const [ns, dv, ev] = await Promise.all([
+      API.listNotices().catch(() => []),
+      receiptsNoticeId ? API.noticeDeliveries(receiptsNoticeId).catch(() => null) : Promise.resolve(null),
+      PERM.control ? API.deviceEvents().catch(() => null) : Promise.resolve(null),
+    ]);
+    const dvBody = dv && dv.notice ? dv : null;
+
+    // 事件名 → 人话（未知的照原样显示）
+    const evLabel = (t) =>
+      ({
+        watchdog_crash: "看门狗 · 崩溃重启", watchdog_hang: "看门狗 · 卡死重启",
+        update_applied: "客户端自更新", screenshot_uploaded: "截屏上报",
+        notice_ack: "通知回执", notice_reply: "回复通知", file_delivered: "文件送达",
+        file_failed: "文件送达失败", command_ok: "指令执行成功", command_fail: "指令执行失败",
+      }[t] || t || "—");
+
+    const stateTag = (st) => {
+      const map = {
+        pending: ["warn", "待送达"], delivered: ["", "已送达"], read: ["ok", "已读"],
+        replied: ["accent", "已回复"], acked_failed: ["err", "失败"],
+      };
+      const [c, label] = map[st] || ["", st || "—"];
+      return `<span class="tag ${c}">${label}</span>`;
+    };
+
+    // 通知回执块（broadcast 档；无数据=没选/查不到，显示引导而非错误）
+    const noticeCard = `
+      <div class="card"><h3>通知回执 · 谁看了</h3>
+        <p class="muted">选一条通知，看每台设备的送达状态与回复内容（老师回复的话会原样显示）。</p>
+        <div class="row" style="margin-bottom:8px">
+          <select id="receipts-notice" style="flex:1">
+            <option value="">— 选择一条历史通知 —</option>
+            ${ns.map((n) => `<option value="${esc(n.id)}" ${String(n.id) === String(receiptsNoticeId) ? "selected" : ""}>${esc(n.title)}（${esc(n.at)}）</option>`).join("")}
+          </select>
+          <button data-act="reload">刷新</button>
+        </div>
+        ${
+          receiptsNoticeId
+            ? dvBody
+              ? (() => {
+                  const dl = dvBody.deliveries || [];
+                  const replied = dl.filter((d) => d.reply || d.state === "replied").length;
+                  return `
+                    <p class="muted">
+                      共 <b>${dl.length}</b> 台 ·
+                      <span class="tag ok">已读 ${dl.filter((d) => d.state === "read").length}</span>
+                      <span class="tag accent">已回复 ${replied}</span>
+                      <span class="tag warn">待送达 ${dl.filter((d) => d.state === "pending").length}</span>
+                      <span class="tag err">失败 ${dl.filter((d) => d.state === "acked_failed").length}</span>
+                    </p>
+                    <table><thead><tr><th>设备</th><th>状态</th><th>回复内容</th><th>时间</th></tr></thead><tbody>
+                    ${
+                      dl.length
+                        ? dl
+                            .map((d) => `<tr>
+                              <td class="muted">${esc(d.uid || "—")}</td>
+                              <td>${stateTag(d.state)}</td>
+                              <td>${
+                                d.reply
+                                  ? `“${esc(d.reply)}”`
+                                  : d.action_result
+                                    ? `“${esc(d.action_result)}”（预设）`
+                                    : d.state === "replied"
+                                      ? "已回复（内容未回传）"
+                                      : '<span class="muted">—</span>'
+                              }</td>
+                              <td class="muted">${esc(d.at || d.updated_at || "—")}</td>
+                            </tr>`)
+                            .join("")
+                        : emptyRow(4, "该通知尚无逐台回执（类型化通知才有）")
+                    }
+                    </tbody></table>`;
+                })()
+              : `<p class="muted">该通知查不到回执明细（不存在或无权限）。</p>`
+            : `<p class="muted">从下拉里挑一条类型化通知（弹窗/全屏/需确认）查看逐台回执。</p>`
+        }
+      </div>`;
+
+    // 设备执行流水块（页内 control 二次门控：没设备权限的人整块隐藏，数据不落屏）
+    const deviceCard = !PERM.control
+      ? `<div class="card"><h3>设备执行流水</h3>
+           <p class="muted">需要「设备控制」权限才能查看（老师账号看不到任何设备动作）。</p></div>`
+      : (() => {
+          const events = (ev && ev.events) || [];
+          const st = (ev && ev.stats) || null;
+          return `
+            <div class="card"><h3>设备执行流水 · 最近动作</h3>
+              <p class="muted">
+                被控端「做完一件事」之后的上报：指令是否执行、截图/文件是否送达、看门狗是否重启过。
+                ${
+                  st
+                    ? `24 小时内 <b>${st.total}</b> 次动作，成功 <span class="tag ok">${st.ok}</span>、失败 <span class="tag err">${st.failed}</span>。`
+                    : ""
+                }
+              </p>
+              <table><thead><tr><th>时间</th><th>设备</th><th>动作</th><th>结果</th><th>说明</th></tr></thead><tbody>
+              ${
+                events.length
+                  ? events
+                      .map((e) => `<tr>
+                        <td class="muted">${esc(e.created_at || "—")}</td>
+                        <td class="muted">${esc(e.uid || "—")}</td>
+                        <td>${esc(evLabel(e.event))}</td>
+                        <td>${
+                          e.ok
+                            ? '<span class="tag ok">成功</span>'
+                            : `<span class="tag err">失败</span>`
+                        }</td>
+                        <td class="muted">${esc((e.detail || "").slice(0, 120) || "—")}</td>
+                      </tr>`)
+                      .join("")
+                  : emptyRow(5, "还没有执行回执上报（被控端升级后开始产生）")
+              }
+              </tbody></table>
+              <p class="muted" style="margin-top:6px">每台设备只保留最近 200 条；全部按时间倒序，最多看 100 条。</p>
+            </div>`;
+        })();
+
+    return noticeCard + deviceCard;
   };
 
   views.audit = async () => {
@@ -2148,9 +2621,17 @@
   };
 
   views.scheduled = async () => {
-    const [list, devs] = await Promise.all([API.listScheduled(), API.listDevices()]);
+    // 班级下拉 v2：真实班级目录（/api/classes，CIMS 唯一来源）。旧版从设备清单
+    // 推导（suggest），设备没绑班就缺班、没导班就空——都不是"确切真实"的班级。
+    // 取不到 = 只保留「全校」并在页内明示，绝不放假班。
+    const [list, clsRes] = await Promise.all([
+      API.listScheduled(),
+      API.listSiteClasses()
+        .then((c) => ({ classes: c }))
+        .catch((e) => ({ error: (e && e.message) || String(e) })),
+    ]);
     const items = (list && list.items) || [];
-    const classes = (devs && devs.suggest) || [];
+    const classes = clsRes.classes || [];
     const nameOf = (cid) => (classes.find((c) => c.class_id === cid) || {}).name || cid;
     const rows = items.length
       ? items.map((it) => `
@@ -2186,6 +2667,7 @@
       <div class="row"><span class="muted" style="width:70px">正文</span><textarea id="sb-content" style="width:420px;height:60px" placeholder="要广播的内容"></textarea></div>
       <div class="row"><span class="muted" style="width:70px">目标</span>
         <select id="sb-target"><option value="">全校</option>${classes.map((c) => `<option value="${esc(c.class_id)}">${esc(c.name)}</option>`).join("")}</select></div>
+      ${classes.length ? "" : `<p class="muted">班级列表不可用（${esc(clsRes.error || "CIMS 尚未导入班级")}），只能全校广播。</p>`}
       <div class="row" style="margin-top:8px">
         <button class="primary" data-act="sb-save">${schedEditId ? "保存修改" : "新建"}</button>
         <button data-act="sb-cancel" ${schedEditId ? "" : 'style="display:none"'}>取消编辑</button>
@@ -2197,6 +2679,257 @@
       <table class="tbl"><thead><tr><th>名称</th><th>类型</th><th>锚定时间</th><th>目标</th><th>状态</th><th>下次</th><th>上次</th><th>操作</th></tr></thead>
       <tbody id="sb-list">${rows}</tbody></table>
     </div>`;
+  };
+
+  // ============ 随机抽取（课堂工具，纯前端，localStorage 持久化）============
+  // 名单本地保存，设备端无依赖，内嵌态同源可用 localStorage，离线也能抽。
+  let randomNames = [], randomDrawn = new Set(), randomHistory = [];
+  try {
+    const a = JSON.parse(localStorage.getItem("console.random.names") || "null");
+    if (Array.isArray(a)) randomNames = a;
+    const b = JSON.parse(localStorage.getItem("console.random.history") || "null");
+    if (Array.isArray(b)) randomHistory = b;
+    const c = JSON.parse(localStorage.getItem("console.random.drawn") || "null");
+    if (Array.isArray(c)) randomDrawn = new Set(c);
+  } catch (_) {}
+  const _randomSave = () => {
+    try {
+      localStorage.setItem("console.random.names", JSON.stringify(randomNames));
+      localStorage.setItem("console.random.history", JSON.stringify(randomHistory));
+      localStorage.setItem("console.random.drawn", JSON.stringify([...randomDrawn]));
+    } catch (_) {}
+  };
+  const _randomAvail = (useDrawn) =>
+    randomNames.map((n, i) => ({ n, i })).filter((x) => (useDrawn ? !randomDrawn.has(x.i) : true));
+  const _randomPick = (k, useDrawn) => {
+    const pool = _randomAvail(useDrawn);
+    if (pool.length === 0) return [];
+    const n = Math.min(k, pool.length);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const picked = pool.slice(0, n);
+    picked.forEach((x) => randomDrawn.add(x.i));
+    return picked.map((x) => x.n);
+  };
+
+  views.random = async () => {
+    const last = randomHistory.length ? randomHistory[randomHistory.length - 1] : [];
+    const avail = _randomAvail(true).length;
+    const hist = randomHistory.length
+      ? randomHistory.map((h, i) => `<div class="card-mini"><b>第 ${i + 1} 批</b>：${esc(h.join("、"))}</div>`).join("")
+      : `<p class="muted">还没有抽取记录。导入名单后点「抽 1 人」试试。</p>`;
+    return `
+      <div class="card"><h3>随机抽取 · 课堂点名</h3>
+        <p class="muted">名单保存在本机（当前 ${randomNames.length} 人，未抽 ${avail} 人）。开启「防重复」后抽过的人不再出现，可「重置已抽」重来。</p>
+        <div class="row">
+          <textarea id="random-input" style="width:100%;height:84px" placeholder="每行一个名字，粘贴名单（如：张三&#10;李四）或从下方导入"></textarea>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <button class="primary" data-act="random-import">导入名单</button>
+          <button data-act="random-fromclass">从班级设备导入</button>
+          <button data-act="random-clearlist">清空名单</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary lg" data-act="random-draw1">抽 1 人</button>
+          <span class="muted">抽</span>
+          <input id="random-n" type="number" min="1" value="3" style="width:60px"/>
+          <span class="muted">人</span>
+          <button data-act="random-drawn">抽取</button>
+          <label class="row" style="margin-left:8px"><input type="checkbox" id="random-nodup" checked/> 防重复</label>
+          <button data-act="random-reset">重置已抽</button>
+        </div>
+        <div id="random-result" class="random-result" style="margin-top:12px">
+          ${last.length ? `<div class="dice">🎲 ${esc(last.join("、"))}</div>` : `<span class="muted">结果会显示在这里</span>`}
+        </div>
+        <h4 style="margin:14px 0 6px">抽取历史（${randomHistory.length}）</h4>
+        <div class="list">${hist}</div>
+      </div>`;
+  };
+
+  // ============ 文件传输（面板侧完整 UI；后端/设备端下发依赖部署包）============
+  // 设备端能力（上传后下发到设备、设备侧接收落盘）需教室端部署 ClassroomDeploy 包；
+  // 未部署时本页可上传到服务端暂存、查看历史，但「下发到设备」会提示未就绪。
+  // ============ 文件传输 v2（2026-09-25 班级系统配套）============
+  // 旧版是占位（"后端接口联调中"），文件本体从未离开发送机。v2 三环补齐：
+  //   ① multipart 上传实体到网站（≤100MB）；② 服务端代推 file_push 到目标班级
+  //   （目标班必须在调用者绑定范围内，服务端逐班校验）；③ 逐台回执轮询，
+  //   "送达 x/y 台"实时亮出。设备端收文后自动弹本机通知。
+  // 目标班级唯一来源 /api/classes（CIMS 真实班级），取不到明示、绝不放假班。
+  let ftHistory = []; // 本次会话内的推送记录（持久化历史在桌面端）
+  views.filetransfer = async () => {
+    let classes = [];
+    let classErr = "";
+    try { classes = await API.listSiteClasses(); }
+    catch (e) { classErr = (e && e.message) || String(e); }
+    const chips = classes.length
+      ? classes.map((c) => `<label class="row" style="gap:6px">
+            <input type="checkbox" class="ft-cls" value="${esc(c.class_id)}"/>
+            <span>${esc(c.name || c.class_id)}</span>
+          </label>`).join("")
+      : `<p class="muted" style="grid-column:1/-1">${classErr ? esc(classErr) : "暂无班级（需先在 CIMS 导入/创建班级）"}</p>`;
+    const hist = ftHistory.map((h) => {
+      const tag = h.status === "sent" ? "ok" : h.status === "failed" ? "err" : "warn";
+      const label = h.status === "pending" ? "发送中…"
+        : h.status === "failed" ? "没发出去"
+        : `送达 ${h.delivered}/${h.total} 台${h.failed ? `（${h.failed} 台失败）` : ""}`;
+      return `<tr data-fid="${esc(h.fileId)}">
+        <td>${esc(h.name)}<span class="muted" style="font-size:12px"> · ${Math.max(1, Math.round(h.size / 1024))}KB</span></td>
+        <td>${esc(h.classes)}</td>
+        <td><span class="tag ${tag}">${esc(label)}</span></td>
+        <td class="muted" style="font-size:12px">${new Date(h.at).toLocaleTimeString("zh-CN", { hour12: false })}</td>
+      </tr>`;
+    }).join("");
+    return `
+      <div class="card"><h3>发文件</h3>
+        <p class="muted">把文件送到所选班级的全部教室电脑；教室端收到后自动弹通知，这里逐台亮出送达情况。</p>
+        <div class="row"><input id="ft-file" type="file" multiple style="flex:1"/></div>
+        <div class="row" style="margin-top:8px"><span class="muted">发给班级</span></div>
+        <div class="grid g4" style="gap:6px 10px">${chips}</div>
+        <div class="row" style="margin-top:8px">
+          <button class="primary" data-act="ft-upload" data-need="file">上传并下发</button>
+        </div>
+        <div id="ft-status" class="muted" style="margin-top:8px">选好班级和文件后点「上传并下发」。</div>
+      </div>
+      <div class="card">
+        <h3>传输历史（本次会话）</h3>
+        <table class="tbl"><thead><tr><th>文件</th><th>目标</th><th>状态</th><th>时间</th></tr></thead>
+        <tbody>${hist || `<tr><td colspan="4" class="muted" style="text-align:center;padding:14px 0">暂无传输记录。</td></tr>`}</tbody></table>
+      </div>`;
+  };
+
+  // ============ 音量调节（面板侧完整 UI；下发依赖部署包）============
+  // 单设备/整班音量滑杆 + 静音，经命令通道下发 setVolume。设备端执行需部署包。
+  views.volume = async () => {
+    const devs = await API.listDevices().catch(() => []);
+    const rows = (devs || []).map((d) => `
+      <tr data-uid="${esc(d.uid || d.id)}">
+        <td>${esc(d.name || d.id)}</td>
+        <td><input type="range" min="0" max="100" value="${d.volume ?? 50}" class="vol-slider" data-uid="${esc(d.uid || d.id)}"/></td>
+        <td><span class="vol-val">${d.volume ?? 50}</span></td>
+        <td><button data-act="vol-mute" data-uid="${esc(d.uid || d.id)}">静音</button>
+        <button class="primary" data-act="vol-apply" data-uid="${esc(d.uid || d.id)}">应用</button></td>
+      </tr>`).join("");
+    return `
+      <div class="card"><h3>音量调节</h3>
+        <p class="muted">逐设备拖动滑杆设定音量，或一键静音。「应用」经命令通道下发 setVolume（设备端执行需部署星集控 ClassroomDeploy 包）。
+          <button class="primary" data-act="vol-apply-all">整班/全校应用当前值</button></p>
+        <table class="tbl"><thead><tr><th>设备</th><th>音量</th><th>值</th><th>操作</th></tr></thead>
+        <tbody id="vol-list">${rows || `<tr><td colspan="4" class="muted" style="text-align:center;padding:16px 0">暂无设备，或设备端未上报。</td></tr>`}</tbody></table>
+        <p class="muted">注：实际音量语义（0–100 对应设备主音量）与设备端接收为本期权后端联调项；界面与下发指令已就绪。</p>
+      </div>`;
+  };
+
+  // ============ 自助切班（互换 / 单切） ============
+  // 申请 → 审批 → 执行，到期可自动回退；所有写操作经 API.swapXxx（cimsThrow），失败必报错。
+  const SWAP_STATUS = {
+    pending: "待批准", approved: "已批准", executing: "执行中",
+    executed: "已执行", rejected: "已驳回", cancelled: "已撤销", rolled_back: "已回退",
+  };
+  let swapFilterStatus = "";
+  function _swapClassMap(classes) {
+    const m = new Map();
+    (classes || []).forEach((c) => { if (c.classId) m.set(c.classId, c.name || c.classId); });
+    return m;
+  }
+  function _swapFmt(iso) {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleString("zh-CN", { hour12: false }); } catch (_) { return iso; }
+  }
+  function _swapStatusTag(status) {
+    const label = SWAP_STATUS[status] || status;
+    const cls = { pending: "warn", approved: "", executing: "warn", rejected: "err", cancelled: "", rolled_back: "" }[status] || "";
+    return `<span class="tag ${cls}">${esc(label)}</span>`;
+  }
+
+  views.swap = async () => {
+    const [classes, list, cfg] = await Promise.all([
+      API.listClasses().catch(() => []),
+      API.swapList({ status: swapFilterStatus }).catch(() => ({ items: [], total: 0 })),
+      API.swapGetConfig().catch(() => ({})),
+    ]);
+    const nameMap = _swapClassMap(classes);
+    const cur = API.state.classId || "";
+    const curClassId = (classes || []).find((c) => c.id === cur && c.classId) || {};
+    const curId = (curClassId && curClassId.classId) || cur;
+    const classOpts = (cls, sel) => (classes || [])
+      .filter((c) => c.classId)
+      .map((c) => `<option value="${esc(c.classId)}" ${c.classId === sel ? "selected" : ""}>${esc(c.name || c.classId)}</option>`)
+      .join("");
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const loc = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const defStart = loc(now);
+    const defEnd = loc(new Date(now.getTime() + 4 * 3600 * 1000));
+
+    const item = (r) => {
+      const fa = nameMap.get(r.from_class_id) || r.from_class_id;
+      const tb = nameMap.get(r.to_class_id) || r.to_class_id;
+      const kind = r.swap_type === "oneway" ? "单切" : "互换";
+      const btns = [];
+      if (r.status === "pending") {
+        // 批准/驳回 = manage（审批=替他人放行班级级变更，服务端 requiredTier 已锁 manage）；
+        // 撤销 = control（发起人权责内撤回）。data-need 交给 applyGating() 统一禁用+说明，
+        // 避免无权限用户看到按钮、点了才被 403 拦。
+        if (allow("manage")) {
+          btns.push(`<button class="primary" data-act="swap-approve" data-id="${esc(r.id)}">批准</button>`);
+          btns.push(`<button data-act="swap-reject" data-id="${esc(r.id)}">驳回</button>`);
+        }
+        btns.push(`<button data-act="swap-cancel" data-id="${esc(r.id)}">撤销</button>`);
+      } else if (r.status === "executed") {
+        btns.push(`<button data-act="swap-rollback" data-id="${esc(r.id)}" title="提前结束互换，把课表方案换回来">手动回退</button>`);
+      }
+      const btnsHtml = btns.length ? `<td style="white-space:nowrap">${btns.join(" ")}</td>` : "<td></td>";
+      return `<tr>
+        <td>${esc(fa)}<span class="muted"> → ${esc(tb)}</span></td>
+        <td>${kind}${r.swap_type === "swap" ? `<span class="muted" title="课表方案${r.from_plan_before} ↔ ${r.to_plan_before}"> · 对调</span>` : ""}</td>
+        <td>${_swapStatusTag(r.status)}</td>
+        <td class="muted" style="font-size:12px">${_swapFmt(r.effective_start_at) || "立即"}<br/>${_swapFmt(r.effective_end_at) || "长期"}</td>
+        <td class="muted" style="font-size:12px">${esc(r.reason || "")}</td>
+        ${btnsHtml}
+      </tr>`;
+    };
+    const rows = ((list && list.items) || []).map(item).join("") ||
+      `<tr><td colspan="6" class="muted" style="text-align:center;padding:16px 0">暂无申请记录</td></tr>`;
+
+    const tabs = ["", "pending", "approved", "executed", "rejected", "rolled_back"]
+      .map((s) => `<button class="chip${swapFilterStatus === s ? " active" : ""}" data-act="swap-filter" data-status="${s}">${s ? SWAP_STATUS[s] : "全部"}</button>`)
+      .join(" ");
+
+    return `
+      <div class="card">
+        <h3>自助切班 · 发起互换</h3>
+        <p class="muted">两个班对调课表方案，或把 A 班切成 B 班当前的方案（单切）。带生效时段时，到期自动换回原方案（后端每 30s 巡检）。${cfg.requires_approval === false ? "免审批模式：提交即执行。" : "默认需批准后方执行。"}</p>
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <label>发起班级（A）
+            <select id="swap-from" class="w100">${classOpts(classes, curId)}</select></label>
+          <label>目标班级（B）
+            <select id="swap-to" class="w100">${classOpts(classes, "")}</select></label>
+        </div>
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+          <label>类型
+            <select id="swap-type" class="w100">
+              <option value="swap">互换（A↔B 方案对调）</option>
+              <option value="oneway">单切（A 换成 B 的方案）</option>
+            </select></label>
+          <label>原因（选填）
+            <input id="swap-reason" class="w100" placeholder="如：周三两班合堂调课" maxlength="120"/></label>
+        </div>
+        <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px">
+          <label>开始生效 <input id="swap-start" type="datetime-local" class="w100" value="${defStart}"/></label>
+          <label>到期自动换回 <input id="swap-end" type="datetime-local" class="w100" value="${defEnd}"/></label>
+        </div>
+        <p class="muted" style="margin-top:6px">A/B 相同、时段与进行中申请重叠、两个班当前方案一致时都会被后端拒绝。</p>
+        <button class="primary" data-act="swap-submit" data-need="control">提交互换申请</button>
+      </div>
+      <div class="card">
+        <h3>互换申请记录</h3>
+        <div style="margin-bottom:8px">${tabs}</div>
+        <table class="tbl"><thead><tr><th>班级</th><th>方式</th><th>状态</th><th>生效时段</th><th>原因</th><th>操作</th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <p class="muted">已批准后由系统按「先挂起 → 再切方案」执行；执行中的申请若到期会先回退再放行新申请。</p>
+      </div>`;
   };
 
   // ============ 移动端侧栏抽屉 ============
@@ -2261,7 +2994,15 @@
     refreshOfflineBanner();
   }
 
-  document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
+  // 只给真正的视图项挂导航；「更多功能」是纯开合按钮，不该触发 go() 或收起抽屉。
+  document.querySelectorAll(".nav[data-view]").forEach((b) => b.addEventListener("click", () => { go(b.dataset.view); setNav(false); }));
+  const navMoreBtn = $("#nav-more");
+  if (navMoreBtn) {
+    navMoreBtn.addEventListener("click", () => {
+      navMoreOpen = !navMoreOpen;
+      applyIdentityNav();
+    });
+  }
 
   // 离线横幅「重试」：先清标记再重渲染。若仍拿不到数据，请求过程中
   // 会再次置位 offline，横幅会自动回来 —— 不会出现「点了重试却假装好了」。
@@ -2312,6 +3053,108 @@
     const act = el.dataset.act;
     try {
       if (act === "reload") return go(current);
+      // ---- 随机抽取（纯前端）----
+      if (act === "random-import") {
+        const txt = document.getElementById("random-input");
+        const names = (txt.value || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        if (!names.length) return toast("名单为空");
+        randomNames = names; randomDrawn = new Set(); _randomSave();
+        toast("已导入 " + names.length + " 人"); return go("random");
+      }
+      if (act === "random-fromclass") {
+        try {
+          const cls = await API.listClassEntities();
+          const devs = (cls && cls.deviceMap) || (cls && cls.devices) || [];
+          if (!devs.length) return toast("没有可导入的设备/班级");
+          randomNames = devs.map((d) => d.name || d.id).filter(Boolean); randomDrawn = new Set(); _randomSave();
+          toast("已从班级导入 " + randomNames.length + " 项"); return go("random");
+        } catch (e) { return toast("导入失败：" + (e && e.message || e)); }
+      }
+      if (act === "random-clearlist") {
+        randomNames = []; randomDrawn = new Set(); randomHistory = []; _randomSave(); return go("random");
+      }
+      const _rdup = () => { const c = document.getElementById("random-nodup"); return c ? c.checked : true; };
+      if (act === "random-draw1") {
+        const picked = _randomPick(1, _rdup());
+        if (!picked.length) { toast("已抽完，点「重置已抽」重来"); return go("random"); }
+        randomHistory.push(picked); _randomSave(); return go("random");
+      }
+      if (act === "random-drawn") {
+        const n = parseInt((document.getElementById("random-n") || {}).value || "1", 10) || 1;
+        const picked = _randomPick(n, _rdup());
+        if (!picked.length) { toast("已抽完或名单空"); return go("random"); }
+        randomHistory.push(picked); _randomSave(); return go("random");
+      }
+      if (act === "random-reset") { randomDrawn = new Set(); _randomSave(); toast("已重置「已抽」标记"); return go("random"); }
+      // ---- 自助切班（互换 / 单切）----
+      if (act === "swap-filter") { swapFilterStatus = el.dataset.status || ""; return go("swap"); }
+      if (act === "swap-submit") {
+        const from = (document.getElementById("swap-from") || {}).value || "";
+        const to = (document.getElementById("swap-to") || {}).value || "";
+        const type = (document.getElementById("swap-type") || {}).value || "swap";
+        if (!from || !to) return toast("请选择发起班级与目标班级");
+        if (from === to) return toast("不能与自身互换，请换一个目标班级");
+        const reason = ((document.getElementById("swap-reason") || {}).value || "").trim();
+        const s = (document.getElementById("swap-start") || {}).value || "";
+        const e = (document.getElementById("swap-end") || {}).value || "";
+        if (s && e && new Date(s) >= new Date(e)) return toast("开始时间必须早于结束时间");
+        const payload = { from_class_id: from, to_class_id: to, swap_type: type, reason: reason || undefined };
+        if (s) payload.effective_start_at = new Date(s).toISOString();
+        if (e) payload.effective_end_at = new Date(e).toISOString();
+        try {
+          const r = await API.swapCreate(payload);
+          toast((r && r.message) || "已提交");
+          swapFilterStatus = "";
+          return go("swap");
+        } catch (err) {
+          return toast("提交失败：" + ((err && err.message) || err));
+        }
+      }
+      if (act === "swap-approve") {
+        try { const r = await API.swapApprove(el.dataset.id); toast((r && r.message) || "已批准"); return go("swap"); }
+        catch (err) { return toast("批准失败：" + ((err && err.message) || err)); }
+      }
+      if (act === "swap-reject") {
+        const why = prompt("驳回原因（选填）：") ?? null;
+        try { const r = await API.swapReject(el.dataset.id, why || ""); toast((r && r.message) || "已驳回"); return go("swap"); }
+        catch (err) { return toast("驳回失败：" + ((err && err.message) || err)); }
+      }
+      if (act === "swap-cancel") {
+        try { const r = await API.swapCancel(el.dataset.id); toast((r && r.message) || "已撤销"); return go("swap"); }
+        catch (err) { return toast("撤销失败：" + ((err && err.message) || err)); }
+      }
+      if (act === "swap-rollback") {
+        if (!confirm("确认现在就把课表方案换回原样（提前结束本次互换）？")) return;
+        try { const r = await API.swapRollback(el.dataset.id); toast((r && r.message) || "已回退"); return go("swap"); }
+        catch (err) { return toast("回退失败：" + ((err && err.message) || err)); }
+      }
+      // ---- 文件传输（面板侧；下发依赖部署包）----
+      if (act === "ft-upload") {
+        const f = document.getElementById("ft-file");
+        if (!f || !f.files || !f.files.length) return toast("请先选择文件");
+        const target = (document.getElementById("ft-target") || {}).value || "";
+        // 后端存储/下发接口为本期后端联调项：先回显已选文件与目标，真实上传待接口就位。
+        const names = Array.from(f.files).map((x) => x.name).join("、");
+        const st = document.getElementById("ft-status");
+        if (st) st.textContent = `已选 ${f.files.length} 个文件：${names} → ${target || "全校"}（后端接口联调中，暂未落库下发）`;
+        toast("文件已选，等待后端接口联调");
+      }
+      // ---- 音量调节（面板侧；下发依赖部署包）----
+      if (act === "vol-mute") {
+        const uid = el.dataset.uid; const s = document.querySelector(`.vol-slider[data-uid="${uid}"]`);
+        if (s) { s.value = 0; const v = s.parentElement.parentElement.querySelector(".vol-val"); if (v) v.textContent = "0"; }
+        return toast("已设为静音（待下发）");
+      }
+      if (act === "vol-apply") {
+        const uid = el.dataset.uid; const s = document.querySelector(`.vol-slider[data-uid="${uid}"]`);
+        const val = s ? s.value : 50;
+        return toast(`将对 ${uid} 下发 setVolume(${val})（待部署包就位）`);
+      }
+      if (act === "vol-apply-all") {
+        const vals = Array.from(document.querySelectorAll(".vol-slider")).map((s) => `${s.dataset.uid}=${s.value}`).join(", ");
+        return toast(`将批量下发：${vals}（待部署包就位）`);
+      }
+
       // 通用跳转：任意按钮都能把用户送到另一个视图（免得为了"去某页"写一个专用 action）
       if (act === "go") return go(el.dataset.v);
       // ---- 定时关机（长期计划：每天/每周/一次性/倒计时；教室端 60s 确认后生效）----
@@ -2528,6 +3371,10 @@
         await API.deviceAction(el.dataset.id, el.dataset.a);
         API.audit("device." + el.dataset.a, el.dataset.id, "下发设备指令");
         toast(`已下发指令：${el.dataset.a} → ${el.dataset.id}`);
+        // #T07.7 步骤 3：截图指令下发后轮询回传 —— 教室端代理截屏后会把 PNG
+        // 回传到 ext 网关（/api/console/ext/captures），这里等待并弹窗展示。
+        // data-host 是 agent 的 UID（设备行只带 client_id，回传 key 是 UID）。
+        if (el.dataset.a === "screenshot") waitForCapture(el.dataset.id, el.dataset.host);
       }
       else if (act === "assign") {
         const id = el.dataset.id;
@@ -2674,6 +3521,20 @@
         // 显示时长（秒）：留空 = 不指定（教室端按字数自适应）。显式给 0 也等于不指定。
         const durEl = $("#nt-duration");
         const dur = durEl && durEl.value.trim() !== "" ? Number(durEl.value) : undefined;
+        // v2.1 呈现方式与旗标（服务端按角色矩阵强制，前端只透传）
+        const ntType = ($("#nt-type") || {}).value || "";
+        const presets = ($("#nt-presets") || { value: "" }).value
+          .split(/[,，、]/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 6);
+        const emg = ($("#nt-emergency") || {}).checked === true;
+        const adsRaw = ($("#nt-ads") || { value: "" }).value;
+        const ads = Number(adsRaw);
+        const noticeOpts = { type: ntType };
+        if (presets.length) noticeOpts.reply_presets = presets;
+        if (emg) noticeOpts.emergency_confirm = true;
+        if (Number.isFinite(ads) && ads > 0 && ads <= 300) noticeOpts.auto_dismiss_seconds = Math.round(ads);
         // 勾选的班级 = 定向推送目标（多选）。为空则交给「范围」决定。
         const cls = Array.from(view.querySelectorAll("input.nt-cls:checked")).map((x) => x.value);
         try {
@@ -2683,19 +3544,35 @@
           //     且该处注释明确写着「broadcast 内部已记，避免审计双份」。
           // 前端再记一次，会让每次广播在操作日志里出现三条记录，
           // 真正的失败原因反而被淹掉（2026-09-17 实测真实数据确认）。
-          const r = await API.sendNotice(t, $("#nt-scope").value, cls, c, dur);
+          const r = await API.sendNotice(t, $("#nt-scope").value, cls, c, dur, noticeOpts);
           const b = r && r.broadcast;
           // 时长回显：让「设了 30 秒」和「忘了设」在结果通知里一眼可分。
           const durNote =
             Number.isFinite(dur) && dur > 0 ? `（大屏显示 ${dur} 秒）` : "（时长自适应）";
+          const typeNote = r && r.typed && r.typed !== "notice"
+            ? { island: " · 课表岛", popup: " · 弹窗", fullscreen: " · 全屏紧急" }[r.typed] || ""
+            : "";
           if (b && b.deduped) {
             toast("内容与 30 秒内的上一条完全相同，已自动去重（未重复推送）");
           } else if (b && b.ok === false) {
             toast("未送达：" + (b.error || "未知原因"));
           } else if (b) {
-            toast(`通知已发布${durNote}，送达 ${b.delivered}/${b.total} 台设备`);
+            toast(`通知已发布${durNote}${typeNote}，送达 ${b.delivered}/${b.total} 台设备`);
+            // v2.1 类型化通知：轮询回执，把「谁看了」直接亮给发件人
+            if (r && r.typed && r.typed !== "notice" && r.id) {
+              setTimeout(async () => {
+                try {
+                  const dv = await API.noticeDeliveries(r.id);
+                  const rows = (dv.deliveries || []).filter((d) => d.state !== "pending");
+                  if (rows.length) {
+                    const reads = rows.filter((d) => d.state === "read" || d.state === "replied").length;
+                    toast(`回执：已读 ${reads}/${rows.length} 台${rows.some((d) => d.state === "replied") ? "，1 台已回复" : ""}`);
+                  }
+                } catch (_) { /* 回执轮询失败不打扰发送成功本身 */ }
+              }, 8000);
+            }
           } else {
-            toast("通知已发布" + durNote);
+            toast("通知已发布" + durNote + typeNote);
           }
         } catch (e) {
           toast("发布失败：" + (e && e.message ? e.message : e));
@@ -2728,31 +3605,31 @@
         }
       }
       else if (act === "fr-request") {
-        await API.friendAction("request", Number(b.dataset.id), b.dataset.name || "");
+        await API.friendAction("request", Number(el.dataset.id), el.dataset.name || "");
         toast("好友申请已发出");
         go("chat");
       }
       else if (act === "fr-accept") {
-        await API.friendAction("accept", Number(b.dataset.id));
+        await API.friendAction("accept", Number(el.dataset.id));
         toast("已接受好友");
         go("chat");
       }
       else if (act === "fr-reject") {
-        await API.friendAction("reject", Number(b.dataset.id));
+        await API.friendAction("reject", Number(el.dataset.id));
         toast("已拒绝");
         go("chat");
       }
       else if (act === "fr-remove") {
-        await API.friendAction("remove", Number(b.dataset.id));
+        await API.friendAction("remove", Number(el.dataset.id));
         toast("已删除");
         go("chat");
       }
       else if (act === "fr-dm") {
         // 进私聊：房间名用 dm:<小id>:<大id>，双方算出的名字一致
-        const id = Number(b.dataset.id);
+        const id = Number(el.dataset.id);
         const room = API.dmRoom(PERM.uid, id);
         if (!room) return toast("无法进入私聊（缺少用户 id）");
-        chatPeer = { id, name: b.dataset.name || String(id) };
+        chatPeer = { id, name: el.dataset.name || String(id) };
         chatRoom = room;
         go("chat");
       }
@@ -3054,13 +3931,15 @@
 
         // 轮询扩展网关的 VNC 会话回执（设备代理启动 VNC 后回报 ip/port/token）。
         // 30 秒等待期**必须有进度**，否则界面看起来像卡死（本页最常见的抱怨）。
+        // ⚠️ 双 key：设备行只带 client_id（uid），回执 key 是 agent 的 UID（host）——
+        // 只查 uid 会永远等不到（#T07.7 步骤 5 脱节修复，与截图 waitForCapture 同款）。
         const novnc = API.state.noVncUrl;
         const TOTAL = 20, STEP = 1500, SECS = (TOTAL * STEP) / 1000;
         let session = null;
         for (let i = 0; i < TOTAL; i++) {
           if (note) note.textContent = `已下发远程控制指令（CIMS → 插件 → 本地代理按需启 VNC）。等待设备回报会话地址…（${Math.round(((i + 1) * STEP) / 1000)}/${SECS} 秒）`;
           await new Promise((r) => setTimeout(r, STEP));
-          session = await API.deviceRemoteStatus(uid);
+          session = await API.deviceRemoteStatus(uid, el.dataset.host);
           if (session && session.ip && session.port) break;
         }
 
@@ -3169,6 +4048,25 @@
       if (row) row.style.display = e.target.value === "weekly" ? "" : "none";
       return;
     }
+    // v2.1 通知呈现方式：弹窗 → 显示预设回复/需确认行；弹窗/全屏 → 显示自动关屏行
+    if (e.target && e.target.id === "nt-type") {
+      const v = e.target.value + "";
+      const presetsRow = $("#nt-presets-row");
+      const adsRow = $("#nt-ads-row");
+      const hint = $("#nt-type-hint");
+      if (presetsRow) presetsRow.style.display = v === "popup" ? "" : "none";
+      if (adsRow) adsRow.style.display = v === "popup" || v === "fullscreen" ? "" : "none";
+      if (hint)
+        hint.textContent =
+          v === "island"
+            ? "课表岛：大屏顶部滚动循环，不打断教学（老师也能发）。"
+            : v === "popup"
+              ? "弹窗：教室端弹出需确认的弹窗，可带预设回复与紧急确认。"
+              : v === "fullscreen"
+                ? "全屏：置顶屏幕上方，强打断（仅学校管理员）。"
+                : "普通通知：教室端横幅显示，不打断教学。";
+      return;
+    }
 
     // 故障模板：选完即把标题/等级/描述骨架填好，报修人只需补空项
     if (e.target && e.target.id === "rp-tpl") {
@@ -3193,6 +4091,12 @@
       if (hi) hi.textContent = t.hint ? `「${t.label}」：${t.hint}` : `已套用「${t.label}」模板。`;
       if (ti) ti.focus();
       return;
+    }
+
+    // 执行回执页：换了通知下拉 → 该通知的逐台回执重拉（改选即重渲染）
+    if (e.target && e.target.id === "receipts-notice") {
+      receiptsNoticeId = String(e.target.value || "").trim();
+      return go("receipts");
     }
 
     // 通知历史按班级筛选：改选即按该班的记录重拉（服务端做精确的逗号项匹配）
@@ -3286,21 +4190,58 @@
     );
   }
 
-  /** 当前所选班级的**人话**名称（找不到就退回资源名/空）。 */
+  /**
+   * 当前所选班级的**人话**名称。
+   *
+   * 拿不到人话名字时返回空串（调用方显示「未选择班级」），**绝不退回资源名**：
+   * `cp_class08` / `default_classplan` 是内部标识，老师看到只会一头雾水
+   * （「难道正常人会对着不知情的课表 Uid 切换课表吗」）。资源名只在审计日志里留。
+   */
   function currentClassLabel() {
     const cur = classList.find((c) => c.id === API.state.classId);
-    return cur ? cur.name || cur.id : API.state.classId || "";
+    if (!cur) return "";
+    const name = String(cur.name || "").trim();
+    if (!name) return "";
+    // 万一后端只回了资源名当名字，也不要当成班级名展示
+    if (/^(cp_class|classplan_|default_|class_)/i.test(name)) return "";
+    return name;
   }
 
+  /**
+   * 顶栏「当前班级」胶囊的状态灯：正常 / 用了缓存（黄）/ 取不到（红）。
+   *
+   * 三种状态必须能**看出来**：否则「显示的是上次成功加载的班级」和
+   * 「显示的就是此刻真实的班级」长得一模一样，老师会拿着一张过期的班级列表去下发通知。
+   */
+  function setClassPickState(err) {
+    const pick = $("#class-pick");
+    if (!pick) return;
+    pick.classList.toggle("stale", !!(err && err.stale));
+    pick.classList.toggle("err", !!(err && !err.stale));
+    const label = pick.querySelector(".cp-label");
+    if (label) label.textContent = err ? (err.stale ? "班级可能不是最新" : "班级加载失败") : "当前班级";
+    pick.title = err ? err.message : "切换当前班级（课表、设备、广播都跟着它走）";
+  }
+
+  let lastClassErrMsg = ""; // 同一条错误只提示一次，避免每次刷新都弹一遍
+
   async function loadClasses() {
+    const pick = $("#class-pick");
+    if (pick) pick.classList.add("loading");
     const cs = await API.listClasses();
+    if (pick) pick.classList.remove("loading");
     classList = cs;
+    const cerr = API.state.classListError || null;
     const sel = $("#class-select");
     sel.innerHTML = cs.length
       ? cs
-          .map((c) => `<option value="${esc(c.id)}" title="课表资源：${esc(c.id)}">${esc(c.name || c.id)}</option>`)
+          .map((c) => {
+            // 设备数写进选项：老师选班的实际依据是「这个班有没有机器要管」
+            const dev = (c.deviceCount || 0) > 0 ? ` · ${c.deviceCount}台设备` : "";
+            return `<option value="${esc(c.id)}" title="课表资源：${esc(c.id)}">${esc(c.name || c.id)}${dev}</option>`;
+          })
           .join("")
-      : `<option value="">（该账户下暂无班级）</option>`;
+      : `<option value="">${cerr ? "班级加载失败 —— 点这里重试" : "（该账户下暂无班级）"}</option>`;
 
     // 自动挑选态（用户没手动选过）→ 每次都按账号班级重算一遍：账号班级可能是
     // 登录后才由 /api/me 补上的，只算一次会永远停在上一次的兜底结果上。
@@ -3320,9 +4261,24 @@
       else API.setClass("");
     }
     sel.value = API.state.classId || "";
+    setClassPickState(cerr);
+    // 胶囊上写不下原因（"服务正在限流，请等 1 分钟后再试"），用一条 toast 说清；
+    // 同一条错误只弹一次，避免每次切换视图、每次账号校准都重复打扰。
+    if (cerr && cerr.message && cerr.message !== lastClassErrMsg) {
+      lastClassErrMsg = cerr.message;
+      toast(cerr.message);
+    } else if (!cerr) {
+      lastClassErrMsg = "";
+    }
     $("#user-chip").textContent = API.state.demo ? "演示用户" : "已登录";
   }
   $("#class-select").addEventListener("change", (e) => {
+    // 加载失败时下拉里只有「点这里重试」这一项，其 value 为空。
+    // 此时选中它 = 重试，而**不是**"把当前班级设成空"。
+    if (!e.target.value) {
+      if (API.state.classListError) loadClasses();
+      return;
+    }
     classAutoChosen = false; // 用户明确选过：后续校准不再覆盖
     API.setClass(e.target.value);
     go(current);

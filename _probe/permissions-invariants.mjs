@@ -40,8 +40,18 @@ c("teacher 不能进后台", !P.can("teacher", "viewAdmin"));
 c("teacher 不能管用户", !P.can("teacher", "manageUsers"));
 c("teacher 广播=本年级", P.broadcastScope("teacher") === "grade");
 c("teacher 管本年级", P.roleManagementTier("teacher") === "grade");
-c("teacher 可控制设备", P.canDevice("teacher", "control"));
-c("teacher 不可远控", !P.canDevice("teacher", "remote"));
+// ⚠️ 设备三关铁律（#249）：teacher 收回全部设备档（连 watch 都没有）。
+c("teacher 无设备档（watch 也没有）", !P.canDevice("teacher", "watch") && !P.canDevice("teacher", "control") && !P.canDevice("teacher", "remote"));
+
+// ---- 4b. 班主任（L4，设备三关之一）----
+c("homeroom 能进集控", P.can("homeroom", "viewConsole"));
+c("homeroom 能发广播", P.can("homeroom", "sendBroadcast"));
+c("homeroom 广播=本年级", P.broadcastScope("homeroom") === "grade");
+c("homeroom 管理=本班", P.roleManagementTier("homeroom") === "class");
+c("homeroom 能远控（设备轴）", P.canDevice("homeroom", "remote"));
+c("homeroom 无 manage 设备档", !P.canDevice("homeroom", "manage"));
+c("homeroom 标签=班主任", P.ROLE_LABELS["homeroom"] === "班主任");
+c("homeroom 等级=L4", P.roleToLevel("homeroom") === 4);
 
 // ---- 5. 审核 / 编辑（L5）----
 c("moderator 能审核 UGC", P.can("moderator", "moderate"));
@@ -130,9 +140,20 @@ c("每级都有示例角色且等级自洽",
 	}
 
 	// 9.4 设备轴与称号正交：改称号不改变 canDevice / canBroadcastTo / 管理分级（它们按角色表驱动）。
+	//     ⚠️ 设备三关铁律（#249）：watch 仅授予 站长/班主任/电教委员（owner/admin/homeroom/techrep）。
+	const WATCH_ROLES = new Set(["owner", "admin", "homeroom", "techrep"]);
 	for (const r of P.ASSIGNABLE_ROLES) {
-		c(`设备轴与称号正交 [${r}]`, P.canDevice(r, "watch") === true);
+		c(`设备轴与称号正交 [${r}]`, P.canDevice(r, "watch") === WATCH_ROLES.has(r));
 	}
+	// 三关之外的任何角色连 watch 都没有（铁律 = 设备列表必须为空）。
+	c("非三关角色一律无设备档",
+		P.ASSIGNABLE_ROLES.filter((r) => !WATCH_ROLES.has(r))
+			.every((r) => !P.canDevice(r, "watch") && !P.canDevice(r, "control") && !P.canDevice(r, "remote")));
+	// 三关角色档位矩阵（防将来误加/误删）。
+	c("三关角色档位矩阵",
+		P.canDevice("owner", "manage") && P.canDevice("admin", "manage")
+		&& P.canDevice("homeroom", "remote") && !P.canDevice("homeroom", "manage")
+		&& P.canDevice("techrep", "remote") && !P.canDevice("techrep", "manage"));
 
 	// 9.5 等级只是显示秩位：roleToLevel 仍存在且完整（UI 展示用），但不参与 can() 判定。
 	//     roleCapabilitiesSummary 的 actions 应来自称号并集而非等级阈值。

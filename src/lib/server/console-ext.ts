@@ -12,7 +12,11 @@
  * - 审计只记元数据，不存敏感内容。
  */
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { CONTENT_DIR } from "./paths.js";
 import { getDb, nowIso } from "./db.js";
+import { resolveFeatures, featureDefaultsOf, FEATURE_KEYS, type FeatureKey, type Role } from "$lib/permissions.js";
 
 export interface ConsoleNotice {
 	id: number;
@@ -25,6 +29,11 @@ export interface ConsoleNotice {
 	classes: string[];
 	/** 来源通道：notice（面板发布）/ chat（群里喊话）/ announcement（网站公告）。 */
 	channel: string;
+	/** 通知类型（v2.1）：notice | island | popup | fullscreen（来自 notice_kinds，默认 notice）。 */
+	type: string;
+	/** 类型化旗标（JSON 原串；解析用 flagsParsed）。 */
+	flags: string;
+	flagsParsed: Record<string, unknown>;
 	createdAt: string;
 }
 
@@ -67,22 +76,46 @@ const unpackClasses = (s: unknown): string[] =>
 
 // ── 通知广播历史 ────────────────────────────────────────────────────────────
 
-export function listNotices(limit = 50, classId?: string): ConsoleNotice[] {
+export function listNotices(limit = 50, classId?: string, since?: string): ConsoleNotice[] {
 	// 按班级筛选：班级号是逗号串里的独立项，用「首项 / 中间项 / 末项」三种包含式精确匹配，
 	// 避免 LIKE '%3%' 把「13班」也匹配进来。空 classes 的旧行为「不限班级」，任何筛选都可见。
 	const cls = String(classId ?? "").trim();
-	const where = cls
-		? "WHERE classes = '' OR classes = ? OR classes LIKE ? OR classes LIKE ? OR classes LIKE ?"
-		: "";
-	const params: any[] = cls ? [cls, `${cls},%`, `%,${cls},%`, `%,${cls}`] : [];
+	const conds: string[] = [];
+	const params: any[] = [];
+	if (cls) {
+		conds.push("(n.classes = '' OR n.classes = ? OR n.classes LIKE ? OR n.classes LIKE ? OR n.classes LIKE ?)");
+		params.push(cls, `${cls},%`, `%,${cls},%`, `%,${cls}`);
+	}
+	// since：增量拉取（被控端 catch-up 与面板「只显示最近」都用它）。
+	// 用 ISO 字典序比较（nowIso 为 UTC Z 格式），与 created_at 同一坐标系。
+	const snc = String(since ?? "").trim();
+	if (snc && !Number.isNaN(new Date(snc).getTime())) {
+		conds.push("n.created_at > ?");
+		params.push(new Date(snc).toISOString());
+	}
+	const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 	const rows = getDb()
 		.prepare(
-			`SELECT id, title, scope, account, author, sent, classes, channel, created_at
-			 FROM console_notices ${where} ORDER BY created_at DESC, id DESC LIMIT ?`
+			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
+			        k.type, k.flags
+			 FROM console_notices n
+			 LEFT JOIN notice_kinds k ON k.notice_id = n.id
+			 ${where} ORDER BY n.created_at DESC, n.id DESC LIMIT ?`
 		)
 		.all(...params, Math.min(Math.max(limit, 1), 200)) as unknown as any[];
-	return rows.map((r) => ({
-		id: r.id,
+	return rows.map((r) => noticeFromRow(r));
+}
+
+export function noticeFromRow(r: any): ConsoleNotice {
+	let flagsParsed: Record<string, unknown> = {};
+	try {
+		const f = JSON.parse(String(r.flags || "{}"));
+		if (f && typeof f === "object") flagsParsed = f;
+	} catch {
+		/* 坏 JSON 当无旗标 */
+	}
+	return {
+		id: Number(r.id),
 		title: r.title,
 		scope: r.scope,
 		account: r.account,
@@ -90,8 +123,24 @@ export function listNotices(limit = 50, classId?: string): ConsoleNotice[] {
 		sent: Number(r.sent ?? 0),
 		classes: unpackClasses(r.classes),
 		channel: r.channel || "",
+		type: String(r.type || "notice"),
+		flags: String(r.flags || "{}"),
+		flagsParsed,
 		createdAt: r.created_at
-	}));
+	};
+}
+
+export function getNoticeById(id: number): ConsoleNotice | null {
+	const r = getDb()
+		.prepare(
+			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
+			        k.type, k.flags
+			 FROM console_notices n
+			 LEFT JOIN notice_kinds k ON k.notice_id = n.id
+			 WHERE n.id = ?`
+		)
+		.get(Number(id ?? 0)) as any;
+	return r ? noticeFromRow(r) : null;
 }
 
 export function addNotice(input: {
@@ -102,6 +151,10 @@ export function addNotice(input: {
 	sent?: number;
 	classes?: string[] | string;
 	channel?: string;
+	/** v2.1 通知类型（notice/island/popup/fullscreen）；默认 notice。 */
+	type?: string;
+	/** 类型化旗标对象（emergency_confirm / auto_dismiss_seconds / reply_presets…）。 */
+	flags?: Record<string, unknown>;
 }): ConsoleNotice {
 	const row = {
 		title: cut(input.title, 200),
@@ -119,8 +172,19 @@ export function addNotice(input: {
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(row.title, row.scope, row.account, row.author, row.sent, row.classes, row.channel, ts);
+	const id = Number(info.lastInsertRowid);
+	const kind = ["notice", "island", "popup", "fullscreen"].includes(String(input.type || "notice"))
+		? String(input.type || "notice")
+		: "notice";
+	const flags = input.flags && typeof input.flags === "object" ? input.flags : {};
+	if (kind !== "notice" || Object.keys(flags).length > 0) {
+		getDb()
+			.prepare(`INSERT INTO notice_kinds (notice_id, type, flags) VALUES (?, ?, ?)
+			           ON CONFLICT(notice_id) DO UPDATE SET type = excluded.type, flags = excluded.flags`)
+			.run(id, kind, JSON.stringify(flags).slice(0, 2000));
+	}
 	return {
-		id: Number(info.lastInsertRowid),
+		id,
 		title: row.title,
 		scope: row.scope,
 		account: row.account,
@@ -128,6 +192,9 @@ export function addNotice(input: {
 		sent: row.sent,
 		classes: unpackClasses(row.classes),
 		channel: row.channel,
+		type: kind,
+		flags: JSON.stringify(flags),
+		flagsParsed: flags,
 		createdAt: ts
 	};
 }
@@ -136,6 +203,294 @@ export function addNotice(input: {
 export function clearNotices(): number {
 	const info = getDb().prepare("DELETE FROM console_notices").run();
 	return Number(info.changes ?? 0);
+}
+
+/** 回填送达数（类型化通知先建档拿 id、下发后再把 delivered 写回）。 */
+export function setNoticeSent(id: number, sent: number): void {
+	getDb()
+		.prepare("UPDATE console_notices SET sent = ? WHERE id = ?")
+		.run(Math.max(0, Number(sent ?? 0)), Number(id ?? 0));
+}
+
+// ── 通知送达回执（v2.1）─────────────────────────────────────────────────────
+
+export interface NoticeDeliveryRow {
+	id: number;
+	notice_id: number;
+	uid: string;
+	state: string;
+	action_result: string;
+	/** 老师自由回复原文（replyNotice 上报；区别于预设短语 action_result）。 */
+	reply: string;
+	detail: string;
+	created_at: string;
+	updated_at: string;
+}
+
+/** 某条通知的逐台回执（面板「谁看了、谁没看」明细）。 */
+export function listNoticeDeliveries(noticeId: number): NoticeDeliveryRow[] {
+	return getDb()
+		.prepare(
+		`SELECT id, notice_id, uid, state, action_result, reply, detail, created_at, updated_at
+		 FROM notice_deliveries WHERE notice_id = ? ORDER BY created_at ASC`
+	)
+		.all(Number(noticeId ?? 0)) as unknown as NoticeDeliveryRow[];
+}
+
+/** 建档：某通知开局时给每台目标设备落一行 pending（幂等：已存在则跳过）。 */
+export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number {
+	if (!Number(noticeId)) return 0;
+	const ts = nowIso();
+	let n = 0;
+	const stmt = getDb().prepare(
+		`INSERT OR IGNORE INTO notice_deliveries (notice_id, uid, state, action_result, reply, detail, created_at, updated_at)
+		 VALUES (?, ?, 'pending', '', '', '', ?, ?)`
+	);
+
+	for (const uidRaw of uids) {
+		const uid = String(uidRaw ?? "").trim().toLowerCase();
+		if (!uid) continue;
+		stmt.run(noticeId, uid, ts, ts);
+		n++;
+	}
+	return n;
+}
+
+/**
+ * 设备回报（设备密钥鉴权由路由层把关）：received → read / replied / rejected / dismissed。
+ * action_result 只用于 replied（预设短语原文）；其余状态置空。
+ * 返回是否命中（找不到行 = 通知不存在或不是发往这台设备的，拒绝）。
+ */
+export function markNoticeDelivery(
+	noticeId: number,
+	uid: string,
+	state: string,
+	actionResult: string
+): boolean {
+	const nid = Number(noticeId ?? 0);
+	const u = String(uid ?? "").trim().toLowerCase();
+	if (!nid || !u) return false;
+	const st = ["received", "read", "replied", "rejected", "dismissed", "failed"].includes(state)
+		? state
+		: "read";
+	// replied 允许带预设短语原文；其余状态一律不存（防脏数据）
+	const ar = st === "replied" ? String(actionResult ?? "").slice(0, 120) : "";
+	const r = getDb()
+		.prepare(
+			`UPDATE notice_deliveries
+			 SET state = ?, action_result = ?, updated_at = ?
+			 WHERE notice_id = ? AND LOWER(uid) = ? AND state NOT IN ('replied', 'acked')`
+		)
+		.run(st, ar, nowIso(), nid, u);
+	return Number(r.changes) > 0;
+}
+
+/**
+ * 被控端 catch-up 拉取：某台设备还没看到的类型化通知（用于「错过弹窗/重启后补齐」）。
+ * 返回该设备仍为 pending/received（未终态）的通知。plain notice 不在此列（无交互语义）。
+ */
+export function listPendingTypedNotices(
+	uid: string,
+	limit = 20,
+	sinceId = 0
+): ConsoleNotice[] {
+	const u = String(uid ?? "").trim().toLowerCase();
+	if (!u) return [];
+	const rows = getDb()
+		.prepare(
+			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
+			        k.type, k.flags
+			 FROM notice_deliveries d
+			 JOIN console_notices n ON n.id = d.notice_id
+			 JOIN notice_kinds k ON k.notice_id = n.id
+			 WHERE LOWER(d.uid) = ? AND d.state = 'pending' AND d.notice_id > ?
+			 ORDER BY d.notice_id ASC
+			 LIMIT ?`
+		)
+		.all(u, Number(sinceId) || 0, Math.min(Math.max(limit, 1), 50)) as unknown as any[];
+	return rows.map((r) => noticeFromRow(r));
+}
+
+/**
+ * 带游标的 catch-up（2026-09-26）：一次拉不完就分页，客户端下次带 `cursor` 接着来。
+ *
+ * 为什么不能只靠「60 秒节流 + 取前 20 条」：通知批量下发时一次塞不下的那些
+ * 会在下一轮被重新取到（因为仍是 pending），于是同一条被弹两次；而漏掉的
+ * 那条永远排在 20 名之外，机器重启后照样错过。游标（已处理到的最大 notice_id）
+ * 让「拉到哪了」变成可持久化的进度，幂等才有落点。
+ */
+export function listPendingTypedNoticesPage(
+	uid: string,
+	sinceId = 0,
+	limit = 20
+): { notices: ConsoleNotice[]; cursor: number } {
+	const list = listPendingTypedNotices(uid, limit, sinceId);
+	const cursor = list.reduce((m, n) => (n.id > m ? n.id : m), Number(sinceId) || 0);
+	return { notices: list, cursor };
+}
+
+/**
+ * 消息错过提醒（2026-09-26）：这些通知发出去 [minutes] 分钟了，目标机器还是 pending
+ * —— 也就是「它大概率没收到」。面板据此列出来，而不是让老师对着一片空白猜。
+ *
+ * 只报 pending：received/read 说明机器确实收到了；failed 有专门的错误路径。
+ * 默认 10 分钟，短了会把「正在推的路上」误报成错过。
+ */
+export function listStaleDeliveries(
+	minutes = 10,
+	limit = 100
+): { notice_id: number; uid: string; title: string; type: string; created_at: string }[] {
+	const since = new Date(Date.now() - Math.max(1, minutes) * 60_000).toISOString();
+	return getDb()
+		.prepare(
+			`SELECT d.notice_id, d.uid, n.title, COALESCE(k.type, 'notice') AS type, d.created_at
+			 FROM notice_deliveries d
+			 JOIN console_notices n ON n.id = d.notice_id
+			 LEFT JOIN notice_kinds k ON k.notice_id = d.notice_id
+			 WHERE d.state = 'pending' AND d.created_at <= ?
+			 ORDER BY d.created_at ASC
+			 LIMIT ?`
+		)
+		.all(since, Math.min(Math.max(limit, 1), 300)) as unknown as {
+		notice_id: number;
+		uid: string;
+		title: string;
+		type: string;
+		created_at: string;
+	}[];
+}
+
+/**
+ * 设备侧回报「老师回复了」—— 双向传递的另一半。
+ *
+ * 只把 state 置 replied 是不够的：预设短语（action_result）和自由回复（reply）
+ * 是两种东西。老师在弹窗里打了一整句话，面板若只显示预设列表，她会以为回复丢了。
+ *
+ * 与 markNoticeDelivery 的区别：这里**允许覆盖**已有回复（老师改口或重复提交时
+ * 以最新为准），而 state 一旦终态（read/replied）就不再被回执改写 —— 否则
+ * 「点过确认」会被后来的一句回覆抹掉，紧急通知的确认记录就不可信了。
+ *
+ * 返回是否命中（没这行 = 通知不存在 / 不是发往这台设备的，拒绝）。
+ */
+export function markNoticeReply(noticeId: number, uid: string, text: string): boolean {
+	const nid = Number(noticeId ?? 0);
+	const u = String(uid ?? "").trim().toLowerCase();
+	const t = cut(text, 500).trim();
+	if (!nid || !u || !t) return false;
+	const r = getDb()
+		.prepare(
+			`UPDATE notice_deliveries
+			 SET reply = ?, state = 'replied', action_result = '', updated_at = ?
+			 WHERE notice_id = ? AND LOWER(uid) = ?`
+		)
+		.run(t, nowIso(), nid, u);
+	return Number(r.changes) > 0;
+}
+
+// ── 设备执行回执（被控端「动作做完之后」的上报）───────────────────────────────
+
+export interface DeviceEventRow {
+	id: number;
+	uid: string;
+	event: string;
+	ok: number;
+	detail: string;
+	extra: string;
+	created_at: string;
+}
+
+const DEVICE_EVENT_KEEP = 200;
+
+/**
+ * 记一条执行回执。ok=false **照样落库** —— 失败才是需要被看见的东西，
+ * 只留成功的会让「哪台机器最近老是失败」从账面上彻底消失。
+ */
+export function addDeviceEvent(input: {
+	uid: string;
+	event: string;
+	ok?: boolean;
+	detail?: string;
+	extra?: Record<string, unknown>;
+	at?: string;
+}): DeviceEventRow {
+	const uid = cut(input.uid, 64).trim();
+	const ev = cut(input.event, 64).trim();
+	if (!uid || !ev) throw new Error("uid/event 不能为空");
+	const ts = String(input.at ?? "").trim() || nowIso();
+	let extraRaw = "";
+	if (input.extra && typeof input.extra === "object") {
+		try {
+			extraRaw = JSON.stringify(input.extra).slice(0, 2000);
+		} catch {
+			extraRaw = "";
+		}
+	}
+	const info = getDb()
+		.prepare(
+			`INSERT INTO device_events (uid, event, ok, detail, extra, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`
+		)
+		.run(uid, ev, input.ok === false ? 0 : 1, cut(input.detail, 400), extraRaw, ts);
+	const id = Number(info.lastInsertRowid);
+	pruneDeviceEvents(uid);
+	return {
+		id,
+		uid,
+		event: ev,
+		ok: input.ok === false ? 0 : 1,
+		detail: cut(input.detail, 400),
+		extra: extraRaw,
+		created_at: ts
+	};
+}
+
+/** 取回执流水（按时间倒序）。uid 省略 = 全校（面板总览用，限 300 条）。 */
+export function listDeviceEvents(uid?: string, limit = 100): DeviceEventRow[] {
+	const n = Math.min(Math.max(limit, 1), 300);
+	const u = String(uid ?? "").trim();
+	const where = u ? "WHERE uid = ?" : "";
+	const params: any[] = u ? [u] : [];
+	return getDb()
+		.prepare(`SELECT * FROM device_events ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
+		.all(...params, n) as unknown as DeviceEventRow[];
+}
+
+/**
+ * 每台设备只留最近的 [DEVICE_EVENT_KEEP] 条，其余按时间从老到新删。
+ *
+ * 不做保留期裁剪而只做条数裁剪，是有意的：老师问「上周三下午那台机器到底
+ * 报了什么」时，按时间划线会正好划掉那一小时。条数裁剪只丢最新的记录，
+ * 而最近 200 条覆盖了最近几天，够用；真要长期留档该走审计表，不该塞这里。
+ */
+export function pruneDeviceEvents(uid: string): number {
+	const u = String(uid ?? "").trim();
+	if (!u) return 0;
+	return Number(
+		getDb()
+			.prepare(
+				`DELETE FROM device_events
+				  WHERE uid = ? AND id NOT IN (
+					SELECT id FROM device_events WHERE uid = ? ORDER BY created_at DESC, id DESC LIMIT ?
+				  )`
+			)
+			.run(u, u, DEVICE_EVENT_KEEP).changes ?? 0
+	);
+}
+
+/** 面板「执行回执」页的计数条：这台机器最近多少成功、多少失败。 */
+export function deviceEventStats(uid: string, sinceHours = 24): { total: number; ok: number; failed: number } {
+	const u = String(uid ?? "").trim();
+	if (!u) return { total: 0, ok: 0, failed: 0 };
+	const since = new Date(Date.now() - Math.max(1, sinceHours) * 3600_000).toISOString();
+	const r = getDb()
+		.prepare(
+			`SELECT COUNT(*) AS total, SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok
+			 FROM device_events WHERE uid = ? AND created_at >= ?`
+		)
+		.get(u, since) as { total: number; ok: number | null } | undefined;
+	const total = Number(r?.total ?? 0);
+	const ok = Number(r?.ok ?? 0);
+	return { total, ok, failed: total - ok };
 }
 
 // ── 班级交流 ────────────────────────────────────────────────────────────────
@@ -304,6 +659,98 @@ export function saveConsoleSettings(patch: Record<string, unknown>): Record<stri
 	metaSet(CONSOLE_SETTINGS_KEY, JSON.stringify(merged));
 	return merged;
 }
+
+/**
+ * 监控参数（截图/录像/远控编码）：从 console settings 取，缺省给默认值。
+ * 设备端（Rust agent）经 GET /ext/monitor-config（设备密钥）拉取后应用。
+ */
+export function getMonitorConfig(): Record<string, unknown> {
+	const s = getConsoleSettings();
+	const num = (k: string, d: number) => {
+		const v = Number(s[k]);
+		return Number.isFinite(v) && v > 0 ? v : d;
+	};
+	return {
+		screenshot_webp_quality: num("screenshot_webp_quality", 75),
+		screenshot_max_width: num("screenshot_max_width", 1280),
+		monitor_interval_sec: num("monitor_interval_sec", 0),
+		monitor_retention_days: num("monitor_retention_days", 7),
+		video_codec: String(s.video_codec ?? "vp9"),
+		video_bitrate_kbps: num("video_bitrate_kbps", 600),
+		video_fps: num("video_fps", 30),
+		video_resolution: String(s.video_resolution ?? "1080p"),
+		p2p_ice_override: String(s.p2p_ice_override ?? ""),
+	};
+}
+
+
+/**
+ * 设备接入码（2026-09-26 统一接入）：管理员生成，设备安装时输入激活码自拉配置。
+ * 存 console_meta（单键 JSON 数组），每码绑定班级 + 有效期 + 已用标记。
+ */
+const ACTIVATE_KEY = "device_activation_codes";
+
+export type ActivationCode = {
+	code: string;
+	classId: string;
+	className: string;
+	createdAt: string;
+	expiresAt: string;
+	used: boolean;
+	usedBy?: string;
+};
+
+export function listActivationCodes(): ActivationCode[] {
+	const raw = metaGet(ACTIVATE_KEY);
+	if (!raw) return [];
+	try {
+		const a = JSON.parse(raw);
+		return Array.isArray(a) ? (a as ActivationCode[]) : [];
+	} catch { return []; }
+}
+
+function saveActivationCodes(list: ActivationCode[]): void {
+	metaSet(ACTIVATE_KEY, JSON.stringify(list));
+}
+
+export function generateActivationCode(opts: { classId: string; className: string; hours: number }): ActivationCode {
+	const code = "XJK-" + Math.random().toString(36).slice(2, 8).toUpperCase() + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
+	const now = new Date();
+	const item: ActivationCode = {
+		code,
+		classId: opts.classId,
+		className: opts.className,
+		createdAt: now.toISOString(),
+		expiresAt: new Date(now.getTime() + opts.hours * 3600_000).toISOString(),
+		used: false,
+	};
+	const list = listActivationCodes();
+	list.unshift(item);
+	saveActivationCodes(list.slice(0, 200)); // 只留最近 200 条
+	return item;
+}
+
+export function revokeActivationCode(code: string): boolean {
+	const list = listActivationCodes();
+	const next = list.filter((c) => c.code !== code);
+	if (next.length === list.length) return false;
+	saveActivationCodes(next);
+	return true;
+}
+
+export function consumeActivationCode(code: string, deviceUid: string): ActivationCode | null {
+	const list = listActivationCodes();
+	const idx = list.findIndex((c) => c.code === code.trim().toUpperCase() && !c.used);
+	if (idx < 0) return null;
+	const item = list[idx];
+	if (new Date(item.expiresAt) < new Date()) return null; // 过期
+	item.used = true;
+	item.usedBy = deviceUid;
+	list[idx] = item;
+	saveActivationCodes(list);
+	return item;
+}
+
 
 export function addAudit(input: {
 	actor?: string;
@@ -712,13 +1159,20 @@ export type DeviceSession = {
 const SESSION_TTL_MS = Math.max(30, Number(process.env.CONSOLE_SESSION_TTL_SECONDS ?? 300)) * 1000;
 const deviceSessions = new Map<string, DeviceSession>();
 
-const sKey = (proto: string, uid: string) => `${proto}:${uid}`;
+// ⚠️ uid 必须小写归一化（#T07.7 步骤 5 实测脱节）：教室端代理上报用的是
+// `device_uid`（主机名，可能是小写 n7-20091211），而 CIMS 面板轮询用的是
+// `client_id`（lab-pc-001）或 `host` 字段（大写 N7-20091211）——同一个设备的
+// 两种写法如果不归一化，`vnc:${uid}` 就永远对不上，症状是「面板一直等待设备
+// 回报会话地址」而 agent 其实早就报过了。与 captures 的 putDeviceCapture 同款
+// 处理（那边也是 toLowerCase 后当 key）。
+const sKey = (proto: string, uid: string) => `${proto}:${String(uid ?? "").trim().toLowerCase()}`;
 
-/** 登记/覆盖一个设备会话，返回落库后的对象。 */
+/** 登记/覆盖一个设备会话，返回落库后的对象。uid 存小写（key 归一化，查询双 key 才能命中）。 */
 export function putDeviceSession(
 	input: Omit<DeviceSession, "at"> & { at?: number }
 ): DeviceSession {
-	const s: DeviceSession = { ...input, at: input.at ?? Date.now() };
+	const uid = String(input.uid ?? "").trim().toLowerCase();
+	const s: DeviceSession = { ...input, uid, at: input.at ?? Date.now() };
 	deviceSessions.set(sKey(s.proto, s.uid), s);
 	return s;
 }
@@ -771,4 +1225,397 @@ export function verifyDeviceReportSecret(provided: string | null | undefined): b
 	let diff = 0;
 	for (let i = 0; i < expect.length; i++) diff |= expect.charCodeAt(i) ^ got.charCodeAt(i);
 	return diff === 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 设备截图回传（#T07.7 步骤 2）
+//
+// 教室端代理（stelarith-agent）截屏后把 PNG 回传到 ext 层，面板按 uid 轮询取图。
+// 与 vnc/media 会话同类的「设备回执」：**瞬态**，每设备只保留最新一张，
+// TTL 过期即丢 —— 截图是"看一眼当下屏幕"的瞬时操作，留档由教室端
+// shots 目录负责（C:/ProgramData/Stelarith/shots），这里不做持久库。
+// 图片字节落盘 content/captures/（运行时数据，gitignore 忽略），
+// 内存索引只记元数据；面板 GET 时按需读回文件字节。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DeviceCaptureMeta {
+	uid: string;
+	/** 登记时间（epoch ms） */
+	at: number;
+	/** 图片字节数 */
+	bytes: number;
+	/** 落盘绝对路径 */
+	path: string;
+}
+
+const CAPTURE_TTL_MS = Math.max(15, Number(process.env.CONSOLE_CAPTURE_TTL_SECONDS ?? 60)) * 1000;
+const deviceCaptures = new Map<string, DeviceCaptureMeta>();
+
+const CAPTURES_DIR = path.join(CONTENT_DIR, "captures");
+
+/**
+ * 截图就绪事件（v2.1）：每台设备的新截图登记后，这里留一条最近事件，
+ * 操控端轮询「新截图」时能立刻知道"哪台设备有新图"，而不必逐台查。
+ * 与截图本身同生命周期（内存 + 按 TTL 清理）：截图是瞬态回执，
+ * 事件只是"有新的了"的提醒，图还是走 captures 端点取。
+ */
+export interface CaptureReadyEvent {
+	uid: string;
+	at: number;
+}
+
+const CAPTURE_EVENT_TTL_MS = Math.max(30, Number(process.env.CONSOLE_CAPTURE_EVENT_TTL_SECONDS ?? 120)) * 1000;
+const captureReadyEvents: CaptureReadyEvent[] = [];
+
+/** 登记一条"新截图就绪"事件（幂等：同设备 10 秒内只记一条，防轮询刷屏）。 */
+export function notifyCaptureReady(uid: string): void {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return;
+	const now = Date.now();
+	const recent = captureReadyEvents.find((e) => e.uid === key);
+	if (recent && now - recent.at < 10_000) return; // 10s 去重
+	captureReadyEvents.push({ uid: key, at: now });
+	// 只保留 TTL 内的
+	while (captureReadyEvents.length > 0 && now - captureReadyEvents[0].at > CAPTURE_EVENT_TTL_MS) {
+		captureReadyEvents.shift();
+	}
+}
+
+/** 拉取最近的新截图就绪事件（按时间倒序）。 */
+export function listCaptureReadyEvents(): CaptureReadyEvent[] {
+	const now = Date.now();
+	while (captureReadyEvents.length > 0 && now - captureReadyEvents[0].at > CAPTURE_EVENT_TTL_MS) {
+		captureReadyEvents.shift();
+	}
+	return [...captureReadyEvents].sort((a, b) => b.at - a.at);
+}
+
+
+/** 登记一张设备截图（同设备覆盖旧图），返回元数据。uid 大小写不敏感（面板按 host 查时可能带大写）。 */
+export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): DeviceCaptureMeta {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) throw new Error("uid 不能为空");
+	if (!bytes || bytes.length === 0) throw new Error("图片字节为空");
+	fs.mkdirSync(CAPTURES_DIR, { recursive: true });
+	const p = (n: number) => String(n).padStart(2, "0");
+	const d = new Date();
+	const safe = key.replace(/[^A-Za-z0-9_.-]/g, "_");
+	const name = `${safe}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.png`;
+	const file = path.join(CAPTURES_DIR, name);
+	fs.writeFileSync(file, bytes);
+	const meta: DeviceCaptureMeta = { uid: key, at: Date.now(), bytes: bytes.length, path: file };
+	deviceCaptures.set(key, meta);
+	// v2.1：登记"新截图就绪"事件（操控端据此推送通知，而不是逐台轮询）
+	notifyCaptureReady(key);
+	// v2（监控回放）：除内存 TTL 缓存外，落一行 SQLite 索引（content/captures 的
+	// 文件本身保留，「回放」= 按设备翻时间线）。旧路径只留最新一张 60s，
+	// 老师想回看上午的教室画面时什么都没有 —— 这就是「监控视频回放」的落点。
+	try {
+		const sha = crypto.createHash("sha256").update(bytes).digest("hex");
+		getDb()
+			.prepare(
+				`INSERT INTO captures (uid, path, bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?)`
+			)
+			.run(key, file, bytes.length, sha, nowIso());
+	} catch (e) {
+		// 索引写失败不影响实时看图（主结果已落盘+内存）；记日志便于发现库异常。
+		console.warn("[console-ext] captures 索引写入失败：", e);
+	}
+	return meta;
+}
+
+/** 回放时间线条目（不含图片字节；字节按 id 单独取，避免列表请求拖几十 MB）。 */
+export interface CaptureHistoryItem {
+	id: number;
+	uid: string;
+	at: string;
+	bytes: number;
+	sha256: string;
+}
+
+/** 某设备的截图历史（回放时间线，按时间倒序）。 */
+export function listDeviceCaptures(uid: string, limit = 60): CaptureHistoryItem[] {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return [];
+	const rows = getDb()
+		.prepare(
+			`SELECT id, uid, bytes, sha256, created_at FROM captures
+			 WHERE uid = ? ORDER BY created_at DESC LIMIT ?`
+		)
+		.all(key, Math.min(Math.max(limit, 1), 300)) as {
+		id: number;
+		uid: string;
+		bytes: number;
+		sha256: string;
+		created_at: string;
+	}[];
+	return rows.map((r) => ({
+		id: r.id,
+		uid: r.uid,
+		at: r.created_at,
+		bytes: r.bytes,
+		sha256: r.sha256
+	}));
+}
+
+/** 按行 id 取回放帧（含 PNG 字节）；文件已清理时返回 null。 */
+export function getDeviceCaptureById(id: number): { meta: CaptureHistoryItem; png: Buffer } | null {
+	if (!Number.isFinite(id) || id <= 0) return null;
+	const row = getDb()
+		.prepare(`SELECT id, uid, path, bytes, sha256, created_at FROM captures WHERE id = ?`)
+		.get(id) as { id: number; uid: string; path: string; bytes: number; sha256: string; created_at: string } | undefined;
+	if (!row) return null;
+	try {
+		const png = fs.readFileSync(row.path);
+		if (png.length === 0) return null;
+		return {
+			meta: { id: row.id, uid: row.uid, at: row.created_at, bytes: row.bytes, sha256: row.sha256 },
+			png
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 取某设备最新截图（含 PNG 字节）。过期/文件丢失/空文件一律视为无截图并清索引。
+ * 返回 `null` 表示「没有可用的截图」，与「设备没截过」等价 —— 面板据此展示
+ * 等待提示而不是报错。
+ */
+export function getDeviceCapture(uid: string): { meta: DeviceCaptureMeta; png: Buffer } | null {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return null;
+	const m = deviceCaptures.get(key);
+	if (!m) return null;
+	if (Date.now() - m.at > CAPTURE_TTL_MS) {
+		deviceCaptures.delete(key);
+		return null;
+	}
+	try {
+		const png = fs.readFileSync(m.path);
+		if (png.length === 0) {
+			deviceCaptures.delete(key);
+			return null;
+		}
+		return { meta: m, png };
+	} catch {
+		deviceCaptures.delete(key);
+		return null;
+	}
+}
+
+/** 主动清除某设备截图（面板取完图后可调，避免残留 TTL 窗口）。uid 大小写不敏感。 */
+export function clearDeviceCapture(uid: string): boolean {
+	const key = String(uid ?? "").trim().toLowerCase();
+	if (!key) return false;
+	const m = deviceCaptures.get(key);
+	deviceCaptures.delete(key);
+	if (m) {
+		try {
+			fs.unlinkSync(m.path);
+		} catch {
+			/* 文件可能已被外部清理，忽略 */
+		}
+	}
+	return !!m;
+}
+
+// ── 功能开关（per-user 能力位）─────────────────────────────────────────────
+//
+// 「关键逻辑在服务端」的落点：角色只提供默认值，per-user 覆盖存在库里，
+// 两者叠加后由 resolveUserFeatures 一次性算出结论下发给客户端。
+// 客户端拿到的是结论（true/false），拿不到规则 —— 改前端开不出功能。
+
+/** 读覆盖值。没记录 = 全按角色默认（不给每个人造空行）。 */
+export function getUserFeatureOverrides(uid: string): Record<string, unknown> {
+	const u = String(uid ?? "").trim();
+	if (!u) return {};
+	const r = getDb().prepare("SELECT flags FROM user_features WHERE uid = ?").get(u) as
+		| { flags?: string }
+		| undefined;
+	if (!r?.flags) return {};
+	try {
+		const v = JSON.parse(r.flags);
+		return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+	} catch {
+		return {};
+	}
+}
+
+/**
+ * 写覆盖值：只认白名单功能位 + 布尔值，`null` = 恢复按角色默认，其余丢弃。
+ * 不做白名单过滤的话，一个拼错的键会永远留在库里，谁都看不出它为什么没生效。
+ */
+export function setUserFeatureOverrides(
+	uid: string,
+	patch: Record<string, unknown>,
+	actor: string
+): Record<string, unknown> {
+	const u = String(uid ?? "").trim();
+	if (!u) return {};
+	const next: Record<string, unknown> = { ...getUserFeatureOverrides(u) };
+	const src = patch && typeof patch === "object" ? patch : {};
+	for (const k of FEATURE_KEYS) {
+		const v = (src as Record<string, unknown>)[k];
+		if (v === true || v === false) next[k] = v;
+		else if (v === null) delete next[k];
+	}
+	getDb()
+		.prepare(
+			`INSERT INTO user_features (uid, flags, updated_at, updated_by) VALUES (?, ?, ?, ?)
+			 ON CONFLICT(uid) DO UPDATE SET flags = excluded.flags,
+			                               updated_at = excluded.updated_at,
+			                               updated_by = excluded.updated_by`
+		)
+		.run(u, JSON.stringify(next), nowIso(), cut(actor, 64));
+	return next;
+}
+
+/** 最终能力位 —— 服务端唯一的裁决出口（面板/被控端都只能消费它）。 */
+export function resolveUserFeatures(
+	uid: string,
+	role: Role | null | undefined
+): { features: Record<FeatureKey, boolean>; overridden: FeatureKey[]; defaults: Record<FeatureKey, boolean> } {
+	const { features, overridden } = resolveFeatures(role, getUserFeatureOverrides(uid));
+	return { features, overridden, defaults: featureDefaultsOf(role) };
+}
+
+// ── 任务级回执（点击 → 结果，一对一）───────────────────────────────────────
+
+export interface DeviceTaskRow {
+	task_id: string;
+	uid: string;
+	kind: string;
+	actor: string;
+	state: string;
+	result: string;
+	extra: string;
+	created_at: string;
+	updated_at: string;
+}
+
+const TASK_KEEP = 300;
+
+/**
+ * 建档：操控端每次下发动作时开一张「任务单」，把 task_id 随指令下发给设备。
+ * 设备做完之后带着同一个 task_id 回报 —— 这才是「被控端完成操作后给操控端
+ * 上报响应」能落到某个按钮上的前提。
+ */
+export function createTask(input: {
+	uid: string;
+	kind: string;
+	actor?: string;
+	extra?: Record<string, unknown>;
+}): DeviceTaskRow {
+	const uid = cut(input.uid, 64).trim().toLowerCase();
+	const kind = cut(input.kind, 32).trim();
+	if (!uid || !kind) throw new Error("uid/kind 不能为空");
+	const ts = nowIso();
+	let extraRaw = "";
+	if (input.extra && typeof input.extra === "object") {
+		try {
+			extraRaw = JSON.stringify(input.extra).slice(0, 1000);
+		} catch {
+			extraRaw = "";
+		}
+	}
+	const id = crypto.randomUUID();
+	getDb()
+		.prepare(
+			`INSERT INTO device_tasks (task_id, uid, kind, actor, state, result, extra, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, 'pending', '', ?, ?, ?)`
+		)
+		.run(id, uid, kind, cut(input.actor, 64), extraRaw, ts, ts);
+	pruneTasks(uid);
+	return {
+		task_id: id,
+		uid,
+		kind,
+		actor: cut(input.actor, 64),
+		state: "pending",
+		result: "",
+		extra: extraRaw,
+		created_at: ts,
+		updated_at: ts
+	};
+}
+
+/**
+ * 设备回报结果。state 只允许 done / failed / timeout —— 越界一律当 failed，
+ * 绝不让「上报了一个不认识的状态」偷偷把任务留在 pending（那会让面板永远转圈）。
+ */
+export function putTaskResult(
+	taskId: string,
+	state: string,
+	result?: string,
+	extra?: Record<string, unknown>
+): DeviceTaskRow | null {
+	const id = String(taskId ?? "").trim();
+	if (!id) return null;
+	const st = ["done", "failed", "timeout"].includes(state) ? state : "failed";
+	let extraRaw = "";
+	if (extra && typeof extra === "object") {
+		try {
+			extraRaw = JSON.stringify(extra).slice(0, 1000);
+		} catch {
+			extraRaw = "";
+		}
+	}
+	const r = getDb()
+		.prepare(
+			`UPDATE device_tasks SET state = ?, result = ?, extra = CASE WHEN ? <> '' THEN ? ELSE extra END, updated_at = ?
+			 WHERE task_id = ?`
+		)
+		.run(st, cut(result, 400), extraRaw, extraRaw, nowIso(), id);
+	if (Number(r.changes) <= 0) return null;
+	return getTask(id);
+}
+
+export function getTask(taskId: string): DeviceTaskRow | null {
+	const r = getDb().prepare("SELECT * FROM device_tasks WHERE task_id = ?").get(String(taskId ?? "").trim()) as
+		| DeviceTaskRow
+		| undefined;
+	return r ?? null;
+}
+
+/** 列任务（uid 省略 = 全校最近若干条，面板总览与排障用）。 */
+export function listTasks(uid?: string, limit = 50): DeviceTaskRow[] {
+	const n = Math.min(Math.max(limit, 1), 200);
+	const u = String(uid ?? "").trim();
+	const where = u ? "WHERE uid = ?" : "";
+	const params: any[] = u ? [u] : [];
+	return getDb()
+		.prepare(`SELECT * FROM device_tasks ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+		.all(...params, n) as unknown as DeviceTaskRow[];
+}
+
+/**
+ * 超时判死：挂了 [minutes] 分钟仍 pending 的任务一律置 timeout。
+ * 没有这一步，一次网络抖动就会让按钮卡在「等待回执」上永远不落地 ——
+ * 老师只会看到转圈，不会知道这次其实已经失败了。
+ */
+export function timeoutTasks(minutes = 5): number {
+	const since = new Date(Date.now() - Math.max(1, minutes) * 60_000).toISOString();
+	return Number(
+		getDb()
+			.prepare(
+				`UPDATE device_tasks SET state = 'timeout', result = '设备未在 5 分钟内回执', updated_at = ?
+				 WHERE state = 'pending' AND created_at <= ?`
+			)
+			.run(nowIso(), since).changes ?? 0
+	);
+}
+
+/** 每台设备只留最近 [TASK_KEEP] 条，理由同 pruneDeviceEvents（按条数而非按时间）。 */
+function pruneTasks(uid: string): void {
+	const u = String(uid ?? "").trim();
+	if (!u) return;
+	getDb()
+		.prepare(
+			`DELETE FROM device_tasks
+			  WHERE uid = ? AND rowid NOT IN (
+				SELECT rowid FROM device_tasks WHERE uid = ? ORDER BY created_at DESC, rowid DESC LIMIT ?
+			  )`
+		)
+		.run(u, u, TASK_KEEP);
 }

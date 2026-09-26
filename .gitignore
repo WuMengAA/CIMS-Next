@@ -53,6 +53,8 @@ vite.config.ts.timestamp-*
 /uicheck.log
 # 本地运行/调试日志（dev / prod 运行时产生）
 *.log
+# 日志轮转出来的第二代（stelarith-crashguard.log.1 这类，不被 *.log 覆盖）
+*.log.[0-9]
 .rebuild-log.txt
 .prod-run.log
 /*.mjs
@@ -75,6 +77,11 @@ obj/
 *.user
 # 临时构建备份目录
 build_prev_*/
+# 原子发布（scripts/release-site.mjs）的旁路产物与历史版本
+build.next/
+build.old-*/
+build.failed-*/
+_swap-selftest/
 
 # Tauri generated (build.rs embed output)
 /admin-console/src-tauri/gen/

@@ -1,0 +1,18 @@
+{
+  "name": "星集控 · 老师页",
+  "short_name": "老师页",
+  "description": "教室实时画面 · 拍照 / 发通知 / 关机（星集控移动端）",
+  "start_url": "/teacher",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f3ee",
+  "theme_color": "#e8b23d",
+  "icons": [
+    {
+      "src": "/teacher-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,8 +1,25 @@
 import { redirect } from "@sveltejs/kit";
+import os from "node:os";
 import { verifyToken } from "$lib/server/auth.js";
 import { can, userCan, canDevice, isConsoleReadOnly, roleLevelLabel, allowedBroadcastScopes } from "$lib/permissions.js";
 import { getCimsAccount } from "$lib/server/cims-account.js";
 import type { PageServerLoad } from "./$types";
+
+// 老师手机页二维码内容 = 局域网 IPv4 + /teacher（老师手机与本机同 Wi-Fi 即可扫码直通）。
+// 站点 8090 监听 0.0.0.0，局域网可达；查不到就回落 127.0.0.1。
+function firstLanIPv4(): string {
+	try {
+		const nets = os.networkInterfaces();
+		for (const list of Object.values(nets)) {
+			for (const n of list || []) {
+				if (n.family === "IPv4" && !n.internal) return n.address;
+			}
+		}
+	} catch {
+		/* 查不到用回退值 */
+	}
+	return "127.0.0.1";
+}
 
 // 集控面板子页面：仅对具备 viewConsole 的角色开放（L2+：站长/编辑/审核员/电教委员/注册用户）。
 // L1 只读访客已被 can(viewConsole) 挡在门外（门槛 2026-09-16 由 L1 提到 L2）。
@@ -42,7 +59,10 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			control: canDevice(u.role, "control"),
 			remote: canDevice(u.role, "remote"),
 			manage: canDevice(u.role, "manage"),
-			issue: userCan(u, "submitIssue")
+			issue: userCan(u, "submitIssue"),
+			// 广播位：内容轴 sendBroadcast（称号）或设备轴 control 档任一。
+			// 设备三关铁律（#249）下 teacher 无 control，但仍须能发本班通知 → 广播走内容轴。
+			broadcast: userCan(u, "sendBroadcast") || canDevice(u.role, "control")
 		},
 		// 广播可达范围（第三维度：能发 ≠ 能发多远）。
 		// 面板据此只列出该账号可选的范围，避免「选了全校却被服务端 403」的挫败感。
@@ -51,6 +71,7 @@ export const load: PageServerLoad = async ({ cookies }) => {
 		// 当前用户 id：面板用它拼一对一私聊房间名（dm:<小id>:<大id>）。
 		// 只下发 id 本身，不含任何凭据；好友关系仍由服务端按会话用户校验。
 		userId: u.id,
-		accountId: account?.id ?? ""
+		accountId: account?.id ?? "",
+		lanHost: firstLanIPv4()
 	};
 };

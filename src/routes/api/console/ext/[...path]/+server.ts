@@ -4,8 +4,19 @@ import { verifyToken, type User } from "$lib/server/auth.js";
 import { can, userCan, canDevice, broadcastScope, canBroadcastTo, clampBroadcastScope, scopeFromLabel, BROADCAST_SCOPE_LABELS, type BroadcastScope, // 权限矩阵（等级轴 / 设备轴 / 分级轴 / 广播范围轴 + 当前账号快照）
 	// 全部由 permissions.ts 的 permissionMatrix() 计算，本路由只做透传 ——
 	// 因此不再逐个导入各轴的中文标签常量（它们只在 permissionMatrix 内部使用）。
-	permissionMatrix, type Action, type DeviceTier } from "$lib/permissions.js";
+	permissionMatrix, canDeviceAction, deviceActionsOf, canSendNoticeType, NOTICE_TYPE_LABELS, type Action, type DeviceTier, type DeviceAction, type NoticeType } from "$lib/permissions.js";
 import { broadcastToClassrooms } from "$lib/server/broadcast.js";
+import { classScopeOf, scopeCovers, listBindings } from "$lib/server/class-scope.js";
+import { fetchClassList, fetchDeviceClassMap, classOfDevice } from "$lib/server/cims-client.js";
+import {
+	saveUpload,
+	getFileObject,
+	readFileBytes,
+	pushFileToDevices,
+	listDeliveries,
+	updateDelivery,
+	MAX_FILE_BYTES
+} from "$lib/server/file-transfer.js";
 import {
 	listNotices,
 	addNotice,
@@ -27,7 +38,7 @@ import {
 	canTalkInRoom,
 	// 面板持久化配置（控制 / 媒体 / 实验特性）—— 服务端存储，全校一致
 	getConsoleSettings,
-	saveConsoleSettings,
+	saveConsoleSettings, getMonitorConfig, listActivationCodes, generateActivationCode, revokeActivationCode, consumeActivationCode,
 	CONSOLE_SETTINGS_KEYS as SETTINGS_KEYS,
 	// ── 设备会话回执（远控/媒体直连）────────────────────────────────────────
 	// ⚠️ 这一组曾**整体漏导入**，导致本路由一被调用就抛
@@ -43,8 +54,54 @@ import {
 	clearDeviceSession,
 	putDeviceSession,
 	listDeviceSessions,
-	verifyDeviceReportSecret
+	verifyDeviceReportSecret,
+	// ── 设备截图回传（#T07.7 步骤 2）────────────────────────────────────
+	// ── 截图回放 / 会话日志等历史清单的导入 ────────────────────────────────
+	putDeviceCapture,
+	notifyCaptureReady,
+	listCaptureReadyEvents,
+	getDeviceCapture,
+	clearDeviceCapture,
+	listDeviceCaptures,
+	getDeviceCaptureById,
+	// ── 通知回执（v2.1 类型化通知：建档 / 明细 / 设备 catch-up）────────────
+	getNoticeById,
+	listNoticeDeliveries,
+	ensureNoticeDeliveries,
+	markNoticeDelivery,
+	listPendingTypedNotices,
+	listPendingTypedNoticesPage,
+	// ── 通知回复 / 设备执行回执（2026-09-25 补：双向传递的另一半 + 「动作做完」）──
+	markNoticeReply,
+	addDeviceEvent,
+	listDeviceEvents,
+	deviceEventStats,
+	// ── 功能开关 + 任务级回执（2026-09-26）────────────────────────────────
+	// ⚠️ 沿用上方同一条教训：本路由是「多端点大杂烩」，新增端点务必同步 import，
+	//    TS 不会把未定义标识符当编译错误（会被当成全局变量放过），
+	//    漏一个就表现为线上 500，且排查时极容易误判成网络/鉴权问题。
+	resolveUserFeatures,
+	getUserFeatureOverrides,
+	setUserFeatureOverrides,
+	createTask,
+	putTaskResult,
+	getTask,
+	listTasks,
+	timeoutTasks,
+	listStaleDeliveries
 } from "$lib/server/console-ext.js";
+import { syncReplyToCims } from "$lib/server/cims-reply-sync.js";
+
+/**
+ * 设备密钥请求判定：带 `x-stelarith-device-secret` 头的调用方自称是教室端设备
+ * （Rust 代理 / 星集控被控循环）。密钥与服务端 CONSOLE_DEVICE_REPORT_SECRET
+ * 比对，未配置一律拒绝（fail-closed）。
+ */
+function deviceSecretOk(event: RequestEvent): boolean {
+	const secret = event.request.headers.get("x-stelarith-device-secret");
+	if (!secret) return false;
+	return verifyDeviceReportSecret(secret);
+}
 
 /**
  * 集控面板协作数据接口（站点侧，替代纯前端演示数据）。
@@ -60,10 +117,17 @@ import {
  *   POST   /api/console/ext/audit              记一条操作日志
  *   POST   /api/console/ext/audit/prune        按保留期裁剪审计（需 device.manage；裁剪本身也留痕）
  *   GET    /api/console/ext/summary            面板汇总计数
+ *   GET    /api/console/ext/events?uid=xxx     执行回执流水（被控端「动作做完」的上报）
+ *   GET    /api/console/ext/notice-deliveries?notice=id
+ *                                              逐台送达/回复明细（谁没回应、回了什么）
+ *   POST   /api/console/ext/notice-reply       老师自由回复回传（设备密钥，与 ack 互补）
+ *   POST   /api/console/ext/events             被控端执行回执上报（设备密钥）
  *   GET|DELETE /api/console/ext/vnc-session    设备会话回执（面板轮询取教室端 VNC 地址）
  *   POST       /api/console/ext/vnc-session    教室端代理回报 VNC 会话（**设备密钥鉴权，非用户会话**）
  *   GET        /api/console/ext/media-session  媒体直连会话（快照/录像下载用）
  *   POST       /api/console/ext/media-session  代理回报媒体直连地址（同设备密钥鉴权）
+ *   GET        /api/console/ext/captures       设备截图回传（面板轮询取教室端截屏）
+ *   POST       /api/console/ext/captures       代理回报截图 PNG（设备密钥鉴权，base64）
  *   GET        /api/console/ext/sessions       全部未过期会话（诊断用；没有它就只能靠猜）
  *
  * 权限：所有端点需 viewConsole（等级轴 L1+）；写操作另需设备档位或内容能力 ——
@@ -88,8 +152,26 @@ const DEVICE_TIERS: DeviceTier[] = ["watch", "control", "remote", "manage"];
  */
 type ConsoleUser = User & { id: number };
 
-function guard(event: RequestEvent, need: Action | DeviceTier = "viewConsole") {
-	const u = verifyToken(event.cookies.get("admin_token"));
+/**
+ * 取请求用户：优先 `Authorization: Bearer`（桌面端官方客户端 / CLI 自检），
+ * 兜底 `admin_token` cookie（浏览器面板）。两路都走同一套 verifyToken 会话校验，
+ * Bearer 失效同样 401 —— 不会比 cookie 路径更宽。
+ *
+ * 为什么加这一层（#T07.7 步骤 4）：桌面端控制侧「远程截图 → 拉图」要轮询
+ * GET /captures，但桌面端没有 cookie 机制（token 存在 shared_preferences、
+ * 请求一律带 Bearer 头）。不加的话桌面端拿不到截图回传，截图链路在桌面端断掉。
+ */
+function requestUser(event: RequestEvent): User | null {
+	const bearer = event.request.headers.get("authorization") ?? "";
+	if (/^Bearer\s+/i.test(bearer)) {
+		const u = verifyToken(bearer.replace(/^Bearer\s+/i, "").trim());
+		if (u) return u;
+	}
+	return verifyToken(event.cookies.get("admin_token"));
+}
+
+function guard(event: RequestEvent, need: Action | DeviceTier | "broadcast" = "viewConsole") {
+	const u = requestUser(event);
 	if (!u) return { error: json({ error: "请先登录" }, { status: 401 }) } as const;
 	// 缺 id 时后续所有以 id 为键的操作都会静默失效，不如在这里明确拒绝。
 	if (typeof u.id !== "number") {
@@ -100,9 +182,13 @@ function guard(event: RequestEvent, need: Action | DeviceTier = "viewConsole") {
 		return { error: json({ error: "无权限" }, { status: 403 }) } as const;
 	}
 	// 第二道门按 need 的归属走对应轴：设备档位查 canDevice，内容动作查 can。
-	const ok = DEVICE_TIERS.includes(need as DeviceTier)
-		? canDevice(u.role, need as DeviceTier)
-		: userCan(u, need as Action);
+	// broadcast = 复合位：内容轴 sendBroadcast（称号）或设备轴 control 档任一即可。
+	const ok =
+		need === "broadcast"
+			? userCan(u, "sendBroadcast") || canDevice(u.role, "control")
+			: DEVICE_TIERS.includes(need as DeviceTier)
+				? canDevice(u.role, need as DeviceTier)
+				: userCan(u, need as Action);
 	if (!ok) {
 		return { error: json({ error: "无权限" }, { status: 403 }) } as const;
 	}
@@ -118,6 +204,109 @@ async function readBody(event: RequestEvent): Promise<any> {
 }
 
 export async function GET(event: RequestEvent) {
+	const path0 = (event.params.path ?? "").replace(/^\/+|\/+$/g, "");
+
+	// ── 设备密钥早分派（先于用户鉴权）──────────────────────────────────────
+	// 设备（教室端代理 / 星集控被控循环）没有用户会话，走不了 viewConsole。
+	// 它们只被允许做两类事：① 按 id 下载推送文件（file_push 指令的下半场）；
+	// ② 拉取发给自己的类型化通知（island/popup/fullscreen 的 catch-up），
+	//    以及回报阅读/回复状态（POST notice-ack，在下方的设备分支）。
+	// 密钥不对必须明确 403，不能落到用户鉴权分支回「请先登录」——
+	// 那会把「设备密钥配错」伪装成「登录过期」（与 POST 侧同款教训）。
+
+	// ── 监控参数（截图/录像配置）：设备经设备密钥拉取，面板用户读同一份。────────
+
+	// ── 设备接入码：agent 带设备密钥校验消费；面板带用户会话列出现有码。──────
+	if (path0 === "device-activate") {
+		const secret = event.request.headers.get("x-stelarith-device-secret");
+		const code = String(event.url.searchParams.get("code") ?? "").trim();
+		// 消费分支：激活码本身是一次性凭证（管理员生成、绑班级、带 TTL），
+		// 首次接入的 agent 尚无设备密钥 —— 允许无密钥消费，码校验即授权。
+		if (code) {
+			if (secret && !deviceSecretOk(event)) {
+				return json({ error: "设备密钥无效" }, { status: 403 });
+			}
+			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+			if (!uid) return json({ error: "缺少 uid 参数" }, { status: 400 });
+			const item = consumeActivationCode(code, uid);
+			if (!item) return json({ error: "接入码无效或已过期" }, { status: 404 });
+			return json({ ok: true, classId: item.classId, className: item.className, uid });
+		}
+		if (secret) {
+			if (!deviceSecretOk(event)) return json({ error: "设备密钥无效" }, { status: 403 });
+			const g = guard(event, "viewConsole");
+			if ("error" in g) return g.error;
+			if (!canDevice(g.user.role, "manage")) return json({ error: "需设备管理档" }, { status: 403 });
+			return json({ codes: listActivationCodes() });
+		}
+		const g = guard(event, "viewConsole");
+		if ("error" in g) return g.error;
+		const up = g.user;
+		if (!canDevice(up.role, "manage")) return json({ error: "需设备管理档" }, { status: 403 });
+		return json({ codes: listActivationCodes() });
+	}
+
+	if (path0 === "monitor-config") {
+		const secret = event.request.headers.get("x-stelarith-device-secret");
+		if (secret) {
+			if (!deviceSecretOk(event)) {
+				return json(
+					{ error: "设备密钥无效：x-stelarith-device-secret 与服务端不一致（或服务端未配置）" },
+					{ status: 403 }
+				);
+			}
+			return json({ config: getMonitorConfig() });
+		}
+		// 面板/网页读配置：viewConsole 门槛（与其余 console 读操作一致）。
+		const g = guard(event, "viewConsole");
+		if ("error" in g) return g.error;
+		return json({ config: getMonitorConfig() });
+	}
+
+	if (path0 === "files" || path0 === "notices") {
+		const secret = event.request.headers.get("x-stelarith-device-secret");
+		if (secret) {
+			if (!deviceSecretOk(event)) {
+				return json(
+					{ error: "设备密钥无效：x-stelarith-device-secret 与服务端不一致（或服务端未配置）" },
+					{ status: 403 }
+				);
+			}
+			if (path0 === "files") {
+				const fid = String(event.url.searchParams.get("id") ?? "").trim();
+				const obj = fid ? getFileObject(fid) : null;
+				if (!obj) return json({ error: "文件不存在或已清理", code: "not_found" }, { status: 404 });
+				const bytes = readFileBytes(obj);
+				if (!bytes) return json({ error: "文件内容已清理", code: "gone" }, { status: 410 });
+				// 中文文件名：filename* 按 RFC 5987 编码；filename 兜底 ASCII。
+				const asciiName = obj.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+				return new Response(new Uint8Array(bytes), {
+					status: 200,
+					headers: {
+						"content-type": "application/octet-stream",
+						"content-length": String(bytes.length),
+						"content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(obj.name)}`
+					}
+				});
+			}
+			// 被控端 catch-up：拉这台设备还没看过的类型化通知（重启后补齐弹窗）。
+			//
+			// `since` = 已处理到的最大 notice_id（游标）。客户端把它存下来下次带上，
+			// 一次拉不完就分页，且同一条不会因为仍是 pending 而被反复弹。
+			// 不传 since 仍按老行为取前 N 条 —— 旧客户端不必改造就能继续跑。
+			const pendUid = String(event.url.searchParams.get("pending_for") ?? "").trim();
+			if (!pendUid) return json({ error: "缺少 pending_for（设备 uid）" }, { status: 400 });
+			const sinceRaw = String(event.url.searchParams.get("since") ?? "").trim();
+			const page = listPendingTypedNoticesPage(
+				pendUid,
+				Number(sinceRaw) || 0,
+				Number(event.url.searchParams.get("limit") ?? 20) || 20
+			);
+			return json({ notices: page.notices, cursor: page.cursor });
+		}
+		// 无设备密钥 → 落到下面的用户会话分支（面板拉历史 / 查询进度）。
+	}
+
 	const g = guard(event);
 	if ("error" in g) return g.error;
 	const u = g.user;
@@ -127,11 +316,75 @@ export async function GET(event: RequestEvent) {
 	// 遮蔽它，导致 TDZ 报错（Block-scoped variable 'q' used before its declaration），
 	// 于是改成 kw —— 局部变量名不要与它同名。
 	const q = event.url.searchParams;
+	const scope = classScopeOf(u.role, u.id);
 
 	switch (path) {
 		case "notices":
-			// class 过滤：历史通知「分班级」查看（不传 = 全部）
-			return json(listNotices(Number(q.get("limit") ?? 50) || 50, q.get("class") || undefined));
+			// 历史通知：「班级」过滤分班查看（不传 = 全部）；「since」增量拉取
+			// （被控端 catch-up 复用同一端点拉补课，面板轮询只看新的）。
+			return json(
+				listNotices(
+					Number(q.get("limit") ?? 50) || 50,
+					q.get("class") || undefined,
+					q.get("since") || undefined
+				)
+			);
+		case "notice-deliveries": {
+			// 类型化通知的逐台回执（面板「谁看了、谁没看」明细；viewConsole 即可，
+			// 与看历史同一权限档 —— 回执含设备 uid 属内部信息，不对外）。
+			// 行里带 reply 字段：老师在弹窗上打的那句话原样出网，操控端才叫「收到回应」。
+			const nid = Number(q.get("notice") ?? 0);
+			if (!nid) return json({ error: "缺少 notice 参数" }, { status: 400 });
+			const n = getNoticeById(nid);
+			if (!n) return json({ error: "通知不存在" }, { status: 404 });
+			return json({ notice: n, deliveries: listNoticeDeliveries(nid) });
+		}
+		case "capabilities": {
+			// 功能开关（能力位）——「按身份与权限决定开启或关闭某些功能」的裁决出口。
+			//
+			// 只返回**结论**（每个功能 true/false），不返回规则：规则留在服务端，
+			// 前端改代码开不出任何功能。一并返回 defaults / overridden，
+			// 面板才能标出"这条是单独给你开的"，否则老师会以为全校老师都能发全屏通知。
+			const res = resolveUserFeatures(String(u.id), u.role);
+			return json({
+				role: u.role,
+				features: res.features,
+				defaults: res.defaults,
+				overridden: res.overridden
+			});
+		}
+		case "task": {
+			// 任务级回执：按 task_id 查单个动作的结果，或按 uid 列这台机器最近的活。
+			// 每次查询顺手做一次超时判死 —— 设备掉线时没有这一步，
+			// 按钮会永远停在「等待回执」，老师只会看到转圈而不知道其实已经失败了。
+			timeoutTasks(5);
+			const tid = String(q.get("task_id") ?? "").trim();
+			if (tid) {
+				const t = getTask(tid);
+				// 查不到必须给明确 404：返回 ok:true + null 会让调用方以为"还没好"，
+				// 于是继续轮询一个根本不存在的任务（这类假象最难查）。
+				if (!t) return json({ error: "任务不存在（task_id 无效或已被清理）" }, { status: 404 });
+				return json({ task: t });
+			}
+			return json({ tasks: listTasks(q.get("uid") || undefined, Number(q.get("limit") ?? 50) || 50) });
+		}
+		case "notice-stale": {
+			// 消息错过提醒：发出去 [minutes] 分钟还是 pending 的，大概率没收到。
+			// 面板据此列出"这些机器可能没收到"，而不是让老师对着一片沉默猜。
+			return json({
+				stale: listStaleDeliveries(
+					Number(q.get("minutes") ?? 10) || 10,
+					Number(q.get("limit") ?? 100) || 100
+				)
+			});
+		}
+		case "user-features": {
+			// 查看某人的功能开关覆盖值（管理员核对用）。
+			if (!userCan(u, "manage")) return json({ error: "无权限（需要管理权限）" }, { status: 403 });
+			const uid = String(q.get("uid") ?? "").trim();
+			if (!uid) return json({ error: "缺少 uid" }, { status: 400 });
+			return json({ uid, overrides: getUserFeatureOverrides(uid) });
+		}
 		case "chat":
 			return json(listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100));
 		case "audit":
@@ -143,6 +396,17 @@ export async function GET(event: RequestEvent) {
 			return json({ verify: verifyAudit(), policy: auditPolicy() });
 		case "summary":
 			return json(consoleSummary());
+		case "events": {
+			// 执行回执流水（面板「执行回执」页）。
+			// ?uid= 省略 = 全校总览（限 300 条，够看最近几天的动作）。
+			// 权限沿用 viewConsole：回执只含"设备把事情做成什么样"，不含教师身份等敏感信息。
+			const uidQ = (q.get("uid") ?? "").trim();
+			const hours = Number(q.get("hours"));
+			const stats = uidQ
+				? deviceEventStats(uidQ, Number.isFinite(hours) && hours > 0 ? hours : 24)
+				: null;
+			return json({ events: listDeviceEvents(uidQ || undefined, Number(q.get("limit") ?? 100) || 100), stats });
+		}
 		case "permissions":
 			// 「权限与分级」页的唯一数据源：等级轴 + 设备轴 + 管理分级轴 + 广播范围轴，
 			// 以及**当前账号**的已解算快照（me）。服务端算、前端只渲染 ——
@@ -164,21 +428,125 @@ export async function GET(event: RequestEvent) {
 		}
 		case "vnc-session": {
 			// 面板轮询：按 uid 取教室端回报的 VNC 会话。
+			// ⚠️ 双 key（#T07.7 步骤 5 脱节修复）：面板下发指令用的是 CIMS 的
+			// `client_id`（lab-pc-001），而教室端代理回报时用的是自己的
+			// `device_uid`（主机名 n7-20091211）——两者是**不同的串**。
+			// 只按 client_id 查会永远 `no_session_reported`，即使代理早就报过。
+			// 与 captures 的 waitForCapture 双 key 方案对齐：先按 uid（client_id）
+			// 查，miss 再按 host（= agent 的 UID）查。查询 key 本身已小写归一化
+			// （console-ext.ts sKey toLowerCase），host 传大写 N7-20091211 也能命中。
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-			if (!uid) return json({ session: null, reason: "missing_uid" });
-			const s = getDeviceSession("vnc", uid);
+			const host = String(event.url.searchParams.get("host") ?? "").trim();
+			if (!uid && !host) return json({ session: null, reason: "missing_uid" });
+			const s = getDeviceSession("vnc", uid) || (host ? getDeviceSession("vnc", host) : null);
 			// 明确区分「没人报过」与「报过但已过期」—— 前者要查代理，后者只要重发一次指令。
 			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
 		}
 		case "media-session": {
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-			if (!uid) return json({ session: null, reason: "missing_uid" });
-			const s = getDeviceSession("media", uid);
+			const host = String(event.url.searchParams.get("host") ?? "").trim();
+			if (!uid && !host) return json({ session: null, reason: "missing_uid" });
+			const s = getDeviceSession("media", uid) || (host ? getDeviceSession("media", host) : null);
 			return json({ session: s, reason: s ? "ok" : "no_session_reported" });
+		}
+		case "captures": {
+			// 设备截图回传：面板点「截图」下发指令后按 uid 轮询这里，拿到教室端回报的 PNG。
+			// ⚠️ 双 key（#T09 老师页修复，与 vnc/media-session 同款）：面板/老师页下发指令
+			// 用的是 CIMS 的 `client_id`（lab-pc-001），而教室端 agent 上报用的是自己的
+			// `device_uid`（主机名 n7-20091211）——只按 client_id 查会永远
+			// `no_capture_reported`，即使代理早就报过（截图的 uid 归一化在
+			// console-ext.ts sKey 层完成，host 传大写 N7-20091211 也能命中）。
+			// 修复前调用方只能分两次单 key 请求（面板 waitForCapture 即如此）；
+			// 本修复让一次请求带 uid+host 也能命中。
+			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+			const host = String(event.url.searchParams.get("host") ?? "").trim();
+			if (!uid && !host) return json({ capture: null, reason: "missing_uid" });
+
+			// ── v2：监控回放（历史时间线 + 按帧取图）─────────────────────────
+			// 需要 watch 或 playback 动作；目标设备的班必须在调用者班级范围内
+			//（设备班解析不到 = 确定不了归属 → 不给，宁严勿泄）。
+			const histUid = uid || host;
+			if (q.get("history") === "1" || q.get("frame")) {
+				if (!canDeviceAction(u.role, "watch") && !canDeviceAction(u.role, "playback")) {
+					return json({ error: "无权限（需要监控/回放能力）" }, { status: 403 });
+				}
+				if (scope !== "*") {
+					const cid = await classOfDevice(histUid);
+					if (!cid || !scopeCovers(scope, cid)) {
+						return json({ error: "目标设备不在你的班级范围内" }, { status: 403 });
+					}
+				}
+				const frameId = Number(q.get("frame") ?? 0);
+				if (frameId > 0) {
+					const f = getDeviceCaptureById(frameId);
+					if (!f) return json({ capture: null, reason: "frame_gone" });
+					return json({
+						capture: { at: f.meta.at, bytes: f.meta.bytes, image_base64: f.png.toString("base64") },
+						reason: "ok"
+					});
+				}
+				const limit = Number(q.get("limit") ?? 60) || 60;
+				return json({ history: listDeviceCaptures(histUid, limit), reason: "ok" });
+			}
+
+			// 实时最新一张：同样按班级范围收敛（班主任/站长看本班/全校）。
+			if (canDeviceAction(u.role, "watch") && scope !== "*") {
+				const cid = await classOfDevice(histUid);
+				if (cid && !scopeCovers(scope, cid)) {
+					return json({ capture: null, reason: "out_of_scope" });
+				}
+			}
+			const c = getDeviceCapture(uid) || (host ? getDeviceCapture(host) : null);
+			if (!c) return json({ capture: null, reason: "no_capture_reported" });
+			return json({
+				capture: {
+					at: c.meta.at,
+					bytes: c.meta.bytes,
+					// 面板要展示图片，一次请求带全字节最省事（图 ≤ 数百 KB，base64 内嵌无压力）；
+					// 不另开图片二进制端点，少一个可被滥用的静态出口。
+					image_base64: c.png.toString("base64")
+				},
+				reason: "ok"
+			});
+		}
+		case "capture-events": {
+			// v2.1：新截图就绪事件（操控端据此推送「XX 设备已回传截图」通知，
+			// 而不是逐台轮询 captures）。只返回「谁、什么时候」，图仍走 captures 端点取。
+			// 需要 watch 能力；事件列表按班级范围收敛。
+			if (!canDeviceAction(u.role, "watch")) {
+				return json({ error: "无权限（需要监控能力）" }, { status: 403 });
+			}
+			const events = await listCaptureReadyEvents();
+			let out = events;
+			if (scope !== "*") {
+				const filtered: typeof events = [];
+				for (const e of events) {
+					const cid = await classOfDevice(e.uid);
+					if (cid && scopeCovers(scope, cid)) filtered.push(e);
+					else if (!cid) filtered.push(e); // 设备班解析不到：给（宁可多给一次通知）
+				}
+				out = filtered;
+			}
+			return json({ events: out, reason: "ok" });
 		}
 		case "sessions":
 			// 诊断页用：一眼看到"代理到底有没有报过"，而不是只有 session:null 一个空字。
 			return json({ sessions: listDeviceSessions() });
+		case "file-deliveries": {
+			// 传文件回执（发送方视角）：某次推送后，每台设备收到没有。
+			const fid = String(q.get("file") ?? "").trim();
+			if (!fid) return json({ error: "缺少 file 参数" }, { status: 400 });
+			const obj = getFileObject(fid);
+			if (!obj) return json({ error: "文件不存在" }, { status: 404 });
+			// 非管理员只能看「推给自己范围内班级」的回执 —— 文件上传者本身可见自己的记录。
+			if (scope !== "*" && obj.uploader !== (u.displayName || u.username) && u.role !== "owner" && u.role !== "admin") {
+				return json({ error: "无权限查看该文件的回执" }, { status: 403 });
+			}
+			return json({ file: { id: obj.id, name: obj.name, kind: obj.kind }, deliveries: listDeliveries(fid) });
+		}
+		case "my-classes":
+			// 我的班级绑定（老师/班主任/电教委员的面板按它渲染可选目标）。
+			return json({ classes: listBindings(u.id) });
 		case "settings":
 			// 面板配置读取：任何能进面板的人都能读（只读不敏感，且前端要用它渲染当前策略）。
 			return json({ settings: getConsoleSettings() });
@@ -189,6 +557,82 @@ export async function GET(event: RequestEvent) {
 
 export async function POST(event: RequestEvent) {
 	const path = (event.params.path ?? "").replace(/^\/+|\/+$/g, "");
+
+	// ── 文件上传（multipart，先于 readBody —— JSON 解析吃不了 multipart）────
+	// 发送方（老师/班主任/电教委员/站长）带用户会话上传文件本体；
+	// 之后调 file-push 把它推给目标班级/设备。这里只校验「能力」，
+	// 「班级范围」在 file-push 解析出目标设备后逐台判定。
+	if (path === "files" && !deviceSecretOk(event)) {
+		const g = guard(event, "viewConsole");
+		if ("error" in g) return g.error;
+		const up = g.user;
+		if (!canDeviceAction(up.role, "file")) {
+			return json({ error: "当前角色没有传文件能力" }, { status: 403 });
+		}
+		try {
+			const form = await event.request.formData();
+			const f = form.get("file");
+			if (!(f instanceof File)) return json({ error: "缺少 file 字段（multipart）" }, { status: 400 });
+			if (f.size > MAX_FILE_BYTES) {
+				return json(
+					{ error: `文件超过大小上限（${Math.round(MAX_FILE_BYTES / 1024 / 1024)}MB）` },
+					{ status: 413 }
+				);
+			}
+			const kind = String(form.get("kind") ?? "file") === "voice" ? "voice" : "file";
+			const buf = Buffer.from(await f.arrayBuffer());
+			const obj = saveUpload(f.name || "未命名文件", buf, kind, up.displayName || up.username);
+			return json({ ok: true, file: obj }, { status: 201 });
+		} catch (e) {
+			return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
+		}
+	}
+
+
+	// ── 监控参数保存（面板）：viewConsole + device.control 门槛。───────────────
+
+	// ── 生成设备接入码（面板，manage 档）。──────────────────────────────────
+	if (path === "device-activate") {
+		const g = guard(event, "viewConsole");
+		if ("error" in g) return g.error;
+		const up = g.user;
+		if (!canDevice(up.role, "manage")) return json({ error: "需设备管理档" }, { status: 403 });
+		const body = await event.request.json().catch(() => null);
+		if (!body || typeof body !== "object") return json({ error: "缺少参数" }, { status: 400 });
+		const classId = String(body.classId ?? "").trim();
+		const className = String(body.className ?? classId).trim();
+		const hours = Math.min(Math.max(Number(body.hours) || 24, 1), 720);
+		if (!classId) return json({ error: "缺少 classId" }, { status: 400 });
+		const item = generateActivationCode({ classId, className, hours });
+		addAudit({ actor: up.displayName || up.username, role: up.role, action: "device-activate", target: "console", detail: "生成接入码 " + item.code + " 绑 " + className });
+		return json({ ok: true, code: item }, { status: 201 });
+	}
+
+	if (path === "monitor-config") {
+		const g = guard(event, "viewConsole");
+		if ("error" in g) return g.error;
+		const up = g.user;
+		if (!canDevice(up.role, "manage")) {
+			return json({ error: "当前角色没有监控参数调整权限（需设备管理档）" }, { status: 403 });
+		}
+		const body = await event.request.json().catch(() => null);
+		if (!body || typeof body !== "object") {
+			return json({ error: "缺少配置对象" }, { status: 400 });
+		}
+		// 白名单字段：只允许写入监控相关的键，避免任意 settings 覆盖。
+		const allowed = ["screenshot_webp_quality", "screenshot_max_width", "monitor_interval_sec", "monitor_retention_days", "video_codec", "video_bitrate_kbps", "video_fps", "video_resolution", "p2p_ice", "p2p_ice_override"];
+		const patch: Record<string, unknown> = {};
+		for (const k of allowed) {
+			if (k in body) patch[k] = body[k];
+		}
+		if (Object.keys(patch).length === 0) {
+			return json({ error: "没有可保存的监控字段" }, { status: 400 });
+		}
+		const merged = saveConsoleSettings(patch);
+		addAudit({ actor: up.displayName || up.username, role: up.role, action: "monitor-config", target: "console", detail: "更新监控参数: " + Object.keys(patch).join(",") });
+		return json({ ok: true, config: getMonitorConfig() });
+	}
+
 	const body = await readBody(event);
 
 	// ── 设备回报分支（先于用户鉴权）────────────────────────────────────────
@@ -200,7 +644,7 @@ export async function POST(event: RequestEvent) {
 	// 鉴权用部署级共享密钥（`CONSOLE_DEVICE_REPORT_SECRET`），且**未配置即拒绝**：
 	// 这个入口会把 ip/port 写进面板要嵌的 iframe，一旦可被任意伪造，
 	// 就等于"任何能访问面板的人都能把 iframe 指向自己的机器"。
-	if (path === "vnc-session" || path === "media-session") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures" || path === "file-ack" || path === "notice-ack" || path === "notice-reply" || path === "events" || path === "task-result") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		// 带了这个头 = 调用方**自称是设备代理**（只有 Rust 代理会发，面板从不发）。
 		// 此时密钥不对必须明确 403，不能落到用户鉴权分支去回「请先登录」——
@@ -217,6 +661,175 @@ export async function POST(event: RequestEvent) {
 			);
 		}
 		if (verifyDeviceReportSecret(secret)) {
+			if (path === "captures") {
+				// 截图回传：body {uid, image_base64}。PNG 以 base64 内嵌（与 GET 取图对称）。
+				const uid = String(body.uid ?? "").trim();
+				if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
+				const b64 = String(body.image_base64 ?? "").trim();
+				if (!b64) return json({ error: "缺少 image_base64" }, { status: 400 });
+				let raw: Buffer;
+				try {
+					raw = Buffer.from(b64, "base64");
+					// 严格校验：解码再编码必须还原原串（防「垃圾字节碰巧可解码」被当成图收下）。
+					if (raw.toString("base64").replace(/=+$/g, "") !== b64.replace(/=+$/g, "")) {
+						throw new Error("bad base64");
+					}
+				} catch {
+					return json({ error: "image_base64 不是合法 base64" }, { status: 400 });
+				}
+				// PNG 魔数校验：必须是真实 PNG（0x89 'P' 'N' 'G'），防任意垃圾字节占位。
+				if (raw.length < 64 || raw[0] !== 0x89 || raw[1] !== 0x50 || raw[2] !== 0x4e || raw[3] !== 0x47) {
+					return json({ error: "回传内容不是有效 PNG（<64B 或魔数不符）" }, { status: 400 });
+				}
+				const meta = putDeviceCapture(uid, raw);
+				addAudit({
+					actor: `device:${uid}`,
+					role: "device",
+					action: "capture.report",
+					target: uid,
+					detail: `${raw.length} bytes → ${meta.path.split(/[\\/]/).pop()}`
+				});
+				return json({ ok: true, at: meta.at, bytes: raw.length });
+			}
+			if (path === "file-ack") {
+				// 设备侧回报 file_push 结果：下载/播放完成（acked）或失败（failed）。
+				// 「文件传输后没有消息提示」的发送方半边靠它点亮 —— 老师能在
+				// 传文件页看到每台设备的真实状态，而不是发送成功 = 万事大吉。
+				const fid = String(body.file_id ?? "").trim();
+				const duid = String(body.uid ?? "").trim();
+				if (!fid || !duid) return json({ error: "file_id/uid 不能为空" }, { status: 400 });
+				const state = body.state === "acked" ? "acked" : body.state === "failed" ? "failed" : "pending";
+				const okUp = updateDelivery(fid, duid, state, String(body.detail ?? ""));
+				addAudit({
+					actor: `device:${duid}`,
+					role: "device",
+					action: "file.ack",
+					target: fid,
+					detail: `${state}${body.detail ? "：" + String(body.detail).slice(0, 120) : ""}`
+				});
+				return json({ ok: okUp, state });
+			}
+			if (path === "notice-ack") {
+				// 类型化通知的设备回执：收到（received）→ 已读（read）/ 已回复（replied，
+				// action_result 为预设短语原文）/ 驳回（rejected——用户点了取消/不在场）/
+				// 跳过（dismissed——岛通知轮播结束不打扰）。
+				// uid 由设备自称（密钥为部署级共享），防伪面：回执只更新发给「这个 uid」且
+				// 未终态的行，虚报 uid 顶多把同名行提前标已读，拿不到任何内容。
+				const nid = Number(body.notice_id ?? 0);
+				const duid = String(body.uid ?? "").trim();
+				if (!nid || !duid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
+				const st = ["read", "replied", "rejected", "dismissed", "received"].includes(String(body.state))
+					? String(body.state)
+					: "read";
+				const okSt = markNoticeDelivery(nid, duid, st, st === "replied" ? String(body.action_result ?? "") : "");
+				addAudit({
+					actor: `device:${duid}`,
+					role: "device",
+					action: "notice.ack",
+					target: String(nid),
+					detail: `${st}${st === "replied" ? "：" + String(body.action_result ?? "").slice(0, 120) : ""}`
+				});
+				return json({ ok: okSt, state: st });
+			}
+			if (path === "notice-reply") {
+				// 老师点了预设之外的「自由回复」，或直接在弹窗里打了字 —— 回传给操控端。
+				//
+				// 与 notice-ack 的区别要说清：ack 只说「收到了 / 已读 / 用了哪个预设」，
+				// 是**状态**；reply 说的是「她到底回了什么话」，是**内容**。只做 ack 的话，
+				// 操控端永远看不到老师在弹窗上写的那句话，老师会认定「回复功能坏了」。
+				//
+				// uid 由设备自称（密钥是部署级共享的），所以这里再收敛一层：
+				// 只更新发给**这台设备**的行，虚报 uid 也拿不到别台机器的回复内容。
+				const nid = Number(body.notice_id ?? 0);
+				const duid = String(body.uid ?? "").trim();
+				const text = String(body.text ?? body.body ?? "").trim();
+				if (!nid || !duid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
+				if (!text) return json({ error: "回复内容不能为空" }, { status: 400 });
+				const okRep = markNoticeReply(nid, duid, text);
+				if (!okRep) {
+					// 命中不了不是错误，但要给原因 —— 「回 ok 但什么都没发生」
+					// 正是这类功能最难查的形态（调用方以为成功了，日志一片绿）。
+					return json(
+						{ ok: false, reason: "这条通知不是发往该设备的（或已不存在），回复未记录" },
+						{ status: 404 }
+					);
+				}
+				addAudit({
+					actor: `device:${duid}`,
+					role: "device",
+					action: "notice.reply",
+					target: String(nid),
+					detail: text.slice(0, 120)
+				});
+				// ── 聚合（2026-09-26）：桌面端回复同步到 CIMS notice_replies ──
+				// 让操控端在 CIMS 回复收件箱也能看到桌面端（老师电脑）的回复。
+				// fire-and-forget：CIMS 暂时不可达不影响 ext 已落库的回复。
+				void syncReplyToCims(duid, nid, text)
+					.then((ok) => {
+						if (!ok) console.warn(`[console-ext] CIMS 回复同步失败 uid=${duid} nid=${nid}`);
+					})
+					.catch((e) => console.warn(`[console-ext] CIMS 回复同步异常: ${e}`));
+				return json({ ok: true, notice_id: nid, state: "replied" }, { status: 201 });
+			}
+			if (path === "events") {
+				// 被控端「动作做完之后」的上报（执行回执）。
+				//
+				// ⚠️ 这里**不做按来源 IP 的限流**：站点跑在 cloudflared 隧道后时，服务端
+				// 看到的源 IP 恒为 127.0.0.1（回环转发），按来源封禁会把全校设备当一个
+				// 来源误封 60s。宁可放宽限流，也不能让正常设备因为被判「异常」而断联 ——
+				// 这条踩过，症状是某一时刻全域掉线，极难归因到这一行。
+				// 真正的闸门是部署级共享密钥 + 下面对 extra 的体积收敛。
+				const duid = String(body.uid ?? "").trim();
+				const ev = String(body.event ?? "").trim();
+				if (!duid || !ev) return json({ error: "uid/event 不能为空" }, { status: 400 });
+				const rawExtra =
+					body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)
+						? (body.extra as Record<string, unknown>)
+						: undefined;
+				try {
+					const rec = addDeviceEvent({
+						uid: duid,
+						event: ev,
+						ok: body.ok !== false,
+						detail: String(body.detail ?? ""),
+						extra: rawExtra,
+						at: String(body.at ?? "") || undefined
+					});
+					return json({ ok: true, id: rec.id }, { status: 201 });
+				} catch (e) {
+					// 事件名/uid 非法只在这里报错 —— 绝不让一条回执的坏字段影响设备本身：
+					// 那个动作在机器上是**真的做了**，回执丢了只是少一行日志。
+					return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
+				}
+			}
+			if (path === "task-result") {
+				// 任务级回执：设备做完一个动作后，带着下发时那个 task_id 回报结果。
+				//
+				// 与 events 的分工要说清：events 是**流水账**（这台机器发生过什么），
+				// task-result 是**回单**（老师刚点的那一下，成没成、图存在哪）。
+				// 只有流水账时面板只能拿"最近一条截图事件"去猜结果 ——
+				// 连点两次截图，就分不清哪张是哪次的。
+				const tid = String(body.task_id ?? "").trim();
+				if (!tid) return json({ error: "task_id 不能为空" }, { status: 400 });
+				const rawExtra =
+					body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)
+						? (body.extra as Record<string, unknown>)
+						: undefined;
+				const row = putTaskResult(tid, String(body.state ?? "done"), String(body.result ?? ""), rawExtra);
+				if (!row) {
+					// 同 notice-reply：命中不了不是错误，但要给原因。回 ok:true 而什么都没改，
+					// 会让设备以为回报成功了，面板那头却永远等不到结果。
+					return json({ ok: false, reason: "任务不存在（task_id 无效或已被清理）" }, { status: 404 });
+				}
+				addAudit({
+					actor: `device:${row.uid}`,
+					role: "device",
+					action: "task.result",
+					target: tid,
+					detail: `${row.kind} ${row.state}${row.result ? "：" + row.result.slice(0, 120) : ""}`
+				});
+				return json({ ok: true, task: row });
+			}
 			const proto = path === "vnc-session" ? "vnc" : "media";
 			const uid = String(body.uid ?? "").trim();
 			if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
@@ -269,14 +882,20 @@ export async function POST(event: RequestEvent) {
 	}
 
 	// 写操作权限：按语义分档（越敏感越收紧）
-	//   · notices（向大屏广播）→ device.control：设备级可见操作，电教委员及以上
+	//   · notices（向大屏广播）→ 内容轴 broadcast（sendBroadcast 称号）**或** 设备轴 control 档：
+	//     ⚠️ 设备三关铁律（#249）收回 teacher 的 control 后，老师仍须能发本班通知
+	//     （方案表：teacher = 给本班发消息/广播，广播是内容能力，与设备轴解耦）。
 	//   · chat（班级/年级群发言）→ chatClass/chatGrade：内容轴 L2，注册电教委员即可
 	//   · 其余（audit 等）→ submitIssue：内容轴 L2
-	const need: Action | DeviceTier =
-		path === "notices" ? "control"
+	const isBroadcastable = (u: ConsoleUser) => userCan(u, "sendBroadcast") || canDevice(u.role, "control");
+	const need: Action | DeviceTier | "broadcast" =
+		path === "notices" ? "broadcast"
 		: path === "audit/prune" ? "manage"
 		// settings 决定教室端行为（P2P/压缩/录像保留），属部署级配置 → 设备管理档。
 		: path === "settings" ? "manage"
+		// user-features = 给别人开/关功能，等同于改权限 → 管理档。普通老师不能给自己
+		// 开「全屏通知」「关闭设备」这类会打断课堂或关掉机器的功能。
+		: path === "user-features" ? "manage"
 		: path === "chat" || path === "friends" ? "chatClass"
 		: "submitIssue";
 	const g = guard(event, need);
@@ -285,6 +904,43 @@ export async function POST(event: RequestEvent) {
 	const actor = u.displayName || u.username;
 
 	switch (path) {
+		case "task": {
+			// 建一张任务单：操控端下发动作前先拿 task_id，随指令一起给设备，
+			// 设备做完带着同一个 id 回报 —— 「这次点击」和「那次上报」才对得上号。
+			//
+			// 权限档位刻意放低（submitIssue）：这张单子本身不赋权，真正的闸门是
+			// 动作在下发侧的校验（设备轴 / 班级范围）。把建档卡太死反而会让
+			// 合法动作拿不到回单，又退化成"点了不知道成没成"。
+			const tuid = String(body.uid ?? "").trim();
+			const kind = String(body.kind ?? "").trim();
+			if (!tuid || !kind) return json({ error: "uid/kind 不能为空" }, { status: 400 });
+			try {
+				const t = createTask({ uid: tuid, kind, actor });
+				return json({ ok: true, task_id: t.task_id, task: t }, { status: 201 });
+			} catch (e) {
+				return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
+			}
+		}
+		case "user-features": {
+			// 设置某人的功能开关覆盖值：true=强制开 / false=强制关 / null=恢复按角色默认。
+			// 只有白名单里的功能位会被写入（见 setUserFeatureOverrides），
+			// 拼错的键不会留下"看起来设了其实没生效"的幽灵配置。
+			const target = String(body.uid ?? "").trim();
+			if (!target) return json({ error: "缺少 uid" }, { status: 400 });
+			const patch =
+				body.flags && typeof body.flags === "object" && !Array.isArray(body.flags)
+					? (body.flags as Record<string, unknown>)
+					: {};
+			const saved = setUserFeatureOverrides(target, patch, actor);
+			addAudit({
+				actor,
+				role: u.role,
+				action: "feature.set",
+				target,
+				detail: JSON.stringify(patch).slice(0, 200)
+			});
+			return json({ ok: true, uid: target, overrides: saved });
+		}
 		case "notices": {
 			if (!body.title?.trim()) return json({ error: "标题不能为空" }, { status: 400 });
 			const title = String(body.title).trim();
@@ -311,25 +967,68 @@ export async function POST(event: RequestEvent) {
 				? body.classes.map((c: unknown) => String(c).trim()).filter(Boolean).slice(0, 40)
 				: [];
 
-			// L2 只能发本班：未指定则**强制**为本人绑定班级，指定了非本班则拒绝。
-			// 没有班级绑定时无从判定「本班」，直接拒绝并提示 —— 宁可让他先绑定，
-			// 也不能因为「不知道他哪个班」就放行成全校广播。
+			// ── v2：班级范围的权威来源是 user_class_bindings（真实 class_id）────
+			// 旧实现用 u.className 自由文本匹配，老师带两个班时根本表达不了；
+			// 现在：班级档（homeroom）只能发自己绑定的班 —— 未指定则默认全部绑定班，
+			// 指定了范围外的班则拒绝。没绑定 = 空范围 = 直接拒绝（必须先绑定）。
 			if (broadcastScope(u.role) === "class") {
-				const myClass = (u.className || "").trim();
-				if (!myClass) {
-					return json({ error: "请先在个人资料中绑定班级，之后才可向本班广播" }, { status: 403 });
+				const mine = listBindings(u.id);
+				if (mine.length === 0) {
+					return json({ error: "请先让管理员为你绑定班级，之后才可向本班发通知" }, { status: 403 });
 				}
-				const outside = classes.filter((c) => c !== myClass);
+				const inScope = (c: string) =>
+					mine.some((b) => b.class_id === c || (b.class_name && b.class_name === c));
+				const outside = classes.filter((c) => !inScope(c));
 				if (outside.length > 0) {
-					return json({ error: `只能向本班（${myClass}）广播，不能指定：${outside.join("、")}` }, { status: 403 });
+					return json(
+						{ error: `只能向已绑定的班级（${mine.map((b) => b.class_name || b.class_id).join("、")}）发通知，不能指定：${outside.join("、")}` },
+						{ status: 403 }
+					);
 				}
-				if (classes.length === 0) classes = [myClass];
+				if (classes.length === 0) classes = mine.map((b) => b.class_id);
 			}
 
 			// 显示时长（秒）：可选字段。非法值/越界一律当「未指定」—— 绝不因为一个坏字段
 			// 把整条广播拒掉（广播是时效性操作，宁可按时长自适应也不能发不出去）。
 			const durRaw = Number(body.duration_seconds);
 			const seconds = Number.isFinite(durRaw) && durRaw > 0 ? Math.min(durRaw, 3600) : undefined;
+
+			// ── v2.1 通知类型（notice / island / popup / fullscreen）───────────
+			// 类型决定教室端的呈现（课表岛 / 弹窗 / 全屏），由角色矩阵服务端强制：
+			// teacher=notice/island，homeroom 加 popup，admin/owner 全 4 种。
+			const rawType = String(body.type || "notice").trim();
+			const typed: NoticeType = ["notice", "island", "popup", "fullscreen"].includes(rawType)
+				? (rawType as NoticeType)
+				: "notice";
+			if (typed !== "notice" && !canSendNoticeType(u.role, typed)) {
+				return json(
+					{ error: `当前角色不能发送「${NOTICE_TYPE_LABELS[typed] ?? typed}」通知` },
+					{ status: 403 }
+				);
+			}
+			// 语音播报（TTS）是**会出声**的能力：它直接打断课堂，比文字严重得多。
+			// 判据不另开一套角色表，直接复用「能发弹窗确认」这一档 —— 能敲门的才配按门铃。
+			// 少了这一条，任何能发岛通知的角色都能让全校喇叭开口，而这条路线上
+			// 「谁发的、什么时候发的」事后很难对上。
+			if (body.tts === true && !canSendNoticeType(u.role, "popup")) {
+				return json(
+					{ error: "语音播报需要「弹窗确认/回复」级权限，当前角色不能发送" },
+					{ status: 403 }
+				);
+			}
+			// 类型化旗标：只收白名单字段（其余忽略），避免把任意 JSON 塞进库/指令。
+			const flags: Record<string, unknown> = {};
+			if (typed === "popup") {
+				const presets = Array.isArray(body.reply_presets)
+					? body.reply_presets.map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 6)
+					: [];
+				if (presets.length) flags.reply_presets = presets;
+				if (body.emergency_confirm === true) flags.emergency_confirm = true;
+			}
+			if (typed === "popup" || typed === "fullscreen") {
+				const ads = Number(body.auto_dismiss_seconds);
+				if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
+			}
 
 			// 真推送到教室端（这是「自动推送」的核心：留痕不等于送达）。
 			// ⚠️ 留痕由 broadcastToClassrooms 内部**唯一收口**，本函数不再自己 addNotice ——
@@ -341,7 +1040,9 @@ export async function POST(event: RequestEvent) {
 					classes,
 					source: "notice",
 					author: actor,
-					seconds
+					seconds,
+					type: typed,
+					flags
 				});
 			}
 
@@ -355,8 +1056,17 @@ export async function POST(event: RequestEvent) {
 					author: actor,
 					sent: body.sent,
 					classes,
-					channel: "notice"
+					channel: "notice",
+					type: typed,
+					flags
 				});
+
+			// 类型化通知：给目标设备建档回执（老师把通知发出去后能看「谁看了、谁没看」）。
+			// 幂等（ensureXxx），面板通过 GET notice-deliveries 轮询明细。
+			const targetUids = broadcast?.uids;
+			if (typed !== "notice" && targetUids && targetUids.length > 0) {
+				ensureNoticeDeliveries(item.id, targetUids);
+			}
 
 			// 审计也只在「没走 broadcast」时补（broadcast 内部已记，避免审计双份）。
 			if (!broadcast) {
@@ -366,7 +1076,9 @@ export async function POST(event: RequestEvent) {
 					detail: `${title}（仅留痕，未推送）`.slice(0, 200)
 				});
 			}
-			return json({ ...item, broadcast }, { status: 201 });
+			// uids 是内部对账用的，不随响应出网（面板要明细走 notice-deliveries 端点）。
+			const { uids: _omit, ...broadcastSafe } = broadcast ?? { ok: false, delivered: 0, total: 0 };
+			return json({ ...item, typed, broadcast: broadcast ? broadcastSafe : null }, { status: 201 });
 		}
 		case "chat": {
 			if (!body.text?.trim()) return json({ error: "消息不能为空" }, { status: 400 });
@@ -484,8 +1196,81 @@ export async function POST(event: RequestEvent) {
 			});
 			return json(item, { status: 201 });
 		}
+		case "file-push": {
+			// 传文件的下半场：把已上传的文件推给目标班级/设备（file_push 指令）。
+			// 能力关：传文件动作（v2 矩阵：老师/班主任/电教委员/站长）。
+			// 范围关：目标班级必须 ⊆ 调用者绑定班级（站长 "*" 全校）。
+			if (!canDeviceAction(u.role, "file")) {
+				return json({ error: "当前角色没有传文件能力" }, { status: 403 });
+			}
+			// 调用者的班级范围（'*'=全校 / class_id[]）：POST 分支此前没算过，
+			// 直接用会在范围关处 ReferenceError（线上 500 实证）。
+			const scope = classScopeOf(u.role, u.id);
+			const fid = String(body.file_id ?? "").trim();
+			const file = fid ? getFileObject(fid) : null;
+			if (!file) return json({ error: "文件不存在（请先上传）" }, { status: 404 });
+
+			const wantClasses: string[] = Array.isArray(body.classes)
+				? body.classes.map((c: unknown) => String(c).trim()).filter(Boolean).slice(0, 20)
+				: [];
+			const wantUids: string[] = Array.isArray(body.uids)
+				? body.uids.map((c: unknown) => String(c).trim()).filter(Boolean).slice(0, 200)
+				: [];
+			if (wantClasses.length === 0 && wantUids.length === 0) {
+				return json({ error: "请指定目标班级或设备" }, { status: 400 });
+			}
+
+			const map = await fetchDeviceClassMap();
+			if (!map) return json({ error: "CIMS 不可达，无法解析目标设备" }, { status: 502 });
+
+			// 班级 → 设备；每个目标班先过范围关（class_id 或名称命中都算）。
+			const uids = new Set<string>();
+			const targets: string[] = [];
+			for (const c of wantClasses) {
+				const hit = map.classes.find((x) => x.class_id === c || x.name === c);
+				if (!hit) return json({ error: `班级不存在或未绑定设备：${c}` }, { status: 404 });
+				if (scope !== "*" && !scopeCovers(scope, hit.class_id)) {
+					return json(
+						{ error: `班级 ${hit.name || hit.class_id} 不在你的绑定范围内` },
+						{ status: 403 }
+					);
+				}
+				targets.push(hit.class_id);
+				for (const [uidKey, cid] of map.uidToClass) {
+					if (cid.toLowerCase() === hit.class_id.toLowerCase()) uids.add(uidKey);
+				}
+			}
+			// 直接指定设备：逐台查班级、过范围关。
+			for (const uid of wantUids) {
+				const cid = map.uidToClass.get(uid.toLowerCase()) ?? "";
+				if (scope !== "*") {
+					if (!cid || !scopeCovers(scope, cid)) {
+						return json(
+							{ error: `设备 ${uid} 不在你的绑定范围内（或未划班）` },
+							{ status: 403 }
+						);
+					}
+				}
+				uids.add(uid.toLowerCase());
+				if (cid && !targets.includes(cid)) targets.push(cid);
+			}
+			if (uids.size === 0) return json({ error: "目标班级下没有可推送的设备" }, { status: 404 });
+
+			const results = await pushFileToDevices(file, [...uids], (uid2) =>
+				map.uidToClass.get(uid2.toLowerCase()) ?? ""
+			);
+			addAudit({
+				actor: u.displayName || u.username,
+				role: u.role,
+				action: "file_push",
+				target: targets.join("、") || uids.size + " 台设备",
+				detail: `推送「${file.name}」（${Math.round(file.size / 1024)}KB）到 ${uids.size} 台设备`
+			});
+			return json({ ok: true, file: { id: file.id, name: file.name }, targets, results }, { status: 201 });
+		}
 		case "vnc-session":
 		case "media-session":
+		case "captures":
 			// 能走到这里说明没带有效设备密钥（上面那个分支已经处理过设备回报）。
 			// 面板自己不会 POST 这两个路径。返回明确原因而不是 `{ok:true}` ——
 			// 「回 ok 但什么都没发生」正是这类问题最难查的形态（调用方以为成功了）。
@@ -519,9 +1304,14 @@ export async function DELETE(event: RequestEvent) {
 	const g = guard(event, path === "notices" ? "manage" : "submitIssue");
 	if ("error" in g) return g.error;
 
-	if (path === "vnc-session" || path === "media-session") {
+	if (path === "vnc-session" || path === "media-session" || path === "captures") {
 		const uid = String(event.url.searchParams.get("uid") ?? "").trim();
-		if (uid) clearDeviceSession(path === "vnc-session" ? "vnc" : "media", uid);
+		if (!uid) return json({ ok: false, error: "missing_uid" });
+		if (path === "captures") {
+			clearDeviceCapture(uid);
+			return json({ ok: true });
+		}
+		clearDeviceSession(path === "vnc-session" ? "vnc" : "media", uid);
 		return json({ ok: true });
 	}
 	if (path === "notices") return json({ ok: true, cleared: clearNotices() });
