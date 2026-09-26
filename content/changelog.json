@@ -1,0 +1,51 @@
+[
+  {
+    "version": "2026.09.26",
+    "date": "2026-09-26",
+    "title": "附件库 / 图床 + 头像上传 + 社区动态",
+    "highlight": "每个账号一间自己的仓库：隔离、文件夹、等级配额、水印、一键压缩、图床外链。",
+    "items": [
+      { "kind": "feat", "text": "个人附件库与图床：所有文件按账号隔离，别人翻不到你的列表；支持无限层文件夹、重命名、移动、删除" },
+      { "kind": "feat", "text": "图片水印默认开启（右下角半透明底衬，任何底图都看得清），可逐张开关" },
+      { "kind": "feat", "text": "压缩三种档位：AVIF（默认）/ WebP / 原图；一键压缩保留原图，随时一键还原" },
+      { "kind": "feat", "text": "个人空间容量按经验等级非线性上涨：Lv.1 起配 100M，Lv.6 封顶 1000M；管理员可在后台额外赠送" },
+      { "kind": "feat", "text": "头像上传：选图即预览，服务端自动压缩到 1024px 并落 Cloudflare R2" },
+      { "kind": "feat", "text": "Cloudflare R2 存储：手写 SigV4、不引官方 SDK，四个环境变量即可接入" },
+      { "kind": "feat", "text": "站点动态面板 /pulse：在线人数、近 30 天活跃热度、活动流、项目开发进度" },
+      { "kind": "feat", "text": "更新日志 /changelog：按版本归档每一次改动，方便回看" },
+      { "kind": "change", "text": "移除全部博客文章（归档于 content/archive/posts/ 可回滚），站点重心转向社区与运营" },
+      { "kind": "fix", "text": "空 RSS 直接返回 404，不再对外谎报「站点还在更新」" }
+    ]
+  },
+  {
+    "version": "2026.09.24",
+    "date": "2026-09-24",
+    "title": "后台 API 授权管理",
+    "highlight": "OAuth 客户端从「只能改文件」变成「能在后台增删改」。",
+    "items": [
+      { "kind": "feat", "text": "/admin/oauth 升级为可增删改的 API 授权管理页，新增/编辑/重置密钥/启停/删除一应俱全" },
+      { "kind": "feat", "text": "客户端注册表落库（oauth_clients），content/oauth-clients.json 退为首次启动的种子" },
+      { "kind": "change", "text": "新增 manageOAuth 能力位，第三方登录授权不再只有管理员脚本能碰" },
+      { "kind": "fix", "text": "修掉 node:sqlite 兼容问题（.pluck() 不存在）与 action 未导出的提交落空" }
+    ]
+  },
+  {
+    "version": "2026.09.21",
+    "date": "2026-09-21",
+    "title": "站点导航自定义分组",
+    "highlight": "分组可增删、可换排列方式、可指定出现范围（前台 / 后台 / 两者）。",
+    "items": [
+      { "kind": "feat", "text": "导航自定义组：list / grid / inline 三种排列，支持折叠状态记忆" },
+      { "kind": "feat", "text": "条目支持外部链接标记，新标签页打开" }
+    ]
+  },
+  {
+    "version": "2026.09.18",
+    "date": "2026-09-18",
+    "title": "登录态修复与文章通栏头图",
+    "items": [
+      { "kind": "fix", "text": "修复多标签页下登录态不同步（会话续期节流导致的假登出）" },
+      { "kind": "feat", "text": "文章页支持通栏头图，阅读沉浸感提升" }
+    ]
+  }
+]

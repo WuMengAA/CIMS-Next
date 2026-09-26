@@ -1,0 +1,40 @@
+{
+	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"comment": [
+		"保守接入：这里只做边缘层（缓存头 / 安全头 / 静态资源重定向），不承载本站运行时。",
+		"站点主体是 Node(adapter-node) + SQLite，跑在自有机器上（计划任务 StelarithServer 值守）。",
+		"不要试图把整站迁上 Vercel Serverless —— 见 docs/VERCEL-DEPLOYMENT.md 里的三条硬理由。"
+	],
+	"framework": null,
+	"region": "hkg1",
+	"headers": [
+		{
+			"source": "/_app/immutable/(.*)",
+			"headers": [
+				{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" },
+				{ "key": "X-Content-Type-Options", "value": "nosniff" }
+			]
+		},
+		{
+			"source": "/uploads/(.*)",
+			"headers": [{ "key": "Cache-Control", "value": "public, max-age=604800" }]
+		},
+		{
+			"source": "/docs/(.*)",
+			"headers": [{ "key": "Cache-Control", "value": "public, max-age=3600" }]
+		},
+		{
+			"source": "/(.*)",
+			"headers": [
+				{ "key": "X-Content-Type-Options", "value": "nosniff" },
+				{ "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+				{ "key": "X-DNS-Prefetch-Control", "value": "on" }
+			]
+		}
+	],
+	"redirects": [
+		{ "source": "/static/(.*)", "destination": "/$1", "permanent": true }
+	],
+	"cleanUrls": false,
+	"trailingSlash": false
+}

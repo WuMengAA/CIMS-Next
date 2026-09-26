@@ -1,0 +1,33 @@
+{
+  "updated": "2026-09-26",
+  "items": [
+    {
+      "project": "星璃·无限音乐画布",
+      "phase": "联机与一起听",
+      "progress": 72,
+      "next": "房间房主转移与断线重连",
+      "note": "中转服务器已上线，跨 NAT 一起听可用"
+    },
+    {
+      "project": "Stelarith 主站",
+      "phase": "社区化改造",
+      "progress": 58,
+      "next": "动态流个人主页、关注关系",
+      "note": "附件库 / 图床 / 更新日志 / 活跃度已上线"
+    },
+    {
+      "project": "星集控（Xingjikong）",
+      "phase": "被控端稳定性",
+      "progress": 85,
+      "next": "长时间值守下的内存回收",
+      "note": "类型化通知与送达回执已落地"
+    },
+    {
+      "project": "VoiceHub 校园点歌",
+      "phase": "联动接入",
+      "progress": 40,
+      "next": "点歌队列双向同步",
+      "note": "站点已能读取公开曲库与节目单"
+    }
+  ]
+}

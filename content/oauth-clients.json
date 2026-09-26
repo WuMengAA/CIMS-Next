@@ -1,0 +1,23 @@
+{
+  "_readme": "本站作为 OAuth2 授权服务器的客户端清单。密钥不在这里，用 secretEnv 指向 .env 里的变量名。改完不必重启（按 mtime 热加载）。回拨地址必须精确登记，或对原生应用开 loopback。",
+  "clients": [
+    {
+      "id": "xingjikong_native",
+      "name": "星集控桌面端",
+      "description": "桌面集控端（xingjikong）请求使用你的 Stelarith 账号登录",
+      "secretEnv": "OAUTH_DESKTOP_SECRET",
+      "loopback": true,
+      "scopes": ["cims", "profile"],
+      "defaultScope": "cims"
+    },
+    {
+      "id": "voicehub",
+      "name": "VoiceHub 校园广播",
+      "description": "VoiceHub（点歌/广播系统）请求使用你的 Stelarith 账号登录",
+      "secretEnv": "OAUTH_VOICEHUB_SECRET",
+      "redirectUris": ["https://voicehub.245959623.xyz/api/auth/oauth2/callback"],
+      "scopes": ["profile", "email"],
+      "defaultScope": "profile"
+    }
+  ]
+}
