@@ -353,6 +353,8 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
                 ),
               ],
             ),
+            ),
+            ],
           ),
         );
       },
