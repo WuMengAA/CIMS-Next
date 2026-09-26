@@ -25,4 +25,14 @@ reqwest = { version = "0.12", features = ["blocking", "json"], default-features 
 # token = base64url(Ed25519_sign(action|ts))，由网站私钥签名（ext/stelarith-website-sync/sign-task.mjs）。
 ed25519-dalek = { version = "2", features = ["pkcs8", "signature"] }
 base64 = "0.22"
+webrtc = "0.21.0"
+rtc = "0.21.0"
+rust_socketio = "0.6.0"
+# WebRTC 桌面视频帧（Sample.data 为 bytes::Bytes）
+bytes = "1"
+async-trait = "0.1"
+futures = "0.3"
+rand = "0.8"
+# 被控端输入注入（仅 Windows）；与 webrtc 拉入的 winapi 同一份，显式声明以便直接引用
+winapi = { version = "0.3", features = ["winuser"] }
 

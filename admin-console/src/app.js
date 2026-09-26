@@ -107,6 +107,7 @@
     // ClassIsland 专页以"看状态"为主，只要有设备观看/控制权即可进入
     // （写操作在页内逐个按钮上再门控，不把整页锁死）。
     classisland: "control",
+    random: "control", filetransfer: "control", volume: "control",
     // 权限与分级页是纯读信息，不需要设备权限 —— 任何能进面板的人
     // 都该看得到"自己到底能做什么"，否则权限不透明会变成猜谜。
     // 自检页同理：它只是"把每段各探一次"，本身不改任何东西。
@@ -1803,6 +1804,113 @@
       <table class="tbl"><thead><tr><th>名称</th><th>类型</th><th>锚定时间</th><th>目标</th><th>状态</th><th>下次</th><th>上次</th><th>操作</th></tr></thead>
       <tbody id="sb-list">${rows}</tbody></table>
     </div>`;
+  };
+
+  // ============ 随机抽取（课堂工具，纯前端，localStorage 持久化）============
+  let randomNames = [], randomDrawn = new Set(), randomHistory = [];
+  try {
+    const a = JSON.parse(localStorage.getItem("console.random.names") || "null");
+    if (Array.isArray(a)) randomNames = a;
+    const b = JSON.parse(localStorage.getItem("console.random.history") || "null");
+    if (Array.isArray(b)) randomHistory = b;
+    const c = JSON.parse(localStorage.getItem("console.random.drawn") || "null");
+    if (Array.isArray(c)) randomDrawn = new Set(c);
+  } catch (_) {}
+  const _randomSave = () => {
+    try {
+      localStorage.setItem("console.random.names", JSON.stringify(randomNames));
+      localStorage.setItem("console.random.history", JSON.stringify(randomHistory));
+      localStorage.setItem("console.random.drawn", JSON.stringify([...randomDrawn]));
+    } catch (_) {}
+  };
+  const _randomAvail = (useDrawn) =>
+    randomNames.map((n, i) => ({ n, i })).filter((x) => (useDrawn ? !randomDrawn.has(x.i) : true));
+  const _randomPick = (k, useDrawn) => {
+    const pool = _randomAvail(useDrawn);
+    if (pool.length === 0) return [];
+    const n = Math.min(k, pool.length);
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    const picked = pool.slice(0, n);
+    picked.forEach((x) => randomDrawn.add(x.i));
+    return picked.map((x) => x.n);
+  };
+
+  views.random = async () => {
+    const last = randomHistory.length ? randomHistory[randomHistory.length - 1] : [];
+    const avail = _randomAvail(true).length;
+    const hist = randomHistory.length
+      ? randomHistory.map((h, i) => `<div class="card-mini"><b>第 ${i + 1} 批</b>：${esc(h.join("、"))}</div>`).join("")
+      : `<p class="muted">还没有抽取记录。导入名单后点「抽 1 人」试试。</p>`;
+    return `
+      <div class="card"><h3>随机抽取 · 课堂点名</h3>
+        <p class="muted">名单保存在本机（当前 ${randomNames.length} 人，未抽 ${avail} 人）。开启「防重复」后抽过的人不再出现，可「重置已抽」重来。</p>
+        <div class="row">
+          <textarea id="random-input" style="width:100%;height:84px" placeholder="每行一个名字，粘贴名单（如：张三&#10;李四）或从下方导入"></textarea>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <button class="primary" data-act="random-import">导入名单</button>
+          <button data-act="random-fromclass">从设备名单导入</button>
+          <button data-act="random-clearlist">清空名单</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="primary lg" data-act="random-draw1">抽 1 人</button>
+          <span class="muted">抽</span>
+          <input id="random-n" type="number" min="1" value="3" style="width:60px"/>
+          <span class="muted">人</span>
+          <button data-act="random-drawn">抽取</button>
+          <label class="row" style="margin-left:8px"><input type="checkbox" id="random-nodup" checked/> 防重复</label>
+          <button data-act="random-reset">重置已抽</button>
+        </div>
+        <div id="random-result" class="random-result" style="margin-top:12px">
+          ${last.length ? `<div class="dice">🎲 ${esc(last.join("、"))}</div>` : `<span class="muted">结果会显示在这里</span>`}
+        </div>
+        <h4 style="margin:14px 0 6px">抽取历史（${randomHistory.length}）</h4>
+        <div class="list">${hist}</div>
+      </div>`;
+  };
+
+  // ============ 文件传输（面板侧完整 UI；后端/设备端下发依赖部署包）============
+  views.filetransfer = async () => {
+    const ds = await API.listDevices().catch(() => []);
+    const arr = Array.isArray(ds) ? ds : ((ds && ds.devices) || []);
+    const clsOpts = arr.map((d) => `<option value="${esc(d.uid || d.id || d.name)}">${esc(d.host || d.name || d.id)}</option>`).join("");
+    return `
+      <div class="card"><h3>文件传输</h3>
+        <p class="muted">上传文件到服务端，再下发到选定设备。设备侧接收需教室端部署星集控 ClassroomDeploy 包（含最新代理）；未部署时仅完成服务端暂存。</p>
+        <div class="row"><input id="ft-file" type="file" multiple style="flex:1"/></div>
+        <div class="row" style="margin-top:8px">
+          <span class="muted">下发到</span>
+          <select id="ft-target"><option value="">全校</option>${clsOpts}</select>
+          <button class="primary" data-act="ft-upload">上传并下发</button>
+        </div>
+        <div id="ft-status" class="muted" style="margin-top:8px">待上传。</div>
+        <h4 style="margin:14px 0 6px">传输历史</h4>
+        <div id="ft-list" class="list"><p class="muted">暂无传输记录。</p></div>
+      </div>`;
+  };
+
+  // ============ 音量调节（面板侧完整 UI；下发依赖部署包）============
+  views.volume = async () => {
+    const ds = await API.listDevices().catch(() => []);
+    const arr = Array.isArray(ds) ? ds : ((ds && ds.devices) || []);
+    const rows = arr.map((d) => `
+      <tr data-uid="${esc(d.uid || d.id)}">
+        <td>${esc(d.host || d.name || d.id)}</td>
+        <td><input type="range" min="0" max="100" value="${d.volume ?? 50}" class="vol-slider" data-uid="${esc(d.uid || d.id)}"/></td>
+        <td><span class="vol-val">${d.volume ?? 50}</span></td>
+        <td><button data-act="vol-mute" data-uid="${esc(d.uid || d.id)}">静音</button>
+        <button class="primary" data-act="vol-apply" data-uid="${esc(d.uid || d.id)}">应用</button></td>
+      </tr>`).join("");
+    return `
+      <div class="card"><h3>音量调节</h3>
+        <p class="muted">逐设备拖动滑杆设定音量，或一键静音。「应用」经命令通道下发 set_volume（设备端执行需部署星集控 ClassroomDeploy 包）。
+          <button class="primary" data-act="vol-apply-all">全部应用当前值</button></p>
+        <table class="tbl"><thead><tr><th>设备</th><th>音量</th><th>值</th><th>操作</th></tr></thead>
+        <tbody id="vol-list">${rows || `<tr><td colspan="4" class="muted" style="text-align:center;padding:16px 0">暂无设备，或设备端未上报。</td></tr>`}</tbody></table>
+      </div>`;
   };
 
   // ============ 移动端侧栏抽屉 ============

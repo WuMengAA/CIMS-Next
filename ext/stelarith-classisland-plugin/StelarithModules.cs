@@ -58,6 +58,13 @@ public static class StelarithModules
     public const string CameraCapture = "camera_capture";
     public const string MediaP2P = "media_p2p";
 
+    // 2026-09-25 新增：通知增强三件套 —— 全屏紧急通知 / 语音朗读 / 底部滚动条。
+    // 全屏紧急是「打断式」呈现（覆盖全屏、必须确认），语音与滚动条是「非打断」增强，
+    // 三者都是真的会改变教室端行为的开关，必须能单独关掉。
+    public const string FullscreenNotice = "fullscreen_notice";
+    public const string Tts = "tts";
+    public const string Marquee = "marquee";
+
     /// <summary>模块清单（顺序即面板展示顺序）。</summary>
     public static readonly IReadOnlyList<StelarithModuleDef> All = new List<StelarithModuleDef>
     {
@@ -69,6 +76,13 @@ public static class StelarithModules
                 Description = "轮询并执行集控下发的指令（锁屏/截图/切班/广播）。关闭后本机将失去远程控制能力。" },
         new() { Id = Notification, Label = "集控播报", IsCore = false,
                 Description = "把集控广播落到 ClassIsland 官方提醒系统，在大屏播放遮罩播报。" },
+
+        new() { Id = FullscreenNotice, Label = "全屏紧急通知", IsCore = false,
+                Description = "紧急通知在全屏置顶遮罩中呈现（红边警示 + 必须手动确认 + 回执上报）。关闭后紧急通知降级为普通播报。" },
+        new() { Id = Tts, Label = "语音朗读（TTS）", IsCore = false,
+                Description = "通知/播报到达时用中文语音朗读一遍，让投影距离外的学生也能听到。" },
+        new() { Id = Marquee, Label = "底部滚动通知条", IsCore = false,
+                Description = "在岛上底部常驻一条滚动字幕，循环显示最近的广播与通知（可配置显示条数与滚动速度）。" },
         new() { Id = OsActions, Label = "本机动作（锁屏 / 截图）", IsCore = false,
                 Description = "允许集控对这台机器执行锁屏与截屏。" },
         new() { Id = RemoteControl, Label = "远程控制转发", IsCore = false,

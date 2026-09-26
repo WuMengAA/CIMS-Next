@@ -20,9 +20,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/api_client.dart';
 import '../../core/device_agent.dart';
 import '../../core/log.dart';
 import '../../core/notice_history.dart';
+import '../../core/settings.dart';
 import '../../core/tts.dart';
 import '../../core/tray.dart';
 
@@ -41,6 +43,25 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
   AgentNotice? _current;
   Timer? _autoClose;
   bool _started = false;
+
+  // ── 消息错过提醒（v2.1）：popup/fullscreen 弹过但 5 分钟没确认 → 再次提醒，最多 3 次 ──
+  /// 当前通知的未确认提醒计划（null = 已确认/不需要提醒）。
+  Timer? _missedTimer;
+  /// 已提醒次数（上限 3）。
+  int _missedCount = 0;
+  /// 当前通知是否已被老师主动确认（_confirm 走过）。
+  bool _confirmedThis = false;
+  /// 二次提醒间隔（分钟）。
+  static const int _missedMinutes = 5;
+  /// 最多提醒次数。
+  static const int _missedMax = 3;
+
+  // ── 截图就绪主动通知（v2.1）：ext capture-events 轮询，新截图到达即弹横幅 ──
+  Timer? _capturePoll;
+  /// 已通知过的截图 uid（去重，同一设备同批截图只弹一次）。
+  final Set<String> _notifiedCaptures = <String>{};
+  /// 截图事件轮询间隔。
+  static const Duration _capturePollEvery = Duration(seconds: 15);
 
   /// 当前是否处于「真全屏」状态（恢复窗口状态时要还原）
   bool _fsOn = false;
@@ -64,6 +85,8 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
   @override
   void dispose() {
     _autoClose?.cancel();
+    _missedTimer?.cancel();
+    _capturePoll?.cancel();
     _reply.dispose();
     // 全屏状态下退出 → 必须还原窗口，否则软件退出后留下一个黑屏满屏的残留窗口
     if (_fsOn) unawaited(_exitFullscreen());
@@ -86,6 +109,8 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
     // 历史：启动时从磁盘载入一次（首次运行 = 空列表）
     unawaited(ref.read(noticeHistoryProvider.notifier).load());
     Log.i('通知弹窗已挂载（集控通知将由应用内弹窗显示）', 'notice');
+    // 截图就绪主动通知：定时检查 ext capture-events（仅操控端视角，有 watch 权限才工作）
+    _capturePoll = Timer.periodic(_capturePollEvery, (_) => _checkCaptureEvents());
   }
 
   void _onNotice() {
@@ -99,8 +124,11 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
       _current = n;
       _replyHint = '';
       _replying = false;
+      _confirmedThis = false;
+      _missedCount = 0;
     });
     _autoClose?.cancel();
+    _missedTimer?.cancel();
 
     final shell = ref.read(shellProvider);
     if (n.kind == 'fullscreen' || n.kind == 'popup') {
@@ -117,6 +145,8 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
     Log.i(
         '弹窗显示：${n.display}（kind=${n.kind}${n.noticeId > 0 ? ' #${n.noticeId}' : ''}）',
         'notice');
+    // 消息错过提醒：5 分钟未确认则再次提醒（最多 3 次）
+    _scheduleMissedReminder(n);
   }
 
   int _autoCloseMs(AgentNotice n) {
@@ -126,6 +156,65 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
     }
     if (n.kind == 'popup') return _urgentMs;
     return n.urgent ? _urgentMs : _plainMs;
+  }
+
+
+  /// 消息错过提醒：popup/fullscreen 弹过但 5 分钟没确认 → 再次提醒（最多 3 次）。
+  /// 已确认（_confirmedThis）或已关闭后不再提醒。
+  void _scheduleMissedReminder(AgentNotice n) {
+    if (n.kind != 'popup' && n.kind != 'fullscreen') return;
+    if (n.noticeId <= 0) return; // 本机确认类不需要二次提醒
+    _missedTimer = Timer(const Duration(minutes: _missedMinutes), () {
+      if (!mounted) return;
+      final cur = _current;
+      if (cur == null || cur.noticeId != n.noticeId || _confirmedThis) return;
+      if (_missedCount >= _missedMax) return;
+      _missedCount++;
+      Log.i('未确认提醒 #' + _missedCount.toString() + '/' + _missedMax.toString() + '：' + n.title, 'notice');
+      // 再次把窗口叫回前台 + 置顶 + 朗读（提醒要能被看见/听见）
+      try {
+        ref.read(shellProvider).showForNotice();
+      } catch (_) {}
+      if (n.kind == 'fullscreen' && Platform.isWindows && !_fsOn) {
+        unawaited(_enterFullscreenIfNeeded());
+      }
+      if (n.tts) unawaited(speak(n.display, logTag: 'notice'));
+      // 通知卡仍在界面上（_current 未清），提醒主要靠叫回窗口 + 语音；
+      // 未达上限时继续排下一轮
+      if (_missedCount < _missedMax) {
+        _scheduleMissedReminder(n);
+      }
+    });
+  }
+
+
+  /// 检查 ext capture-events：有新设备回传截图时弹通知横幅（仅 watch 权限用户）。
+  Future<void> _checkCaptureEvents() async {
+    if (!mounted) return;
+    final api = ref.read(apiProvider);
+    final id = ref.read(settingsProvider).identity;
+    if (id == null || !id.canWatch) return;
+    final events = await api.listCaptureEvents();
+    if (events == null || events.isEmpty || !mounted) return;
+    for (final e in events) {
+      final uid = (e['uid'] ?? '').toString().trim();
+      if (uid.isEmpty || _notifiedCaptures.contains(uid)) continue;
+      _notifiedCaptures.add(uid);
+      Log.i('截图就绪通知：' + uid, 'notice');
+      try {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('设备 ' + uid + ' 已回传新截图（可在「教室设备」中查看）'),
+          duration: const Duration(seconds: 4),
+        ));
+      } catch (_) {}
+    }
+    // 集合只保留最近 50 个 uid，防止无限增长
+    if (_notifiedCaptures.length > 50) {
+      final keep = _notifiedCaptures.toList();
+      _notifiedCaptures
+        ..clear()
+        ..addAll(keep.sublist(keep.length - 50));
+    }
   }
 
   void _record(AgentNotice n) {
@@ -176,6 +265,8 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
   Future<void> _confirm() async {
     final n = _current;
     if (n == null) return;
+    _confirmedThis = true;
+    _missedTimer?.cancel();
     _autoClose?.cancel();
     setState(() => _replying = true);
     try {
@@ -222,6 +313,7 @@ class _NoticePopupState extends ConsumerState<NoticePopup> {
 
   Future<void> _close() async {
     _autoClose?.cancel();
+    _missedTimer?.cancel();
     final n = _current;
     if (n != null && n.noticeId > 0) {
       await ref.read(deviceAgentProvider).confirmNotice(n.noticeId);

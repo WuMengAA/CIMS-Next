@@ -28,12 +28,36 @@ class DevicesPage extends ConsumerStatefulWidget {
 class _DevicesPageState extends ConsumerState<DevicesPage> {
   Timer? _timer;
   bool _polling = false;
+  // 设备卡片截图预览（5 分钟刷新，对齐网页端）
+  final Map<String, String> _shots = {};
+  Timer? _shotTimer;
+  bool _shotBusy = false;
 
   @override
   void initState() {
     super.initState();
     // 首轮稍延迟，避免启动即打；之后改为「自调度 + 在途互斥」轮询。
     _timer = Timer(const Duration(seconds: 2), _poll);
+    // 卡片截图预览：进入即拉一次，之后每 5 分钟刷新（对齐网页端）
+    _refreshShots();
+    _shotTimer = Timer.periodic(const Duration(minutes: 5), (_) => _refreshShots());
+  }
+
+  /// 拉取各设备最新截图（有图才缓存；失败静默）
+  Future<void> _refreshShots() async {
+    if (_shotBusy || !mounted) return;
+    _shotBusy = true;
+    final api = ref.read(apiProvider);
+    final list = ref.read(devicesProvider).valueOrNull ?? const <CimsDevice>[];
+    for (final d in list) {
+      if (_shots.containsKey(d.uid)) continue;
+      final cap = await api.getCapture(d.uid);
+      if (cap != null && cap['image_base64'] != null) {
+        _shots[d.uid] = cap['image_base64'].toString();
+      }
+    }
+    _shotBusy = false;
+    if (mounted) setState(() {});
   }
 
   /// 拉一次设备列表；上一轮尚未回包时直接跳过本轮，杜绝在途请求无限叠加
@@ -52,6 +76,7 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
   @override
   void dispose() {
     _timer?.cancel();
+    _shotTimer?.cancel();
     super.dispose();
   }
 
@@ -77,6 +102,41 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
       ),
     );
     if (ok != true) return;
+    // 调音量：先问目标音量，再带参数下发
+    if (action == 'set_volume') {
+      final ctrl = TextEditingController(text: '60');
+      final v = await showDialog<int>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('调音量'),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: '音量（0-100）'),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c), child: const Text('取消')),
+            FilledButton(
+              onPressed: () {
+                final n = int.tryParse(ctrl.text);
+                if (n != null && n >= 0 && n <= 100) Navigator.pop(c, n);
+              },
+              child: const Text('执行'),
+            ),
+          ],
+        ),
+      );
+      if (v == null) return;
+      try {
+        await api.deviceAction(d.uid, 'set_volume', {'volume': v});
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已下发音量 $v → ${d.name}')));
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('下发失败：$e')));
+      }
+      return;
+    }
     // 截图链路特殊：下发只是第一步，还要等设备回传再展示（#T07.7 步骤 4）。
     if (action == 'screenshot') {
       await _remoteScreenshot(d);
@@ -219,7 +279,34 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
         final d = list[i];
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
-          child: ListTile(
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 设备桌面截图预览（5 分钟刷新；无图时占位）
+              if (_shots[d.uid] != null)
+                Ink.image(
+                  image: MemoryImage(base64Decode(_shots[d.uid]!)),
+                  fit: BoxFit.cover,
+                  height: 120,
+                  width: double.infinity,
+                )
+              else
+                Container(
+                  height: 120,
+                  width: double.infinity,
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                  child: Center(
+                    child: Text(
+                      '暂无截图预览 · 点「远程截图」获取',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.outline,
+                      ),
+                    ),
+                  ),
+                ),
+              ListTile(
             leading: CircleAvatar(
               backgroundColor: d.online
                   ? const Color(0xFF1D3A2C)
@@ -340,6 +427,15 @@ class _CaptureDialogState extends State<_CaptureDialog> {
             setState(() {
               _png = bytes;
               _phase = '收到截图（${c['bytes'] ?? bytes.length} bytes）';
+            // 截图就绪横幅：让老师不用盯着进度框也知道「图回来了」。
+            // dialog context 也能解析到 MaterialApp 根部的 ScaffoldMessenger。
+            final messenger = ScaffoldMessenger.maybeOf(context);
+            if (messenger != null) {
+              messenger.showSnackBar(SnackBar(
+                content: Text('「${widget.device.name}」已回传截图，请在弹窗中查看'),
+                duration: const Duration(seconds: 4),
+              ));
+            }
             });
             return;
           }

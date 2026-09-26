@@ -5,6 +5,8 @@
 /// 抽屉挂在界面右侧、点一下就出来，收起时也不占地方。
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -51,26 +53,68 @@ class _NoticeHistoryDrawerState extends ConsumerState<NoticeHistoryDrawer> {
   }
 
   /// 收起状态：一条窄窄的竖条，写着「历史」二字（竖排），点开它。
+  /// 有未读通知时在把手上亮一个红点（消息错过提醒 · 未读标记）。
   Widget _handle(BuildContext context) {
+    final hasUnread = ref.watch(noticeHistoryProvider.select(
+        (items) => items.any((r) => !r.read)));
     return InkWell(
-      onTap: () => noticeDrawerOpen.value = true,
+      onTap: () {
+        noticeDrawerOpen.value = true;
+        _markAllRead();
+      },
       child: Container(
         color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
         alignment: Alignment.center,
-        child: const RotatedBox(
-          quarterTurns: -1,
-          child: Text(
-            '历史消息',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            const RotatedBox(
+              quarterTurns: -1,
+              child: Text(
+                '历史消息',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (hasUnread)
+              Positioned(
+                right: -6,
+                top: -6,
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: Theme.of(context).colorScheme.surface,
+                        width: 1.5),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
   }
 
+  /// 打开抽屉时把全部未读标记为已读（打开即视为看过）。
+  void _markAllRead() {
+    final notifier = ref.read(noticeHistoryProvider.notifier);
+    final items = ref.read(noticeHistoryProvider);
+    for (final r in items.where((r) => !r.read)) {
+      notifier.markRead(r.seq);
+    }
+  }
+
   Widget _body(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final items = ref.watch(noticeHistoryProvider);
+    // 打开抽屉 = 已看：把未读一次性标记掉（幂等）
+    final notifier = ref.read(noticeHistoryProvider.notifier);
+    for (final r in items.where((r) => !r.read)) {
+      notifier.markRead(r.seq);
+    }
     return Column(
       children: [
         Container(
@@ -117,17 +161,41 @@ class _NoticeHistoryDrawerState extends ConsumerState<NoticeHistoryDrawer> {
         border:
             Border(top: BorderSide(color: Theme.of(context).colorScheme.outlineVariant)),
       ),
-      child: TextButton.icon(
-        onPressed: () async {
-          await notifier.clear();
-          if (!mounted) return;
-          setState(() => _expanded = null);
-          Log.i('已清空本机通知历史', 'history');
-        },
-        icon: const Icon(Icons.delete_outline_rounded, size: 18),
-        label: const Text('清空历史'),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // 弹出「独立历史窗口」：在屏幕右侧开一个置顶悬浮窗，
+          // 老师上课时能一直看到最近通知（主窗口在托盘里也不影响）。
+          TextButton.icon(
+            onPressed: _openStandalone,
+            icon: const Icon(Icons.open_in_new_rounded, size: 16),
+            label: const Text('独立窗口', style: TextStyle(fontSize: 12)),
+          ),
+          TextButton.icon(
+            onPressed: () async {
+              await notifier.clear();
+              if (!mounted) return;
+              setState(() => _expanded = null);
+              Log.i('已清空本机通知历史', 'history');
+            },
+            icon: const Icon(Icons.delete_outline_rounded, size: 16),
+            label: const Text('清空', style: TextStyle(fontSize: 12)),
+          ),
+        ],
       ),
     );
+  }
+
+  /// 拉起独立历史窗口（xingjikong --history），与主进程共用历史文件。
+  void _openStandalone() {
+    if (!Platform.isWindows) return;
+    try {
+      final exe = Platform.resolvedExecutable;
+      Process.start(exe, const ['--history'], mode: ProcessStartMode.detached);
+      Log.i('已拉起独立历史窗口', 'history');
+    } catch (e) {
+      Log.w('拉起独立历史窗口失败：$e', 'history');
+    }
   }
 
   Widget _row(BuildContext context, NoticeRecord r, bool expanded) {
@@ -183,6 +251,18 @@ class _NoticeHistoryDrawerState extends ConsumerState<NoticeHistoryDrawer> {
                                 fontSize: 11,
                                 color: scheme.onSurface.withValues(alpha: 0.5)),
                           ),
+                          if (!r.read)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: scheme.error,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
                           if (r.isUrgent)
                             Padding(
                               padding: const EdgeInsets.only(left: 8),

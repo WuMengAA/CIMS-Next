@@ -921,14 +921,16 @@
         { method: "POST", body: JSON.stringify(payload) }, "config");
     },
 
-    // ---- 插件/组件（Components 资源）----
-    listPlugins: async () => {
-      const r = await cims(`/account/${acct()}/Components/list`, {}, "plugins");
-      return Array.isArray(r) ? normResources(r) : D.plugins();
+    // ---- 大屏组件布局（Components 资源：default_components）----
+    // ⚠️ 历史教训：这里曾用 `/Components/list` 把所有资源名（课表方案 default_classplan /
+    //   cp_classNN、点歌榜 songboard…）当"组件"列出来，再把不存在的 enabled 字段渲染成
+    //   "已禁用" → 整页假状态。组件布局只有 `default_components` 这一张真资源，只碰它。
+    getComponents: async () => {
+      return cli(`/v1/client/Components?name=default_components`, {}, "config");
     },
-    setPlugin: async (id, enabled) => {
-      return cims(`/account/${acct()}/Components/write?name=${encodeURIComponent(id)}`,
-        { method: "POST", body: JSON.stringify({ enabled }) }, "plugins");
+    saveComponents: async (payload) => {
+      return cims(`/account/${acct()}/Components/write?name=default_components`,
+        { method: "POST", body: JSON.stringify(payload) }, "config");
     },
 
     // ---- 设备（客户端控制，CIMS 原生）----

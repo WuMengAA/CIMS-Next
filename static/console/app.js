@@ -333,27 +333,31 @@
   };
 
   views.plugins = async () => {
-    const ps = await API.listPlugins();
+    const comp = await API.getComponents();
+    const has = comp != null && typeof comp === "object" && Object.keys(comp).length > 0;
+    const preview = has ? JSON.stringify(comp, null, 2) : "";
     return `
-      <div class="card"><h3>组件配置（CIMS Components 资源）</h3>
-        <p class="muted">
-          这里管理的是 <b>CIMS 下发给教室端的「组件」资源</b>（大屏上显示哪些组件、放在哪里），
-          <b>不是</b> ClassIsland 的插件启停。
-        </p>
+      <div class="card"><h3>ClassIsland 插件与模块（真实状态）</h3>
         <p class="muted">
           ClassIsland <b>没有运行时启停第三方插件的公开接口</b> —— 插件放进 Plugins 目录即被加载，
-          禁用只能改宿主自己的配置并重启。要看「教室端到底装了哪些插件、星璃模块开了哪些」，
-          请到 <b>「ClassIsland 专页」</b>（数据来自设备真实心跳，可对星璃模块开关直接生效）。
+          禁用只能改教室机自己的配置并重启。要看「教室端到底装了哪些插件、星璃模块开了哪些」，
+          请到 <b>「ClassIsland 专页」</b>（数据来自教室机真实心跳，星璃模块开关能直接生效）。
         </p>
-        <table><thead><tr><th>组件</th><th>版本</th><th>状态</th><th>操作</th></tr></thead><tbody>
-        ${ps.length
-          ? ps.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.ver)}</td>
-          <td><span class="tag ${p.enabled?"ok":""}">${p.enabled?"已启用":"已禁用"}</span></td>
-          <td><button data-act="toggle-plugin" data-need="manage" data-id="${p.id}" data-on="${p.enabled?0:1}">${p.enabled?"禁用":"启用"}</button></td></tr>`).join("")
-          : emptyRow(4, "该账户下暂无组件资源")}
-        </tbody></table>
         <div class="row" style="margin-top:8px">
-          <button data-act="go" data-v="classisland" data-need="control">前往 ClassIsland 专页（真实插件与模块状态）→</button>
+          <button class="primary" data-act="go" data-v="classisland" data-need="control">前往 ClassIsland 专页 →</button>
+        </div>
+      </div>
+      <div class="card"><h3>大屏组件布局（CIMS 组件资源）</h3>
+        <p class="muted">
+          这份 JSON 决定教室大屏显示哪些组件、放在哪里，存在 CIMS 的 <code>default_components</code>
+          资源里（唯一一张真实组件资源）。${has ? "" : "当前尚未配置——留空保存等于清空该资源。"}
+        </p>
+        <textarea data-id="comp-json" rows="10" spellcheck="false"
+          placeholder='{ "components": [ { 组件ID, 位置… } ] }'
+          style="width:100%;font-family:monospace;font-size:13px">${esc(preview)}</textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="primary" data-act="save-components" data-need="control">保存组件布局</button>
+          <button data-act="reload">重新拉取</button>
         </div>
       </div>`;
   };
@@ -2508,10 +2512,14 @@
         await API.putConfig(API.state.classId, obj);
         toast("配置已保存并下发");
       }
-      else if (act === "toggle-plugin") {
-        await API.setPlugin(el.dataset.id, el.dataset.on === "1");
-        API.audit("plugin.toggle", el.dataset.id, el.dataset.on === "1" ? "启用组件" : "禁用组件");
-        toast("插件状态已更新"); go("plugins");
+      else if (act === "save-components") {
+        const el = document.querySelector("[data-id=comp-json]");
+        let obj;
+        try { obj = JSON.parse(el.value || "{}"); }
+        catch { return toast("JSON 不合法，未保存"); }
+        await API.saveComponents(obj);
+        API.audit("components.save", "default_components", "保存大屏组件布局");
+        toast("组件布局已保存"); go("plugins");
       }
       else if (act === "dev") {
         // 关机是不可逆动作：必须二次确认（防误触把整间教室的机器全关掉）

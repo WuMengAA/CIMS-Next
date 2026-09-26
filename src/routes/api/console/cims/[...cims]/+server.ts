@@ -208,7 +208,13 @@ async function forward(event: RequestEvent) {
 	const body = method === "GET" || method === "DELETE" ? undefined : await event.request.text();
 
 	// ---- 鉴权（必须在放行路径检查之前，避免匿名用户探测可用路径）----
-	const u = verifyToken(event.cookies.get("admin_token"));
+	// 优先用网站会话 Cookie；桌面原生客户端（OAuth 登录）走 Authorization: Bearer <网站令牌>。
+	const cookieToken = event.cookies.get("admin_token");
+	let u = cookieToken ? verifyToken(cookieToken) : null;
+	if (!u) {
+		const authH = event.request.headers.get("authorization") ?? "";
+		if (authH.startsWith("Bearer ")) u = verifyToken(authH.slice(7));
+	}
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	// 等级轴：进得了集控面板（L1+）。设备轴：写操作另需对应档位。
 	if (!userCan(u, "viewConsole")) {

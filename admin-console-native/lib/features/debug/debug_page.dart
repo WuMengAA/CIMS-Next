@@ -167,9 +167,17 @@ class _DebugPageState extends ConsumerState<DebugPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final s = ref.watch(settingsProvider);
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: ListView(
+    // 调试面板可能从侧栏（顶层）或设置页（push）进入：有返回的顶层才安全。
+    // 自带顶栏返回按钮 —— 从设置页「打开诊断面板」进入时能回得去，
+    // 顶层进入时 BackButton 无路由可退、自动隐藏（AppBar 仍显示标题）。
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('调试', style: TextStyle(fontSize: 16)),
+        leading: const BackButton(),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: ListView(
         children: [
           Text('调试', style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
@@ -202,6 +210,7 @@ class _DebugPageState extends ConsumerState<DebugPage> {
           const SizedBox(height: 12),
           _logCard(theme),
         ],
+      ),
       ),
     );
   }

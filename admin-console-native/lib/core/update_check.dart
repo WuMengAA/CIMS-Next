@@ -16,7 +16,7 @@ import 'settings.dart';
 
 /// 本地版本（与 pubspec.yaml 的 `version: 1.0.1+2` 对齐；改 pubspec 时一并改这里）。
 const String kLocalVersion = '1.0.2';
-const int kLocalBuild = 2;
+const int kLocalBuild = 3;
 
 /// 版本接口路径（挂在站点根下）。改路径只动这里，不用改调用方。
 const String kVersionApiPath = '/api/version';

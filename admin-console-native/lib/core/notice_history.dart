@@ -29,6 +29,9 @@ class NoticeRecord {
   /// 老师当时的回复（空 = 没回复）
   final String reply;
 
+  /// 是否已读（v2.1 未读红点：打开历史抽屉/确认即视为已读）。
+  final bool read;
+
   const NoticeRecord({
     required this.seq,
     required this.kind,
@@ -37,6 +40,7 @@ class NoticeRecord {
     required this.at,
     this.confirmed = false,
     this.reply = '',
+    this.read = true,
   });
 
   Map<String, dynamic> toJson() => {
@@ -47,6 +51,7 @@ class NoticeRecord {
         'at': at.toIso8601String(),
         'confirmed': confirmed,
         'reply': reply,
+        'read': read,
       };
 
   static NoticeRecord? fromJson(Map<String, dynamic> m) {
@@ -66,6 +71,7 @@ class NoticeRecord {
       at: at,
       confirmed: m['confirmed'] == true,
       reply: (m['reply'] ?? '').toString(),
+      read: m['read'] != false,
     );
   }
 
@@ -153,6 +159,23 @@ class NoticeHistory {
     _dirty = true;
   }
 
+  /// 标记某条为已读（打开历史抽屉/确认时调用；未读红点据此消除）。
+  void markRead(int seq) {
+    final idx = _items.indexWhere((e) => e.seq == seq);
+    if (idx < 0 || _items[idx].read) return;
+    _items[idx] = NoticeRecord(
+      seq: _items[idx].seq,
+      kind: _items[idx].kind,
+      title: _items[idx].title,
+      body: _items[idx].body,
+      at: _items[idx].at,
+      confirmed: _items[idx].confirmed,
+      reply: _items[idx].reply,
+      read: true,
+    );
+    _dirty = true;
+  }
+
   void setReply(int seq, String text) {
     final idx = _items.indexWhere((e) => e.seq == seq);
     if (idx < 0) return;
@@ -214,6 +237,14 @@ class NoticeHistoryController extends Notifier<List<NoticeRecord>> {
   void markConfirmed(int seq) {
     final h = NoticeHistory.instance;
     h.markConfirmed(seq);
+    h.markRead(seq);
+    state = h.all;
+    unawaitedSave(h);
+  }
+
+  void markRead(int seq) {
+    final h = NoticeHistory.instance;
+    h.markRead(seq);
     state = h.all;
     unawaitedSave(h);
   }

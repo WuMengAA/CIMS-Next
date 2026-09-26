@@ -111,6 +111,79 @@ class CheckStep {
   String toString() => '${ok ? "OK " : "FAIL"} $name (${ms}ms) $detail';
 }
 
+
+/// 一条互动通知回执（被控端确认/回复 → 操控端收件箱可见）。
+class NoticeReply {
+  final int id;
+  final String clientId;
+  final String noticeId;
+  final String text;
+  final DateTime at;
+
+  const NoticeReply({
+    required this.id,
+    required this.clientId,
+    required this.noticeId,
+    required this.text,
+    required this.at,
+  });
+
+  static NoticeReply? fromJson(Map<String, dynamic> m) {
+    final id = (m['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return null;
+    DateTime at;
+    try {
+      at = DateTime.parse(m['created_at']?.toString() ?? '');
+    } catch (_) {
+      at = DateTime.now();
+    }
+    return NoticeReply(
+      id: id,
+      clientId: (m['client_id'] ?? '').toString(),
+      noticeId: (m['notice_id'] ?? '').toString(),
+      text: (m['text'] ?? '').toString(),
+      at: at,
+    );
+  }
+}
+
+/// 一条设备执行回执（截图/锁屏/远控等动作的完成结果）。
+class CommandCompletion {
+  final int id;
+  final String clientId;
+  final String action;
+  final bool ok;
+  final String detail;
+  final DateTime at;
+
+  const CommandCompletion({
+    required this.id,
+    required this.clientId,
+    required this.action,
+    required this.ok,
+    required this.detail,
+    required this.at,
+  });
+
+  static CommandCompletion? fromJson(Map<String, dynamic> m) {
+    final id = (m['id'] as num?)?.toInt() ?? 0;
+    if (id <= 0) return null;
+    DateTime at;
+    try {
+      at = DateTime.parse(m['created_at']?.toString() ?? '');
+    } catch (_) {
+      at = DateTime.now();
+    }
+    return CommandCompletion(
+      id: id,
+      clientId: (m['client_id'] ?? '').toString(),
+      action: (m['action'] ?? '').toString(),
+      ok: m['ok'] == true,
+      detail: (m['detail'] ?? '').toString(),
+      at: at,
+    );
+  }
+}
 /// 简单 JSON 序列化辅助（用于 shared_preferences 持久化列表）
 List<Map<String, dynamic>> decodeList(String? raw) {
   if (raw == null || raw.isEmpty) return [];

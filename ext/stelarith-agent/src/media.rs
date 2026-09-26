@@ -122,6 +122,22 @@ fn ffmpeg_exe() -> String {
     "ffmpeg".to_string()
 }
 
+
+/// ffmpeg 命令构造：Windows 下带 CREATE_NO_WINDOW（不弹控制台窗口）。
+fn ffmpeg_cmd() -> std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new(ffmpeg_exe());
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        c
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::ffmpeg_cmd()
+    }
+}
+
 static FFMPEG_OK: OnceLock<bool> = OnceLock::new();
 
 /// 探测 ffmpeg 是否真能用（跑一次 `-version`），结果缓存。
@@ -131,7 +147,7 @@ static FFMPEG_OK: OnceLock<bool> = OnceLock::new();
 /// 同理也不能只靠 `exists()` 判存在 —— 能跑起来才算数。
 fn ffmpeg_ok() -> bool {
     *FFMPEG_OK.get_or_init(|| {
-        Command::new(ffmpeg_exe())
+        ffmpeg_cmd()
             .args(["-hide_banner", "-version"])
             .output()
             .map(|o| o.status.success())
@@ -167,7 +183,7 @@ fn list_cameras() -> Vec<String> {
     if !ffmpeg_ok() {
         return Vec::new();
     }
-    let out = Command::new(ffmpeg_exe())
+    let out = ffmpeg_cmd()
         .args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"])
         .output();
     let text = match out {
@@ -233,7 +249,7 @@ fn input_args(cam: &Option<String>, rtbuf: &str, width: u32, height: u32) -> Vec
 
 /// 统一的时间戳文件名（用 UTC，避免教室机时区设置不一致导致排序错乱）。
 fn stamp() -> String {
-    Utc::now().format("%Y%m%d-%H%M%S").to_string()
+    chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
 /// 取流来源的如实描述，写进回执让面板能显示。
@@ -302,7 +318,7 @@ pub(crate) fn take_snapshot(task: &Task) -> HashMap<String, String> {
         path.clone(),
     ]);
 
-    match Command::new(ffmpeg_exe()).args(&args).output() {
+    match ffmpeg_cmd().args(&args).output() {
         Ok(o) if o.status.success() => {
             let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             out.insert("result".into(), "snapshot_saved".into());
@@ -396,7 +412,7 @@ pub(crate) fn start_recording(
         pattern.clone(),
     ]);
 
-    let child = Command::new(ffmpeg_exe())
+    let child = ffmpeg_cmd()
         .args(&args)
         .stdin(std::process::Stdio::piped()) // 留句柄给"优雅停止"
         .stdout(std::process::Stdio::null())

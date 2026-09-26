@@ -727,7 +727,7 @@ class DeviceAgent {
     if (nid <= 0) return ActionResult.no('类型化通知缺少 notice_id');
     final kind = (p['__kind'] ?? 'island').toString();
     final title = (p['title'] ?? '集控通知').toString().trim();
-    final body = (p['content'] ?? '').toString().trim();
+    final body = (p['content'] ?? p['body'] ?? '').toString().trim();
     final flagsRaw = p['flags'];
     final flags = flagsRaw is Map ? flagsRaw : <dynamic, dynamic>{};
     final presetsRaw = flags['reply_presets'];
@@ -1384,10 +1384,13 @@ class DeviceAgent {
         if (t is Map) {
           final action = (t['action'] ?? '').toString();
           if (action.isNotEmpty) {
-            final p = t['params'];
+            // 载荷字段命名对齐：网站 broadcast 与桌面端 sendTask 都用 `payload`，
+            // 旧版/内部格式用 `params`。两头都得认，否则桌面端收到自己/网站下发的
+            // 类型化任务时 payload 解析成空 → 弹窗报"缺少 notice_id"。
+            final rawP = t['payload'] ?? t['params'];
             return StelarithTask(
               action: action,
-              params: p is Map ? Map<String, dynamic>.from(p) : const {},
+              params: rawP is Map ? Map<String, dynamic>.from(rawP) : const {},
               scope: (t['scope'] ?? 'device').toString(),
             );
           }
@@ -1423,15 +1426,41 @@ class DeviceAgent {
       return null;
     }
     if (node is Map) {
-      // 官方 SendNotification 信封：MessageMask 是**标题**，MessageContent 是正文。
-      // 之前只找 content 系字段，而面板广播/通知带的就是这张信封、且 MessageContent
-      // 常是空串 → 取不到 → 退回 payload 原文 → 桌面弹窗里显示的是一坨 JSON。
-      // 所以这里必须**优先**取 MessageMask，而不是把它当成"又一个候选字段"。
+      // ① stelarith_task 信封（弹窗/全屏等结构化指令）：**不能**把 JSON 当通知文本显示。
+      //    payload 里带干净的 title/content 时取它们；没有则取信封里的 title/body 字段。
+      final st = node['stelarith_task'];
+      if (st is Map) {
+        final pl = st['payload'];
+        if (pl is Map) {
+          final title = (pl['title'] ?? '').toString().trim();
+          final content = (pl['content'] ?? '').toString().trim();
+          if (title.isNotEmpty || content.isNotEmpty) {
+            if (title.isNotEmpty && content.isNotEmpty) {
+              return title + '\n' + content;
+            }
+            return title.isNotEmpty ? title : content;
+          }
+        }
+        // 任务自身带 title/body（CIMS 直发形态）
+        final tt = (st['title'] ?? '').toString().trim();
+        final bb = (st['body'] ?? '').toString().trim();
+        if (tt.isNotEmpty || bb.isNotEmpty) {
+          if (tt.isNotEmpty && bb.isNotEmpty) {
+            return tt + '\n' + bb;
+          }
+          return tt.isNotEmpty ? tt : bb;
+        }
+        return null; // 识别出是任务信封但无可见文案 → 交给教室端弹窗呈现，这里不显示 JSON
+      }
+      // ② 官方 SendNotification 信封：MessageMask 是**标题**，MessageContent 是正文。
+      //    之前只找 content 系字段，而面板广播/通知带的就是这张信封、且 MessageContent
+      //    常是空串 → 取不到 → 退回 payload 原文 → 桌面弹窗里显示的是一坨 JSON。
+      //    所以这里必须**优先**取 MessageMask，而不是把它当成"又一个候选字段"。
       final mask = node['MessageMask'];
       if (mask is String && mask.trim().isNotEmpty) {
         final body = node['MessageContent'];
         if (body is String && body.trim().isNotEmpty) {
-          return '${mask.trim()}\n${body.trim()}';
+          return mask.trim() + '\n' + body.trim();
         }
         return mask.trim();
       }
@@ -1444,7 +1473,7 @@ class DeviceAgent {
         'body',
       ]) {
         final v = node[k];
-        if (v is String && v.trim().isNotEmpty) return v.trim();
+        if (v is String && v.trim().isNotEmpty && !v.trim().startsWith('{')) return v.trim();
       }
       // 再往里挖一层：后端/面板可能把通知包在自定义信封里（如 `{'data': {...}}`）。
       // 不做这层递归的后果和上面一样 —— 弹出来的是 JSON 原文。

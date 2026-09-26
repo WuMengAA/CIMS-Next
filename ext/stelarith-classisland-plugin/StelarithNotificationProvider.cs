@@ -224,6 +224,16 @@ public sealed class StelarithNotificationProvider : NotificationProviderBase
 
                     ShowNotification(req);
 
+                    // 同步打进通知事件总线：底部滚动条组件据此插入新条目并高亮；
+                    // 语音策略（2026-09-26 修复双读）：官方播放 `SpeechContent` 已由
+                    // 宿主按 IsSpeechEnabled 朗读；我们的 TTS 只在官方**没有**朗读时补偿
+                    // （载荷未要求官方语音 / 插件内部推送），避免同一句被念两遍。
+                    StelarithNoticeBus.Publish(
+                        effTitle,
+                        effContent ?? "",
+                        kind: effEmergency ? "fullscreen" : "island",
+                        speak: effFlags is null || !effFlags.IsSpeechEnabled);
+
                     Diag($"Push ok: oneLine={combined.Length}ch font={BuildSingleLineFontSize(combined.Length)} " +
                          $"maskDuration={total.TotalSeconds:N1}s flags={(effFlags is null ? "宿主默认" : "集控载荷")}" +
                          $" emergency={(effEmergency ? "yes(red/topmost/sound, ≥" + EmergencyMinSeconds + "s×" + EmergencyMinRepeat + ")" : "no")}");
