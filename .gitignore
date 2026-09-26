@@ -44,6 +44,10 @@ vite.config.ts.timestamp-*
 # 它同时承载 dev 的 content/ 与 uploads/（一个变量管两个目录），整目录皆运行时数据。
 /.dev-data/
 
+# 端到端排障截图与用户上传件（运行时数据，随调试/使用产生）
+/content/captures/
+/content/files/
+
 # 备份产物：本机份（含数据库明文快照）与 staging，俱是运行时数据。
 # 入库的话，仓库里会躺着若干份完整数据库副本 —— 连密钥带用户数据一起上 GitHub。
 # 云上（R2/B2）的备份不受此限制，它们本来就不在这台机器上。
