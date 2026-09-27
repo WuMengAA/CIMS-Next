@@ -80,6 +80,19 @@
         "downloads": 1,
         "prerelease": false,
         "source": "local"
+      },
+      {
+        "id": "rel-106",
+        "tag": "v1.0.6",
+        "name": "星集控 1.0.6",
+        "notes": "安全与隐私全套（OAuth 动态注册 / 登录时限 30-60-120 天 / 接入码绑定 / 权限双闸）+ 软件管理页与更新日志后台",
+        "file": "xingjikong-setup.exe",
+        "url": "/uploads/xingjikong-setup.exe",
+        "size": 15870972,
+        "createdAt": "2026-09-27T08:00:00+08:00",
+        "downloads": 0,
+        "prerelease": false,
+        "source": "local"
       }
     ],
     "sync": null,
