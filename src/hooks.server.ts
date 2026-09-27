@@ -36,7 +36,7 @@ export async function handle({ event, resolve }) {
 		const isAuthApi = url.pathname.startsWith("/api/auth");
 		if (!isLogin && !isAuthApi && !isStaticAsset) {
 			const token = event.cookies.get("admin_token");
-			const u = verifyToken(token);
+			const u = verifyToken(token, event.request.headers.get("user-agent"));
 			// 集控面板子页面（/admin/console）走 viewConsole 门槛（L2+：
 			// 电教委员/注册用户可进，L1 只读访客一律禁止 —— 集控是可控教室设备的管理面）。
 			// 其余 /admin 管理页维持 viewAdmin 门槛（L4：admin / editor）。
@@ -68,7 +68,7 @@ export async function handle({ event, resolve }) {
 		(event.request.headers.get("accept") || "").includes("text/html");
 	if (!user && isHtmlNav) {
 		try {
-			user = verifyToken(event.cookies.get("admin_token"));
+			user = verifyToken(event.cookies.get("admin_token"), event.request.headers.get("user-agent"));
 		} catch { /* noop */ }
 	}
 

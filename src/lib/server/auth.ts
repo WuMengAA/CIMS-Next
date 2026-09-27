@@ -544,21 +544,57 @@ export function sanitizeAvatar(raw: string | undefined | null): string {
 }
 
 /** 校验会话令牌 → 用户；命中时滑动续期并节流刷新 last_seen。 */
-export function verifyToken(token: string | undefined | null): User | null {
+/**
+ * 校验会话令牌。可选传入当前 UA：与登录时记录的 UA 家族（浏览器+平台+主版本）
+ * 不一致即吊销会话（2026-09-27 安全网补强：防令牌被盗后用异地浏览器/隐身窗口重放）。
+ * 不传 ua 的调用点（后台各 route）行为不变，仅 hooks 主校验启用。
+ */
+// ── UA 家族签名（2026-09-27 安全网补强）────────────────────────────────────
+// 只取「浏览器 + 平台 + 主版本号」，返回 null 表示无法识别（跳过检测）。
+// 规则：Chrome/Edge/Firefox/Safari 家族 + Windows/Mac/Linux/Android/iOS + 主版本。
+function uaFamily(ua: string): string | null {
+	const platform =
+		/android/i.test(ua) ? "android" :
+		/iphone|ipad|ipod/i.test(ua) ? "ios" :
+		/windows/i.test(ua) ? "win" :
+		/mac os x|macintosh/i.test(ua) ? "mac" :
+		/linux/i.test(ua) ? "linux" : "";
+	const m = ua.match(/(Chrome|Firefox|Safari|Edg(?:e|/)|OPR)/(d+)/i);
+	if (!m) return null;
+	let browser = m[1].toLowerCase().startsWith("edge") || m[1].toLowerCase().startsWith("edg")
+		? "edge" : m[1].toLowerCase().replace("opr", "opera").replace("edg", "edge");
+	if (browser === "safari" && /chrome/i.test(ua) && !/edg/i.test(ua) && !/opr/i.test(ua)) {
+		browser = "chrome"; // Safari 的 UA 常含 Chrome 标记，Chrome 优先
+	}
+	return platform ? browser + "|" + platform + "|" + m[2] : browser + "|" + m[2];
+}
+
+export function verifyToken(token: string | undefined | null, ua?: string | null): User | null {
 	if (!token) return null;
 	try {
 		const db = getDb();
 		const row = db
 			.prepare(
-				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp, s.deadline AS s_deadline,
+				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp, s.deadline AS s_deadline, s.user_agent AS s_ua,
 				        u.id, u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status,
 				        u.password_hash, u.salt, u.created_at, u.updated_at, u.last_login_at, u.last_login_ip, u.login_count,
 				        u.class_name, u.grade_name, u.xp
 				 FROM sessions s JOIN users u ON u.id = s.user_id
 				 WHERE s.token = ?`
 			)
-			.get(token) as unknown as (UserRow & { s_seen: string; s_exp: string }) | undefined;
+			.get(token) as unknown as (UserRow & { s_seen: string; s_exp: string; s_ua: string }) | undefined;
 		if (!row) return null;
+
+		// ③ UA 突变检测：仅在"本次请求带 UA 且库里有记录"时启用；
+		// 家族签名 = 浏览器 + 平台 + 主版本（小版本升级不算突变）。
+		if (ua && row.s_ua) {
+			const fam = uaFamily(ua);
+			const storedFam = uaFamily(row.s_ua);
+			if (fam && storedFam && fam !== storedFam) {
+				db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+				return null;
+			}
+		}
 
 		const now = Date.now();
 		const exp = Date.parse(row.s_exp);
