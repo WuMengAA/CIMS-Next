@@ -15,6 +15,8 @@ import crypto from "node:crypto";
 import type { Role, TitleKey } from "$lib/permissions.js";
 import { TITLE_KEYS } from "$lib/permissions.js";
 import { getDb, hashPassword as _hashPassword, nowIso } from "./db.js";
+import { sendMail, mailEnabled } from "./mailer.js";
+import { env } from "$env/dynamic/private";
 
 export interface User {
 	/** 数据库自增主键（旧 JSON 版本没有该字段，新代码按可选处理）。 */
@@ -342,7 +344,29 @@ export function registerUser(
 			 VALUES (?, ?, ?, '', '', 'user', 'pending', 0, ?, ?, ?, ?, ?, ?, 0)`
 		)
 		.run(name, nick || name, mail, token, exp, hashPassword(password, salt), salt, ts, ts);
+	// 邮件渠道可用时立即发验证邮件（未配置 SMTP 则静默跳过，前端回显链接兜底）
+	if (mail) {
+		sendVerificationMail(mail, token).catch((e) => {
+			console.error("[mailer] 注册验证邮件发送失败：", e);
+		});
+	}
 	return { ok: true, verifyToken: token, username: name, email: mail };
+}
+
+/** 发送注册验证邮件（内部：拼链接 + 调 sendMail）。 */
+async function sendVerificationMail(email: string, token: string): Promise<void> {
+	if (!mailEnabled()) return;
+	const site = (env.PUBLIC_SITE_URL || "http://127.0.0.1:8090").replace(/\/$/, "");
+	const url = site + "/verify?token=" + encodeURIComponent(token);
+	await sendMail({
+		to: email,
+		subject: "星集控 · 请验证你的邮箱",
+		text: "欢迎注册星集控！\n\n点击以下链接完成邮箱验证（24 小时内有效）：\n" + url,
+		html:
+			"<p>欢迎注册星集控！</p><p>点击下方按钮完成邮箱验证（24 小时内有效）：</p>" +
+			'<p><a href="' + url + '" style="display:inline-block;padding:10px 20px;background:#534AB7;color:#fff;text-decoration:none;border-radius:6px">验证邮箱</a></p>' +
+			'<p style="color:#888;font-size:12px">无法点击？复制此链接：<br/>' + url + '</p>',
+	});
 }
 
 /** 消费验证令牌：激活账号（status=active, verified=1）。 */
@@ -375,6 +399,11 @@ export function resendVerification(identifier: string): { ok: boolean; error?: s
 	getDb()
 		.prepare("UPDATE users SET verify_token = ?, verify_token_expires = ?, updated_at = ? WHERE id = ?")
 		.run(token, exp, nowIso(), user.id ?? -1);
+	if (user.email) {
+		sendVerificationMail(user.email, token).catch((e) => {
+			console.error("[mailer] 重发验证邮件失败：", e);
+		});
+	}
 	return { ok: true, verifyToken: token, email: user.email };
 }
 
@@ -559,7 +588,7 @@ function uaFamily(ua: string): string | null {
 		/windows/i.test(ua) ? "win" :
 		/mac os x|macintosh/i.test(ua) ? "mac" :
 		/linux/i.test(ua) ? "linux" : "";
-	const m = ua.match(/(Chrome|Firefox|Safari|Edg(?:e|/)|OPR)/(d+)/i);
+	const m = ua.match(/\b(Chrome|Firefox|Safari|Edg(?:e|\/)|OPR)\/(\d+)/i);
 	if (!m) return null;
 	let browser = m[1].toLowerCase().startsWith("edge") || m[1].toLowerCase().startsWith("edg")
 		? "edge" : m[1].toLowerCase().replace("opr", "opera").replace("edg", "edge");

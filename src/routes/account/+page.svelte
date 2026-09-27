@@ -5,13 +5,16 @@
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
-	import { ROLE_LABELS, roleToLevel, LEVEL_LABELS, LEVEL_DESCRIPTIONS, type Role, type Level } from "$lib/permissions.js";
+	import { ROLE_LABELS, levelLabelOfXp, levelDescriptionOfXp, xpToNextLevel, type Role } from "$lib/permissions.js";
 	import { toast } from "svelte-sonner";
-	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays, UserCog, Save, ShieldPlus, ArrowRight } from "@lucide/svelte";
+	import { goto } from "$app/navigation";
+	import AvatarUploader from "$lib/components/avatar-uploader.svelte";
+	import { User, KeyRound, Download, LogOut, Loader2, ShieldCheck, CalendarDays, UserCog, Save, ArrowRight, Sparkles, ImageUp } from "@lucide/svelte";
 
 	interface Me {
 		username: string; displayName: string; email: string; bio: string; avatar: string;
 		role: string; createdAt: string; lastLoginAt?: string | null; loginCount?: number;
+		xp?: number;
 	}
 	let me = $state<Me | null>(null);
 	let loading = $state(true);
@@ -22,6 +25,9 @@
 	let pBio = $state("");
 	let pAvatar = $state("");
 	let saving = $state(false);
+	let profilePassword = $state(""); // 改邮箱时需当前密码复核
+	let emailChanged = $derived(pEmail !== "" && pEmail !== me?.email);
+
 
 	// Password change form
 	let currentPassword = $state("");
@@ -54,7 +60,7 @@
 			const res = await fetch("/api/me", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ displayName: pDisplay, email: pEmail, bio: pBio, avatar: pAvatar })
+				body: JSON.stringify({ displayName: pDisplay, email: pEmail, bio: pBio, avatar: pAvatar, currentPassword: profilePassword })
 			});
 			const d = await res.json();
 			if (res.ok && d.ok) {
@@ -158,40 +164,52 @@
 	<!-- Profile -->
 	<div class="flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6">
 		<h2 class="flex items-center gap-2 font-heading text-lg font-medium"><UserCog class="size-4 text-primary" /> 个人资料</h2>
+		<AvatarUploader value={pAvatar} onchange={(u) => (pAvatar = u)} />
 		<div class="grid gap-3 sm:grid-cols-2">
 			<div class="grid gap-1.5"><Label>显示名称</Label><Input bind:value={pDisplay} placeholder="昵称" /></div>
 			<div class="grid gap-1.5"><Label>邮箱</Label><Input type="email" bind:value={pEmail} placeholder="you@example.com" /></div>
-			<div class="grid gap-1.5 sm:col-span-2"><Label>头像 URL</Label><Input bind:value={pAvatar} placeholder="https://… （留空则用首字头像）" /></div>
+						{#if emailChanged}
+							<div class="grid gap-1.5 sm:col-span-2"><Label>当前密码（改邮箱需验证）</Label><Input type="password" bind:value={profilePassword} placeholder="输入当前密码以确认修改邮箱" autocomplete="current-password" /></div>
+						{/if}
 			<div class="grid gap-1.5 sm:col-span-2"><Label>个人简介</Label><Textarea bind:value={pBio} rows={3} placeholder="一句话介绍自己…" /></div>
 		</div>
-		<div><Button onclick={saveProfile} disabled={saving}><Save class="h-4 w-4 mr-2" />{saving ? "保存中..." : "保存资料"}</Button></div>
+		<div class="flex flex-wrap items-center gap-3 border-t border-border/40 pt-3 text-xs text-muted-foreground">
+			<Button variant="outline" size="sm" onclick={() => goto("/library")}>
+				<ImageUp class="mr-1.5 h-4 w-4" /> 我的附件库 / 图床
+			</Button>
+			<span>存图、存文件、一键压缩、拿外链，都在那边。</span>
+		</div>
+		<div><Button onclick={saveProfile} disabled={saving || (emailChanged && !profilePassword)}><Save class="h-4 w-4 mr-2" />{saving ? "保存中..." : (emailChanged && !profilePassword ? "请输入当前密码" : "保存资料")}</Button></div>
 	</div>
 
-	<!-- 权限等级（#181 晋升入口）-->
+	<!-- 经验等级（#248：纯展示，与权限/角色零耦合）-->
 	{#if me}
-		{@const lv = roleToLevel(me.role as Role)}
 		<div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-6">
 			<h2 class="flex items-center gap-2 font-heading text-lg font-medium">
-				<ShieldPlus class="size-4 text-primary" /> 权限等级
+				<Sparkles class="size-4 text-primary" /> 经验等级
 			</h2>
 			<div class="flex flex-wrap items-center gap-2">
-				<Badge variant="outline">{lv === null ? "未识别" : LEVEL_LABELS[lv as Level]}</Badge>
-				<span class="text-sm text-muted-foreground">{ROLE_LABELS[me.role as Role] || me.role}</span>
+				<Badge variant="outline">{levelLabelOfXp(me.xp ?? 0)}</Badge>
+				<span class="text-sm text-muted-foreground">经验 {me.xp ?? 0} · 角色 {ROLE_LABELS[me.role as Role] || me.role}</span>
 			</div>
-			<p class="text-xs text-muted-foreground">{lv === null ? "" : LEVEL_DESCRIPTIONS[lv as Level]}</p>
-			{#if lv !== null && lv >= 6}
-				<p class="text-xs text-muted-foreground">你已是最高等级，无需申请晋升。</p>
-			{:else}
+			<p class="text-xs text-muted-foreground">{levelDescriptionOfXp(me.xp ?? 0)}</p>
+			{#if xpToNextLevel(me.xp ?? 0) > 0}
 				<p class="text-xs text-muted-foreground">
-					等级只能<strong>逐级晋升</strong>，需提交能力证明并由更高等级管理员审核。
+					距下一等级还差 <strong class="text-foreground">{xpToNextLevel(me.xp ?? 0)}</strong> 经验（参与互动即可累积）。
 				</p>
-				<div>
-					<a href="/apply/role"
-						class="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
-						申请权限晋升 <ArrowRight class="size-3.5" />
-					</a>
-				</div>
+			{:else}
+				<p class="text-xs text-muted-foreground">你已是最高经验等级。等级只反映参与度，不授予任何权限。</p>
 			{/if}
+			<div class="flex flex-col gap-1 text-xs text-muted-foreground">
+				<p>经验等级与权限<b class="text-foreground">完全无关</b>——你能做什么取决于你的角色与称号。</p>
+				<p class="mt-1">需要更高权限？</p>
+			</div>
+			<div>
+				<a href="/apply/role"
+					class="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+					申请权限晋升 <ArrowRight class="size-3.5" />
+				</a>
+			</div>
 		</div>
 	{/if}
 

@@ -180,6 +180,17 @@ export async function POST(event: RequestEvent) {
 		if (target !== current.username && !isAdmin) {
 			return json({ error: "无权限" }, { status: 403 });
 		}
+		// 安全网补强（2026-09-27）：改密码必须复核当前密码，防止会话被盗后静默改密。
+		// 管理员改他人密码是特权操作，同样需要管理员自己的密码做二次确认。
+		const verifyTarget = target === current.username ? current.username : target;
+		const currentPassword = body.currentPassword || "";
+		if (!verifyLogin(verifyTarget, currentPassword)) {
+			recordActivity({
+				userId: current.id, username: current.username, action: "password_change",
+				detail: "复核失败（密码不正确），已拒绝", target, ip: meta.ip, userAgent: meta.userAgent
+			});
+			return json({ error: "当前密码不正确，已拒绝修改" }, { status: 400 });
+		}
 		const result = changePassword(target, body.newPassword);
 		if (result.ok) {
 			recordActivity({
@@ -194,6 +205,14 @@ export async function POST(event: RequestEvent) {
 		const target = body.username || current.username;
 		if (target !== current.username && !isAdmin) {
 			return json({ error: "无权限" }, { status: 403 });
+		}
+		// 安全网补强（2026-09-27）：改邮箱属敏感操作（绑错邮箱 = 账号可能被劫持），
+		// 必须复核当前密码；仅改昵称/简介/头像不要求（日常资料更新不应碍事）。
+		if (body.email && body.email !== current.email) {
+			const currentPassword = body.currentPassword || "";
+			if (!verifyLogin(current.username, currentPassword)) {
+				return json({ error: "修改邮箱需先验证当前密码" }, { status: 400 });
+			}
 		}
 		const result = updateProfile(target, {
 			displayName: body.displayName,

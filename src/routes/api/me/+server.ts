@@ -1,11 +1,14 @@
 import { json } from "@sveltejs/kit";
 import type { RequestEvent } from "@sveltejs/kit";
-import { verifyToken, getUser, updateProfile } from "$lib/server/auth.js";
+import { verifyToken, getUser, updateProfile, sanitizeAvatar, verifyLogin } from "$lib/server/auth.js";
 import { recordActivity } from "$lib/server/activity.js";
 import { syncUserUpdateToCims } from "$lib/server/cims-account.js";
+import { fetchClassList, type CimsClass } from "$lib/server/cims-client.js";
+import { classScopeOf, listBindings, replaceBindings } from "$lib/server/class-scope.js";
 import {
 	userCan,
 	canDevice,
+	classBindLimit,
 	levelLabelOfXp,
 	xpToLevel,
 	ROLE_LABELS,
@@ -15,7 +18,6 @@ import {
 	deviceActionsOf
 } from "$lib/permissions.js";
 import type { Role } from "$lib/permissions.js";
-import { classScopeOf, listBindings } from "$lib/server/class-scope.js";
 
 /**
  * 取当前登录用户：先认浏览器 Cookie（网页），再认 Bearer 令牌（桌面端）。
@@ -93,7 +95,7 @@ export function GET(event: RequestEvent) {
 		displayName: user.displayName,
 		email: user.email || "",
 		bio: user.bio || "",
-		avatar: user.avatar || "",
+		avatar: sanitizeAvatar(user.avatar),
 		role: user.role,
 		className: user.className || "",
 		gradeName: user.gradeName || "",
@@ -113,6 +115,16 @@ export async function PUT(event: RequestEvent) {
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 
 	const body = await request.json().catch(() => ({}));
+
+	// 安全网补强（2026-09-27）：改邮箱 = 敏感操作（邮箱是找回密码/账号身份凭证），
+	// 必须提交当前密码做二次验证，防会话被盗后静默改绑邮箱劫持账号。
+	const changingEmail = typeof body.email === "string" && body.email !== (user as unknown as { email?: string }).email;
+	if (changingEmail) {
+		if (!verifyLogin(user.username, String(body.currentPassword || ""))) {
+			return json({ error: "修改邮箱需先验证当前密码", currentPasswordRequired: true }, { status: 400 });
+		}
+	}
+
 	const r = updateProfile(user.username, {
 		displayName: body.displayName,
 		email: body.email,
@@ -122,6 +134,32 @@ export async function PUT(event: RequestEvent) {
 		gradeName: body.gradeName
 	});
 	if (!r.ok) return json({ error: r.error }, { status: 400 });
+
+	// ── v2 班级绑定同步（B03 修复，2026-09-25）──────────────────────────────
+	// 绑班页（/admin/console/bind）与资料页提交的 className 是「班级名」，
+	// 而 v2 范围判定的权威来源是 user_class_bindings 表（真实 class_id）。
+	// 此前只写 users.class_name、不写绑定表 → 班主任绑了班，classScope 仍空，
+	// 面板里看不到本班设备（仅靠旧数字启发式碰运气）。这里把两者接齐：
+	// className 非空 → 匹配 CIMS 真实班级写 bindings；为空 → 清空 bindings。
+	const patchClassName = body.className !== undefined ? String(body.className).trim() : undefined;
+	if (patchClassName !== undefined && classBindLimit(user.role as never) > 0) {
+		try {
+			if (patchClassName) {
+				const classes = await fetchClassList();
+				if (classes && classes.length) {
+					const hit = matchClass(classes, patchClassName);
+					if (hit) {
+						replaceBindings(user.id ?? 0, [{ class_id: hit.class_id, class_name: patchClassName }], user.displayName || user.username);
+					}
+				}
+			} else {
+				replaceBindings(user.id ?? 0, [], user.displayName || user.username);
+			}
+		} catch {
+			// CIMS 不可达 / 匹配失败：保持旧行为（只写 className，数字启发式兜底），
+			// 不阻断资料保存；管理员仍可在用户管理页手工绑定。
+		}
+	}
 
 	let ip = "";
 	try { ip = event.getClientAddress(); } catch { /* noop */ }
@@ -169,4 +207,36 @@ export async function PUT(event: RequestEvent) {
 			}
 		: null
 	});
+}
+
+/**
+ * 把绑班页/d资料页提交的「班级名」匹配到 CIMS 真实班级（class_id）。
+ * 匹配优先级（与绑班页下拉同源）：
+ *   1. name 精确相等（绑班页 option value 就是 name，如「3班」）；
+ *   2. code / display_code 精确相等；
+ *   3. 数字归一相等（「3班」↔「2025届3班」），仅当唯一命中时采纳，
+ *      避免「1班」误配到「10班/11班…」。
+ * 匹配不到返回 null → 调用方保持旧行为，不写 bindings。
+ */
+function matchClass(classes: CimsClass[], className: string): CimsClass | null {
+	const c = className.trim();
+	if (!c) return null;
+	for (const cls of classes) {
+		if (String(cls.name ?? "") === c) return cls;
+		if (String(cls.code ?? "") === c) return cls;
+	}
+	// 数字归一：两边都压成纯数字串再比（「3班」→"3"，「2025届3班」→"20253"，
+	// 前缀届级不影响；注意「2025届3班」归一后是 "20253"，与 "3" 不相等，
+	// 所以额外做一次"取尾号"匹配：class_id/name 里的末位数字段等于 c 的末位。
+	const cTail = (c.match(/\d+$/)?.[0] ?? "").trim();
+	if (!cTail) return null;
+	const hits = classes.filter((cls) => {
+		const n = String(cls.name ?? "");
+		const id = String(cls.class_id ?? "");
+		return (
+			(id.match(/\d+/g) || []).some((d) => d === cTail) ||
+			(n.match(/\d+/g) || []).some((d) => d === cTail)
+		);
+	});
+	return hits.length === 1 ? hits[0] : null;
 }
