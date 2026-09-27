@@ -1,30 +1,33 @@
 /**
  * OAuth2 授权码流程（网站作为授权服务器）。
  *
- * 用途：星集控桌面原生客户端（xingjikong）不再手输 CIMS 密码，而是拉起浏览器
- * 跳到本网站走「网站授权」：复用用户已有的网站会话（已登录则直接同意，未登录则
- * 在此登录），同意后回拨到桌面端的本地 loopback 端口换取**网站会话令牌**。
+ * 用途有两个客户端：
+ * 1. 星集控桌面原生客户端（xingjikong）：不再手输 CIMS 密码，而是拉起浏览器跳到这里
+ *    走「网站授权」，同意后回拨到桌面端的 loopback 端口换取**网站会话令牌**；
+ *    之后所有 CIMS 调用都走网站已有的 `/api/console/cims/*` 服务端代理
+ *    （复用其 RBAC 与特权 CIMS 会话），因此完全不动 CIMS 后端。
+ * 2. VoiceHub 校园广播站：标准 OAuth2 三件套（authorize / token / userinfo），
+ *    换到的是同一个网站会话令牌，VoiceHub 用它调 `/oauth/userinfo` 拿用户资料。
  *
- * 桌面端拿到的是网站会话令牌，之后所有 CIMS 调用都走网站已有的
- * `/api/console/cims/*` 服务端代理（复用其 RBAC 与特权 CIMS 会话），
- * 因此**完全不动 CIMS 后端**。
- *
- * 安全要点：
- * - 仅允许 loopback 回拨（`http://127.0.0.1:<port>/oauth-callback`，RFC 8252 原生应用实践）。
+ * 客户端白名单与密钥解析在 oauth-clients.ts：
+ * - 只接受登记过的 client_id + 登记过的回拨地址（Web 精确匹配；原生走 127.0.0.1）；
  * - authorization code 单次使用、5 分钟过期，存于进程内 Map。
- * - client_secret 来自环境变量 OAUTH_DESKTOP_SECRET（与桌面端常量一致）。
+ *
+ * 已知边界：code 存在进程内存里 → 换令牌必须落在同一进程（本站是单实例
+ * adapter-node，够用）；进程重启会丢掉尚未兑换的 code，用户重走一次授权即可。
  */
 
 import crypto from "node:crypto";
-import { env } from "$env/dynamic/private";
 import { makeToken, verifyToken, getUserById, type User } from "./auth.js";
+import {
+	getClient,
+	validateClient as validateClientInRegistry,
+	validateRedirectUri as validateRedirectInRegistry,
+	type OAuthClientRecord
+} from "./oauth-clients.js";
 
-/** 已注册的桌面客户端 ID（与原生客户端常量保持一致）。 */
-export const OAUTH_CLIENT_ID = "xingjikong_native";
+export type { OAuthClientRecord };
 
-const SECRET = (env.OAUTH_DESKTOP_SECRET ?? "dev-xingjikong-secret-change-me").trim();
-/** 允许回拨的路径后缀（桌面端本地监听）。 */
-const REDIRECT_PATH = "/oauth-callback";
 const CODE_TTL_MS = 5 * 60 * 1000;
 
 interface CodeRecord {
@@ -32,6 +35,7 @@ interface CodeRecord {
 	clientId: string;
 	redirectUri: string;
 	state: string;
+	scope: string;
 	exp: number;
 }
 
@@ -44,22 +48,15 @@ function sweepExpired() {
 }
 setInterval(sweepExpired, 60_000).unref?.();
 
+/** 客户端是否存在且密钥匹配。 */
 export function validateClient(clientId: string, secret: string): boolean {
-	return clientId === OAUTH_CLIENT_ID && secret === SECRET;
+	return validateClientInRegistry(clientId, secret);
 }
 
-/** 仅允许 http://127.0.0.1 的 loopback 回拨（任意端口，RFC 8252）。 */
-export function validateRedirectUri(uri: string): boolean {
-	try {
-		const u = new URL(uri);
-		return (
-			u.protocol === "http:" &&
-			u.hostname === "127.0.0.1" &&
-			u.pathname.endsWith(REDIRECT_PATH)
-		);
-	} catch {
-		return false;
-	}
+/** 回拨地址是否属于该客户端。传 client_id 字符串也接受，未知客户端一律拒绝。 */
+export function validateRedirectUri(clientId: string, uri: string): boolean {
+	const rec = getClient(clientId);
+	return !!rec && validateRedirectInRegistry(rec, uri);
 }
 
 function randomToken(n = 32): string {
@@ -70,10 +67,11 @@ export function issueCode(
 	userId: number,
 	clientId: string,
 	redirectUri: string,
-	state: string
+	state: string,
+	scope = ""
 ): string {
 	const code = randomToken(24);
-	codes.set(code, { userId, clientId, redirectUri, state, exp: Date.now() + CODE_TTL_MS });
+	codes.set(code, { userId, clientId, redirectUri, state, scope, exp: Date.now() + CODE_TTL_MS });
 	return code;
 }
 
@@ -89,7 +87,7 @@ export function consumeCode(code: string): CodeRecord | null {
 /** 为指定用户签发网站会话令牌（与网站登录拿到的令牌同构）。 */
 export function mintWebsiteToken(
 	user: User,
-	meta: { ip?: string; userAgent?: string } = {}
+	meta: { ip?: string; userAgent?: string; ttlDays?: number } = {}
 ): string {
 	return makeToken(user, meta);
 }

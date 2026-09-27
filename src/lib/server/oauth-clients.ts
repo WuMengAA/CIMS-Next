@@ -279,6 +279,54 @@ export function generateSecret(): string {
 	return crypto.randomBytes(32).toString("base64url");
 }
 
+/**
+ * 为某台设备注册专属 OAuth 客户端（动态注册，2026-09-27 安全改造）。
+ *
+ * 背景：安装包内置的桌面端密钥（dev-xingjikong-secret-change-me）是公开默认值，
+ * 任何人反编译安装包都能以"星集控桌面端"身份走授权 —— 打包即附带登录权限。
+ * 改为：客户端首启携带设备指纹调用注册接口，服务端为每台设备生成
+ * 专属 client_id（xjk_dev_<指纹>）+ 随机密钥，存在 oauth_clients 表，幂等复用。
+ * 包内不再内置任何密钥；旧内置 xingjikong_native 保留仅作兼容旧已装版本。
+ *
+ * @param fingerprint 设备指纹（稳定身份键，如 cims_agent_uid）。
+ * @returns { clientId, clientSecret }；同一指纹重复注册返回同一对（幂等）。
+ */
+export function registerDeviceClient(fingerprint: string): {
+	clientId: string;
+	clientSecret: string;
+} {
+	const fp = (fingerprint || "").trim().toLowerCase();
+	const id = "xjk_dev_" + fp.replace(/[^a-z0-9_\-.]/g, "_").slice(0, 48);
+	if (!id.match(/^[a-z0-9]/)) {
+		throw new Error("设备指纹非法：无法派生 client_id");
+	}
+	const db = getDb();
+	const existing = db.prepare("SELECT secret FROM oauth_clients WHERE id = ?").get(id) as
+		| { secret: string }
+		| undefined;
+	if (existing && existing.secret) {
+		return { clientId: id, clientSecret: existing.secret };
+	}
+	const secret = generateSecret();
+	const ts = nowIso();
+	db.prepare(
+		"INSERT OR REPLACE INTO oauth_clients" +
+			" (id, name, description, secret, redirect_uris, loopback, scopes, default_scope, enabled, builtin, created_at, updated_at)" +
+			" VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1, 0, ?, ?)"
+	).run(
+		id,
+		"星集控设备端（" + fp.slice(0, 12) + "）",
+		"由设备首启动态注册的专属客户端（安全改造：包内零密钥）",
+		secret,
+		JSON.stringify([]),
+		JSON.stringify(["cims", "profile"]),
+		"cims",
+		ts,
+		ts
+	);
+	return { clientId: id, clientSecret: secret };
+}
+
 /** 站点对外根地址（拼 userinfo 的绝对头像地址用）。 */
 export function publicBaseUrl(): string {
 	const base = (process.env.PUBLIC_SITE_URL || process.env.ORIGIN || "").trim();

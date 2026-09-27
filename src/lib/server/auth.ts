@@ -40,6 +40,8 @@ export interface User {
 	/** 集控面板班级身份（新账号引导补充；用户自填）。 */
 	className?: string;
 	gradeName?: string;
+	/** 经验值（#248）：经验等级 xp→Lv 的数据源；纯展示，与权限/角色零耦合。 */
+	xp?: number;
 	/**
 	 * 该用户被显式授予的称号集合（来自 user_titles 表）。
 	 * - 非空数组 = 完整覆盖：以该集合为有效称号（可增可减，脱离角色预设）。
@@ -79,6 +81,7 @@ interface UserRow {
 	login_count: number;
 	class_name: string;
 	grade_name: string;
+	xp: number;
 }
 
 function rowToUser(r: UserRow): User {
@@ -103,6 +106,7 @@ function rowToUser(r: UserRow): User {
 		loginCount: r.login_count ?? 0,
 		className: r.class_name || "",
 		gradeName: r.grade_name || "",
+		xp: r.xp ?? 0,
 		titles: r.id != null ? getUserTitles(r.id) : null
 	};
 }
@@ -157,7 +161,7 @@ export function removeUserTitle(userId: number, title: TitleKey): void {
 }
 
 const SELECT_USER = `SELECT id, username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires,
-	password_hash, salt, created_at, updated_at, last_login_at, last_login_ip, login_count, class_name, grade_name FROM users`;
+	password_hash, salt, created_at, updated_at, last_login_at, last_login_ip, login_count, class_name, grade_name, xp FROM users`;
 
 export function getUsers(): User[] {
 	reconcileAdmin();
@@ -452,12 +456,16 @@ export function revokeSessions(username: string): number {
 export interface SessionMeta {
 	ip?: string;
 	userAgent?: string;
+	/** 登录时限（天）：30 默认，可选 60 / 120；过期后需重新登录（2026-09-27 安全改造）。 */
+	ttlDays?: number;
 }
 
 /** 建立登录会话，返回随机会话令牌。 */
 export function makeToken(user: User, meta: SessionMeta = {}): string {
 	const token = crypto.randomBytes(32).toString("base64url");
 	const now = Date.now();
+	const ttlDays = Math.min(Math.max(meta.ttlDays ?? 30, 1), 365);
+	const ttlMs = ttlDays * 24 * 60 * 60 * 1000;
 	const db = getDb();
 	db.prepare(
 		`INSERT INTO sessions (token, user_id, created_at, last_seen_at, expires_at, ip, user_agent)
@@ -467,7 +475,7 @@ export function makeToken(user: User, meta: SessionMeta = {}): string {
 		user.id ?? -1,
 		new Date(now).toISOString(),
 		new Date(now).toISOString(),
-		new Date(now + SESSION_TTL_MS).toISOString(),
+		new Date(now + ttlMs).toISOString(),
 		(meta.ip || "").slice(0, 64),
 		(meta.userAgent || "").slice(0, 300)
 	);
@@ -491,6 +499,24 @@ export function destroySession(token: string | undefined | null): void {
 	} catch { /* noop */ }
 }
 
+/**
+ * 头像取值规整 —— 与 oauth/userinfo 同标准的三段式清洗：
+ *   1. 已是 http(s) 绝对地址 → 原样透出；
+ *   2. 站内绝对路径（/uploads/... 等以 / 开头）→ 原样透出；
+ *   3. 其余（历史脏值如 `avatar = "admin"`、裸文件名等）→ 返回空串。
+ * 第 3 种刻意不给"原样透出"：客户端拿 "admin" 当 <img src> 会拼出
+ * /admin 之类地址，那是个 HTML 页面而不是图片 —— 看上去像地址、实则是坏值，
+ * 客户端无从分辨；给空串会让 UI 自然回落到默认头像/首字母 fallback。
+ * 各消费方（后台侧栏账号卡、/api/me、oauth/userinfo）统一走本函数，避免
+ * "同一种脏值三种处理"再次漂移。若调用方需要站内绝对路径补全站点域名
+ * （如跨域 oauth 响应），由调用方自行对返回值的 "/..." 前缀拼接 base。
+ */
+export function sanitizeAvatar(raw: string | undefined | null): string {
+	const v = (raw ?? "").trim();
+	if (!v) return "";
+	return /^https?:\/\//i.test(v) || v.startsWith("/") ? v : "";
+}
+
 /** 校验会话令牌 → 用户；命中时滑动续期并节流刷新 last_seen。 */
 export function verifyToken(token: string | undefined | null): User | null {
 	if (!token) return null;
@@ -501,7 +527,7 @@ export function verifyToken(token: string | undefined | null): User | null {
 				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp,
 				        u.id, u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status,
 				        u.password_hash, u.salt, u.created_at, u.updated_at, u.last_login_at, u.last_login_ip, u.login_count,
-				        u.class_name, u.grade_name
+				        u.class_name, u.grade_name, u.xp
 				 FROM sessions s JOIN users u ON u.id = s.user_id
 				 WHERE s.token = ?`
 			)

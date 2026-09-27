@@ -47,7 +47,9 @@ export async function POST(event: RequestEvent) {
 			}
 			return json({ error: "用户名或密码错误" }, { status: 401 });
 		}
-		const token = makeToken(user, meta);
+		// 登录时限（天）：默认 30，可选 60/120，过期需重新登录（2026-09-27 安全改造）。
+		const ttlDays = Math.min(Math.max(Number(body.ttl_days ?? 30), 1), 365);
+		const token = makeToken(user, { ...meta, ttlDays });
 		cookies.set("admin_token", token, {
 			path: "/",
 			httpOnly: true,
@@ -55,7 +57,7 @@ export async function POST(event: RequestEvent) {
 			// 跟随 COOKIE_SECURE：HTTPS 生产环境置 true（标记 Secure，防中间人）；
 			// 本地 HTTP 开发（COOKIE_SECURE 非 true）保持 false，否则浏览器会拒收 Cookie 导致无法登录。
 			secure: process.env.COOKIE_SECURE === "true",
-			maxAge: 30 * 24 * 60 * 60
+			maxAge: ttlDays * 24 * 60 * 60
 		});
 		markLogin(user.username, meta.ip);
 		recordActivity({ userId: user.id, username: user.username, action: "login", ip: meta.ip, userAgent: meta.userAgent });

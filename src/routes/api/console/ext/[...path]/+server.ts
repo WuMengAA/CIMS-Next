@@ -91,6 +91,7 @@ import {
 	listStaleDeliveries
 } from "$lib/server/console-ext.js";
 import { syncReplyToCims } from "$lib/server/cims-reply-sync.js";
+import { registerDeviceClient } from "$lib/server/oauth-clients.js";
 
 /**
  * 设备密钥请求判定：带 `x-stelarith-device-secret` 头的调用方自称是教室端设备
@@ -217,6 +218,53 @@ export async function GET(event: RequestEvent) {
 	// ── 监控参数（截图/录像配置）：设备经设备密钥拉取，面板用户读同一份。────────
 
 	// ── 设备接入码：agent 带设备密钥校验消费；面板带用户会话列出现有码。──────
+	// ── 设备部署配置：教室端应用首启自动拉取（免鉴权，密钥本就是部署级共享）。──────
+	if (path0 === "oauth-register") {
+		// 动态注册：客户端首启携带设备指纹换取专属 OAuth client_id/secret
+		// （安全改造：安装包不再内置公开密钥）。设备密钥鉴权，幂等。
+		const secret = event.request.headers.get("x-stelarith-device-secret");
+		if (!secret || !deviceSecretOk(event)) {
+			return json({ error: "设备密钥无效" }, { status: 403 });
+		}
+		const fp = String(event.url.searchParams.get("fp") ?? "").trim();
+		if (!fp) return json({ error: "缺少 fp（设备指纹）" }, { status: 400 });
+		try {
+			const reg = registerDeviceClient(fp);
+			return json({
+				clientId: reg.clientId,
+				clientSecret: reg.clientSecret,
+				loopback: true,
+				scopes: ["cims", "profile"],
+			});
+		} catch (e) {
+			return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
+		}
+	}
+
+	if (path0 === "device-config") {
+		// p2pIce：与 p2p-signal 下发给浏览器的一致（同源 STUN/TURN），
+		// agent 端 STELARITH_P2P_ICE 用同一份，两端才能互相打洞/中转。
+		const mc = getMonitorConfig();
+		const iceRaw = String(mc.p2p_ice_override ?? "").trim();
+		let p2pIce = [
+			{ urls: "stun:stun.miwifi.com:3478" },
+			{ urls: "stun:stun.chat.bilibili.com:3478" },
+		];
+		if (iceRaw) {
+			try {
+				const parsed = JSON.parse(iceRaw);
+				if (Array.isArray(parsed) && parsed.length > 0) p2pIce = parsed;
+			} catch { /* 非法 JSON 忽略，回退默认 */ }
+		}
+		return json({
+			deviceSecret: process.env.CONSOLE_DEVICE_REPORT_SECRET ?? "",
+			p2pSignal: process.env.STELARITH_P2P_PUBLIC_URL || process.env.STELARITH_P2P_URL || "",
+			p2pSecret: process.env.STELARITH_P2P_HMAC_KEY ?? "",
+			sitePubkey: "-----BEGIN PUBLIC KEY-----MCowBQYDK2VwAyEA+ANF5sMoA1Fe5BXlQKZHU5kTlgEAKFD4zRNWXIjMrOc=-----END PUBLIC KEY-----",
+			p2pIce: JSON.stringify(p2pIce),
+		});
+	}
+
 	if (path0 === "device-activate") {
 		const secret = event.request.headers.get("x-stelarith-device-secret");
 		const code = String(event.url.searchParams.get("code") ?? "").trim();
@@ -1028,6 +1076,10 @@ export async function POST(event: RequestEvent) {
 			if (typed === "popup" || typed === "fullscreen") {
 				const ads = Number(body.auto_dismiss_seconds);
 				if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
+				// 语音播报（TTS）：会出声的能力，同样只走白名单、严格判定 true。
+				// 上面 1013 行已按「能发弹窗确认」的档位收过权，这里只负责把旗标透传给
+				// 教室端（否则会被这段"只收白名单字段"静默丢弃）。
+				if (body.tts === true) flags.tts = true;
 			}
 
 			// 真推送到教室端（这是「自动推送」的核心：留痕不等于送达）。

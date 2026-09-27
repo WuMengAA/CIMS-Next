@@ -16,7 +16,16 @@
 
 	interface Item {
 		id: number; username: string; action: string; target: string;
-		detail: string; ip: string; created_at: string;
+		detail: string; ip: string; user_agent: string; created_at: string;
+	}
+
+	// 把 UA 归成人类可读的"登录软件"标签（后台可见登录软件信息，2026-09-27 安全改造）。
+	function clientLabel(ua: string): string {
+		if (!ua) return "";
+		if (/xingjikong/i.test(ua)) return "星集控桌面端";
+		if (/Electron|Flutter/i.test(ua)) return "桌面客户端";
+		if (/Mozilla/i.test(ua)) return "网页浏览器";
+		return ua.length > 40 ? ua.slice(0, 40) + "…" : ua;
 	}
 	interface Online {
 		username: string; displayName: string; role: string; avatar: string;
@@ -206,6 +215,9 @@
 						<span class="text-sm font-medium">{it.username || "系统"}</span>
 						<Badge variant="outline" class="text-[11px]">{m.label}</Badge>
 						{#if it.target}<span class="truncate text-xs text-muted-foreground">{it.target}</span>{/if}
+						{#if it.user_agent && (it.action === "login" || it.action === "logout")}
+							<span class="rounded bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground">{clientLabel(it.user_agent)}</span>
+						{/if}
 					</div>
 					{#if it.detail}
 						<p class="mt-0.5 truncate text-xs text-muted-foreground">{it.detail}</p>
