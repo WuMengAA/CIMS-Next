@@ -17,6 +17,7 @@ import {
 	verifyEmail,
 	resendVerification
 } from "$lib/server/auth.js";
+import { checkLoginLock, recordLoginFailure, clearLoginFailures } from "$lib/server/login-guard.js";
 import { listUsersOverview, recordActivity } from "$lib/server/activity.js";
 import { syncUserToCims } from "$lib/server/cims-account.js";
 import type { Role } from "$lib/permissions.js";
@@ -38,8 +39,16 @@ export async function POST(event: RequestEvent) {
 		if (!username || !password) {
 			return json({ error: "请输入用户名和密码" }, { status: 400 });
 		}
+		// ── 防爆破（2026-09-27）：命中锁定直接拒绝，不验密码（省 CPU 也在明示"别试了"）
+		const lock = checkLoginLock(username, meta.ip);
+		if (lock.locked) {
+			recordActivity({ username, action: "login", detail: "账号/来源已锁定，拒绝尝试", ip: meta.ip, userAgent: meta.userAgent });
+			return json({ error: "尝试过于频繁，请 " + Math.ceil(lock.retryAfterSec / 60) + " 分钟后再试" }, { status: 429 });
+		}
 		const user = verifyLogin(username, password);
 		if (!user) {
+			recordLoginFailure(username, meta.ip);
+			recordActivity({ username, action: "login", detail: "密码错误（失败计数）", ip: meta.ip, userAgent: meta.userAgent });
 			// 区分「待验证」与「密码错误」：pending 用户给出可操作提示，其余统一按凭证错误处理。
 			const pendingUser = getUser(username);
 			if (pendingUser && pendingUser.status === "pending") {
@@ -60,6 +69,7 @@ export async function POST(event: RequestEvent) {
 			maxAge: ttlDays * 24 * 60 * 60
 		});
 		markLogin(user.username, meta.ip);
+		clearLoginFailures(user.username, meta.ip);
 		recordActivity({ userId: user.id, username: user.username, action: "login", ip: meta.ip, userAgent: meta.userAgent });
 		return json({
 			ok: true,

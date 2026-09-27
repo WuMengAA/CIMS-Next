@@ -41,13 +41,16 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-  token        TEXT    PRIMARY KEY,
-  user_id      INTEGER NOT NULL,
-  created_at   TEXT    NOT NULL,
-  last_seen_at TEXT    NOT NULL,
-  expires_at   TEXT    NOT NULL,
-  ip           TEXT    NOT NULL DEFAULT '',
-  user_agent   TEXT    NOT NULL DEFAULT '',
+  token         TEXT    PRIMARY KEY,
+  user_id       INTEGER NOT NULL,
+  created_at    TEXT    NOT NULL,
+  last_seen_at  TEXT    NOT NULL,
+  expires_at    TEXT    NOT NULL,
+  -- 登录时限绝对截止（2026-09-27 安全网补强）：滑动续期不得越过此线，
+  -- 否则活跃会话"永远不过期"，登录时限形同虚设。
+  deadline      TEXT    NOT NULL DEFAULT '',
+  ip            TEXT    NOT NULL DEFAULT '',
+  user_agent    TEXT    NOT NULL DEFAULT '',
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user   ON sessions(user_id);
@@ -489,6 +492,19 @@ function ensureDb(): DatabaseSync {
 	if (!cols.has("xp")) db.exec("ALTER TABLE users ADD COLUMN xp INTEGER NOT NULL DEFAULT 0");
 	// 个人空间「额外配额」（字节）。0/空 = 只用等级配额；管理员可在后台 /admin/library 赠送。
 	if (!cols.has("quota_bonus_bytes")) db.exec("ALTER TABLE users ADD COLUMN quota_bonus_bytes INTEGER NOT NULL DEFAULT 0");
+
+	// sessions.deadline（2026-09-27 安全网补强）：登录时限绝对截止。老行缺失则
+	// 回填为 created_at + 30 天（与历史 SESSION_TTL_MS 语义一致），保证既有会话
+	// 也有硬上限，不因「表结构变更」把旧会话变成永不过期。
+	const scol = new Set(
+		(db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[]).map((c) => c.name)
+	);
+	if (!scol.has("deadline")) {
+		db.exec("ALTER TABLE sessions ADD COLUMN deadline TEXT NOT NULL DEFAULT ''");
+		db.exec(
+			"UPDATE sessions SET deadline = datetime(created_at, '+30 days') WHERE deadline = '' OR deadline IS NULL"
+		);
+	}
 
 	// console_notices 定向广播字段（向后兼容旧库：老行补空串，等价于「不限班级」）。
 	// 有了这两列，历史通知才能「分班级、按通道」正确展示，也多通道重复推送有了判据。

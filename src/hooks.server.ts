@@ -43,12 +43,19 @@ export async function handle({ event, resolve }) {
 			const needConsole = url.pathname.startsWith("/admin/console");
 			const ok = u && (needConsole ? userCan(u, "viewConsole") : userCan(u, "viewAdmin"));
 			if (!ok) {
+				// 登录后要回到用户原本想去的页面（含查询串），而不是后台首页——
+				// 未登录时在前台点「编辑」被拦下，登录完却落到 /admin，那一篇就丢了。
+				// 只带 pathname + search，不带 origin：本站内部跳转不需要绝对地址，
+				// 也就不给「外部地址被塞进来」留缝（客户端还会再做一次站内校验）。
+				const returnTo = url.pathname + url.search;
 				// 已登录但权限不足时**绝不能再丢回登录页**——用户会以为「登录没生效」，
 				// 于是反复登录（实测：同一账号 3 分钟内连登 4 次，全是这个假象造成的）。
 				// 有集控面板权限的送去面板，其余给明确的 403，而不是假装未登录。
-				if (u && userCan(u, "viewConsole")) throw redirect(303, "/admin/console");
+				// 两种情况都捎上 returnTo：会话过期后若再兜到登录页，目标不丢。
+				if (u && userCan(u, "viewConsole"))
+					throw redirect(303, "/admin/console?returnTo=" + encodeURIComponent(returnTo));
 				if (u) throw error(403, "当前账号没有后台管理权限");
-				throw redirect(303, "/admin/login");
+				throw redirect(303, "/admin/login?returnTo=" + encodeURIComponent(returnTo));
 			}
 			user = u;
 		}
@@ -76,6 +83,24 @@ export async function handle({ event, resolve }) {
 	}
 
 	const response = await resolve(event);
+
+	// ── 安全响应头（2026-09-27 安全网补强）──────────────────────────────
+	// 全局下发：CSP 防 XSS 注入 / X-Frame-Options 防点击劫持 /
+	// Referrer-Policy 防 referer 泄露 / nosniff 防 MIME 嗅探。
+	// 注意：OAuth authorize / 管理员页若被第三方 iframe 引入会因此失效，
+	// 但本系统没有对外嵌场景，DENY 是正确取舍。
+	response.headers.set("X-Frame-Options", "DENY");
+	response.headers.set("X-Content-Type-Options", "nosniff");
+	response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+	response.headers.set(
+		"Content-Security-Policy",
+		"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'"
+	);
+
+	// HSTS：生产 HTTPS 强制（本地 HTTP 开发不设，否则浏览器永久记忆导致 8080 dev 无法访问）
+	if (process.env.COOKIE_SECURE === "true") {
+		response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+	}
 
 	// 多用户活动：记录页面浏览（内存节流，同一用户同一路径 2 分钟内只落一条）
 	if (user && isHtmlNav) {

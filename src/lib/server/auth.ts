@@ -266,6 +266,31 @@ const SENSITIVE_WORDS = [
 	"骚货", "贱货", "傻逼", "草你", "日你"
 ];
 
+// ── 密码策略（2026-09-27 安全网补强）────────────────────────────────────────
+// 最小 12 位 + 禁常见弱密码；一处定义，注册/改密/重置共用。
+const COMMON_WEAK_PASSWORDS = new Set([
+	"123456", "123456789", "12345678", "1234567", "1234567890", "password",
+	"password1", "password123", "123123", "111111", "000000", "qwerty",
+	"qwerty123", "abc123", "admin", "admin123", "root", "root123", "test",
+	"test123", "1234", "12345", "666666", "888888", "letmein", "welcome",
+	"iloveyou", "123qwe", "11111111", "00000000", "a123456", "a123456789",
+	"qq123456", "woaini", "woaini1314", "aini1314", "5201314", "1q2w3e4r",
+	"1qaz2wsx", "zxcvbnm", "passw0rd", "admin888", "admin666", "gaoyuanyuan"
+]);
+
+/**
+ * 校验密码强度。返回 null = 通过，否则返回中文错误。
+ * 规则：≥12 位 + 不是常见弱密码 + 不含用户名（防"用户名当密码"）。
+ */
+export function validatePasswordStrength(password: string, username = ""): string | null {
+	const pw = password || "";
+	if (pw.length < 12) return "密码至少 12 位";
+	if (COMMON_WEAK_PASSWORDS.has(pw.toLowerCase())) return "该密码过于常见，请换一个";
+	const name = (username || "").trim().toLowerCase();
+	if (name.length >= 4 && pw.toLowerCase().includes(name)) return "密码不能包含用户名";
+	return null;
+}
+
 /**
  * 开放注册：创建「待验证」账号（status=pending）。
  * 默认角色 user，无需管理员介入；验证邮箱或管理员批准后方可登录。
@@ -282,7 +307,8 @@ export function registerUser(
 	const mail = (email || "").trim();
 	const nick = (displayName || "").trim();
 	if (!name || !password) return { ok: false, error: "用户名和密码必填" };
-	if (password.length < 6) return { ok: false, error: "密码至少 6 位" };
+	const pwErr = validatePasswordStrength(password, name);
+	if (pwErr) return { ok: false, error: pwErr };
 	if (!/^[a-zA-Z0-9_\u4e00-\u9fff]{2,20}$/.test(name)) {
 		return { ok: false, error: "用户名 2-20 位，仅含字母 / 数字 / 下划线 / 汉字" };
 	}
@@ -367,9 +393,8 @@ export function deleteUser(username: string): { ok: boolean; error?: string } {
 }
 
 export function changePassword(username: string, newPassword: string): { ok: boolean; error?: string } {
-	if (!newPassword || newPassword.length < 6) {
-		return { ok: false, error: "密码至少 6 位" };
-	}
+	const pwErr = validatePasswordStrength(newPassword, username);
+	if (pwErr) return { ok: false, error: pwErr };
 	const user = getUser(username);
 	if (!user) return { ok: false, error: "用户不存在" };
 	const salt = crypto.randomBytes(16).toString("hex");
@@ -468,13 +493,14 @@ export function makeToken(user: User, meta: SessionMeta = {}): string {
 	const ttlMs = ttlDays * 24 * 60 * 60 * 1000;
 	const db = getDb();
 	db.prepare(
-		`INSERT INTO sessions (token, user_id, created_at, last_seen_at, expires_at, ip, user_agent)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`
+		`INSERT INTO sessions (token, user_id, created_at, last_seen_at, expires_at, deadline, ip, user_agent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
 		token,
 		user.id ?? -1,
 		new Date(now).toISOString(),
 		new Date(now).toISOString(),
+		new Date(now + ttlMs).toISOString(),
 		new Date(now + ttlMs).toISOString(),
 		(meta.ip || "").slice(0, 64),
 		(meta.userAgent || "").slice(0, 300)
@@ -524,7 +550,7 @@ export function verifyToken(token: string | undefined | null): User | null {
 		const db = getDb();
 		const row = db
 			.prepare(
-				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp,
+				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp, s.deadline AS s_deadline,
 				        u.id, u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status,
 				        u.password_hash, u.salt, u.created_at, u.updated_at, u.last_login_at, u.last_login_ip, u.login_count,
 				        u.class_name, u.grade_name, u.xp
@@ -542,12 +568,19 @@ export function verifyToken(token: string | undefined | null): User | null {
 		}
 		if (row.status === "disabled") return null;
 
-		// 节流刷新 last_seen + 滑动续期
+		// 节流刷新 last_seen + 滑动续期（2026-09-27：cap 在登录时限 deadline，
+		// 活跃会话也不会"永远不过期"——滑动的是"最近活跃"，总寿命上限不变）
 		const seen = Date.parse(row.s_seen);
 		if (!Number.isFinite(seen) || now - seen > SEEN_TOUCH_MS) {
+			const deadline = Date.parse((row as unknown as { s_deadline?: string }).s_deadline ?? "");
+			// 续期目标：now + TTL；若越过 deadline（老库无 deadline = 视为创建+30天，
+			// 已由迁移回填），则收到 deadline 为止，避免静默延长总寿命。
+			const nextExp = Number.isFinite(deadline)
+				? Math.min(now + SESSION_TTL_MS, deadline)
+				: now + SESSION_TTL_MS;
 			db.prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token = ?").run(
 				new Date(now).toISOString(),
-				new Date(now + SESSION_TTL_MS).toISOString(),
+				new Date(nextExp).toISOString(),
 				token
 			);
 		}
