@@ -20,6 +20,7 @@
 	let scope = $state<"本班" | "本年级" | "全校">("本班");
 	let duration = $state<number | undefined>(undefined);
 	let ntType = $state("");
+	let ntSeverity = $state("remind"); // 全屏严重度：remind/inform/urgent
 	let presetsText = $state("");
 	let emergency = $state(false);
 	let adsText = $state("");
@@ -64,9 +65,9 @@
 		submitting = true;
 		try {
 			const flags: Record<string, unknown> = {};
-			const ps = presets();
-			if (ps.length) flags.reply_presets = ps;
-			if (emergency) flags.emergency_confirm = true;
+			// 预设回复由接收端内置通用行动句，老师不需要调整；时长自动适配（弹幕按文字长短+朗读）。
+			if (ntType === "fullscreen" && ntSeverity) flags.severity = ntSeverity;
+			if (ntType === "fullscreen" && ntSeverity === "urgent") flags.emergency_confirm = true;
 			const ads = Number(adsText);
 			if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
 			const body: Record<string, unknown> = { title: title.trim(), content: content.trim(), scope, broadcast: true };
@@ -74,7 +75,8 @@
 			if (ntType) body.type = ntType;
 			if (Object.keys(flags).length) body.flags = flags;
 			const durRaw = Number(duration);
-			if (Number.isFinite(durRaw) && durRaw > 0) body.duration_seconds = Math.min(durRaw, 3600);
+			if (ntType === "fullscreen" && Number.isFinite(durRaw) && durRaw > 0) body.duration_seconds = Math.min(durRaw, 3600);
+			if (ntType === "island") body.duration_seconds = 0; // 弹幕：设备端按文字长短自动适配
 			const res = await fetch("/api/console/ext/notices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 			const d = await res.json();
 			if (!res.ok) { toast.error(d.error || "发布失败"); return; }
@@ -106,7 +108,7 @@
 		<div class="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary"><Megaphone class="size-5" /></div>
 		<div>
 			<h1 class="font-heading text-lg font-semibold">发布通知</h1>
-			<p class="text-xs text-muted-foreground">发布后会经 CIMS 命令通道推送到目标教室大屏；同内容 30 秒内重复提交自动去重。</p>
+			<p class="text-xs text-muted-foreground">推送到所选班级教室大屏 · 相同内容 30 秒内自动去重</p>
 		</div>
 	</div>
 
@@ -131,23 +133,29 @@
 					<Label for="nt-type">呈现方式</Label>
 					<select id="nt-type" bind:value={ntType} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
 						<option value="">普通通知</option>
-						<option value="island">课表岛 · 顶部滚动</option>
-						{#if data.role === "admin" || data.role === "owner" || data.role === "homeroom"}<option value="popup">弹窗 · 需要确认</option>{/if}
-						{#if data.role === "admin" || data.role === "owner"}<option value="fullscreen">全屏 · 置顶紧急</option>{/if}
+						<option value="island">弹幕 · 顶部滚动（时长自动适配）</option>
+						{#if data.role === "admin" || data.role === "owner" || data.role === "homeroom"}<option value="fullscreen">全屏 · 三档严重度</option>{/if}
 					</select>
 				</div>
 				<div class="grid gap-1.5">
-					<Label for="nt-dur">显示时长（秒，选填）</Label>
-					<input id="nt-dur" type="number" min="1" max="3600" bind:value={duration} placeholder="留空自适应" class="h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm" />
+					<Label for="nt-dur">时长</Label>
+					{#if ntType === "island"}
+						<input type="text" value="自动（按文字长短 + 朗读）" disabled class="h-8 w-full min-w-0 rounded-lg border border-input bg-muted px-2.5 py-1 text-base text-muted-foreground md:text-sm" />
+					{:else}
+						<input id="nt-dur" type="number" min="1" max="3600" bind:value={duration} placeholder="留空自适应" class="h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm" />
+					{/if}
 				</div>
 			</div>
-			{#if ntType === "popup" || ntType === "fullscreen"}
+			{#if ntType === "fullscreen"}
 				<div class="grid gap-1.5">
-					<Label for="nt-presets">预设回复（弹窗；逗号分隔，最多 6 条）</Label>
-					<input id="nt-presets" type="text" bind:value={presetsText} placeholder="如：下课再处理,已收到" class="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm" />
+					<Label for="nt-sev">严重度（决定屏幕配色）</Label>
+					<select id="nt-sev" bind:value={ntSeverity} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
+						<option value="remind">提醒（绿）</option>
+						<option value="inform">通知（黄）</option>
+						<option value="urgent">紧急（红）· 关闭需确认已读</option>
+					</select>
 				</div>
 				<div class="flex items-center gap-4">
-					<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={emergency} class="accent-primary" /> 需确认</label>
 					<div class="flex items-center gap-2">
 						<Label for="nt-ads" class="shrink-0">自动关屏（秒）</Label>
 						<input id="nt-ads" type="number" min="1" max="300" bind:value={adsText} placeholder="留空=不自动关" class="h-8 w-32 rounded-lg border border-input bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/50" />

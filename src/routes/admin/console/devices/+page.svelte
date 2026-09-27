@@ -312,14 +312,14 @@
 			<div class="mt-2 rounded-lg border bg-muted/40 p-3 text-xs">
 				<p class="font-medium text-foreground">使用说明</p>
 				<ol class="mt-1 list-decimal pl-4 text-muted-foreground">
-					<li>卡片显示每台设备的桌面预览（5 分钟刷新，点「截图」立即拍摄）</li>
+					<li>桌面预览 · 自动刷新 · 点「截图」立即拍摄</li>
 					<li>「远控」实时操作该电脑（会话用完即关，每次操作留记录）</li>
 					<li>换班：先解绑再绑到新班，不会抢走别的班</li>
 				</ol>
 				<!-- 图片占位：后续接入设备截图示例图 -->
 				<div class="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground/70">
 					<span class="inline-block size-3 rounded bg-primary/20" />
-					图片占位：教室端界面截图示意
+					占位图：真实画面会在教室机接入并上报后显示
 				</div>
 			</div>
 		</div>
@@ -347,7 +347,7 @@
 			</div>
 
 			{#if !filtered.length}
-				<p class="py-10 text-center text-sm text-muted-foreground">该账户下暂无已注册设备</p>
+				<p class="py-10 text-center text-sm text-muted-foreground">还没有接入教室机 · 装好星集控、输入接入码就会出现</p>
 			{:else}
 					<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
 						{#each filtered as d (d.id)}
@@ -443,7 +443,7 @@
 	<Card class="mt-4">
 		<CardHeader>
 			<CardTitle class="flex items-center gap-2"><KeyRound class="size-4" /> 设备接入码</CardTitle>
-			<CardDescription>生成班级接入码，教室端 agent 首次安装输入激活码自动拉取配置（uid/密钥/站点），替代手动写配置</CardDescription>
+			<CardDescription>生成班级接入码，发给教室机输入后自动完成绑定（班级/上报密钥/站点均为自动配置），无需手动填写</CardDescription>
 		</CardHeader>
 		<CardContent class="space-y-4">
 			<div class="flex items-end gap-3">
@@ -485,7 +485,7 @@
 					{/each}
 				</div>
 			{:else}
-				<p class="text-sm text-muted-foreground">暂无接入码 —— 生成一个发给教室端安装时输入。</p>
+				<p class="text-sm text-muted-foreground">还没有接入码 —— 给目标班级生成一个，发给教室机输入即可完成绑定</p>
 			{/if}
 		</CardContent>
 	</Card>

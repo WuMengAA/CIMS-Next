@@ -89,7 +89,7 @@
 <div class="space-y-6">
 	<div>
 		<h2 class="text-xl font-bold flex items-center gap-2"><SlidersHorizontal class="size-5" /> 监控与远控参数</h2>
-		<p class="text-sm text-muted-foreground mt-1">全局统一配置，教室端（agent）经设备密钥拉取应用。参数对所有设备生效。</p>
+		<p class="text-sm text-muted-foreground mt-1">全局统一 · 经设备密钥拉取 · 对所有设备生效</p>
 	</div>
 
 	<Card>
@@ -129,7 +129,7 @@
 						<SelectItem value="hevc">hevc（仅 Safari）</SelectItem>
 					</SelectContent>
 				</Select>
-				<p class="text-xs text-muted-foreground">vp9 压缩≈H265 且浏览器全兼容；hevc 仅 Safari</p>
+				<p class="text-xs text-muted-foreground">VP9（推荐）：画质好、浏览器全兼容；HEVC：仅苹果浏览器支持</p>
 			</div>
 			<div class="grid gap-1.5">
 				<Label>远控码率</Label>
