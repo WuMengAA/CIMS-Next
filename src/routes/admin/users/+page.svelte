@@ -190,13 +190,13 @@
 
 	async function saveEdit() {
 		if (!editTarget) return;
-		const res = await fetch("/api/auth", {
+		if (!editTarget) return;		const sensitive = editRole !== editTarget.role || editStatus !== editTarget.status || (editEmail && editEmail !== editTarget.email);		let adminPwd = "";		if (sensitive) { adminPwd = prompt("敏感修改（角色/状态/邮箱），请输入你的管理员密码确认"); if (!adminPwd) return; }
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				action: "update_user", username: editTarget.username,
 				displayName: editDisplay, email: editEmail, bio: editBio, role: editRole, status: editStatus
-			})
+				displayName: editDisplay, email: editEmail, bio: editBio, role: editRole, status: editStatus, currentPassword: adminPwd
 		});
 		const d = await res.json();
 		if (d.ok) { toast.success("已保存"); editTarget = null; load(); }
@@ -216,10 +216,11 @@
 
 	async function removeUser(username: string) {
 		if (!(await confirmDelete("删除用户 " + username, "该账号及其会话将一并删除，此操作不可恢复。"))) return;
+		const adminPwd = prompt("删除不可恢复，请输入你的管理员密码确认删除 " + username); if (!adminPwd) return;
 		const res = await fetch("/api/auth", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ action: "delete_user", username })
+			body: JSON.stringify({ action: "delete_user", username, currentPassword: adminPwd })
 		});
 		const d = await res.json();
 		if (d.ok) { toast.success("用户已删除"); load(); } else { toast.error(d.error || "删除失败"); }

@@ -165,6 +165,11 @@ export async function POST(event: RequestEvent) {
 
 	if (action === "delete_user") {
 		if (!isAdmin) return json({ error: "无权限" }, { status: 403 });
+		// 安全网补强（2026-09-27）：删除账号不可恢复，需管理员本人密码复核，
+		// 防会话被盗后批量删人。
+		if (!verifyLogin(current.username, String(body.currentPassword || ""))) {
+			return json({ error: "删除账号需验证管理员密码" }, { status: 400 });
+		}
 		const result = deleteUser(body.username);
 		if (result.ok) {
 			recordActivity({
@@ -234,6 +239,12 @@ export async function POST(event: RequestEvent) {
 
 	if (action === "update_user") {
 		if (!isAdmin) return json({ error: "无权限" }, { status: 403 });
+		// 安全网补强（2026-09-27）：提权（改角色）/改状态/改邮箱都是敏感操作，
+		// 需管理员本人密码复核；仅改昵称/简介等非敏感字段可不验。
+		const sensitive = body.role || body.status || (body.email && body.email !== current.email);
+		if (sensitive && !verifyLogin(current.username, String(body.currentPassword || ""))) {
+			return json({ error: "敏感修改需验证管理员密码" }, { status: 400 });
+		}
 		const result = adminUpdateUser(body.username, {
 			displayName: body.displayName,
 			email: body.email,
