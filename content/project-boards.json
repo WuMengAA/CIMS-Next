@@ -1,0 +1,90 @@
+[
+  {
+    "slug": "xingjikong",
+    "repo": "",
+    "todos": [
+      {
+        "id": "todo-ota",
+        "title": "应用端集成本地 agent（WebRTC 被控入包）",
+        "done": true,
+        "group": "已上线",
+        "order": 0
+      },
+      {
+        "id": "todo-p2p",
+        "title": "远控跨公网打通（国内 STUN + 0.0.0.0 绑定 + video transceiver + 键鼠坐标）",
+        "done": true,
+        "group": "已上线",
+        "order": 4
+      },
+      {
+        "id": "todo-autoupdate",
+        "title": "自动静默非覆盖安装（版本目录并存可回退）",
+        "done": true,
+        "group": "已上线",
+        "order": 5
+      },
+      {
+        "id": "todo-storage",
+        "title": "存储中心（本地文件 + 云端附件库）",
+        "done": true,
+        "group": "已上线",
+        "order": 6
+      },
+      {
+        "id": "todo-role",
+        "title": "控制端/被控端角色分离",
+        "done": true,
+        "group": "已上线",
+        "order": 1
+      },
+      {
+        "id": "todo-notice",
+        "title": "通知系统升级（弹幕/全屏三档/快捷回复/过期拦截）",
+        "done": true,
+        "group": "已上线",
+        "order": 2
+      },
+      {
+        "id": "todo-nsis",
+        "title": "NSIS 安装包 + 云端静默升级",
+        "done": true,
+        "group": "已上线",
+        "order": 3
+      }
+    ],
+    "milestones": [],
+    "releases": [
+      {
+        "id": "rel-103",
+        "tag": "v1.0.3",
+        "name": "星集控 1.0.3",
+        "notes": "设备密钥自动获取 + 集成 agent 自举 + 通知三档/过期拦截",
+        "file": "xingjikong-setup.exe",
+        "url": "/uploads/xingjikong-setup.exe",
+        "size": 15846612,
+        "createdAt": "2026-09-27T03:00:00+08:00",
+        "downloads": 2,
+        "prerelease": false,
+        "source": "local"
+      },
+      {
+        "id": "rel-105",
+        "tag": "v1.0.5",
+        "name": "星集控 1.0.5",
+        "notes": "远控跨公网打通（国内 STUN + 0.0.0.0 绑定 + video transceiver + 键鼠坐标）+ 自动静默非覆盖安装 + 存储中心",
+        "file": "xingjikong-setup.exe",
+        "url": "/uploads/xingjikong-setup.exe",
+        "size": 15870972,
+        "createdAt": "2026-09-27T07:30:00+08:00",
+        "downloads": 1,
+        "prerelease": false,
+        "source": "local"
+      }
+    ],
+    "sync": null,
+    "contrib": {},
+    "tagline": "教室数字运维平台：设备管控、远控、通知广播。控制端/被控端双形态，云端静默非覆盖升级，存储中心。",
+    "updatedAt": "2026-09-27T04:57:20.397Z"
+  }
+]
