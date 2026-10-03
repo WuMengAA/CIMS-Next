@@ -81,7 +81,12 @@ export async function POST({ request, cookies, getClientAddress }) {
 	}
 
 	// 后台管理动作：删除 / 切换审核状态
+	// T11（2026-10-03）：原先这段「未登录才拦」—— 只要带着 `action` 字段，
+	// 连身份校验都绕过（上面第 49 行的 `action === "submit"` 不成立就直接落到这里），
+	// 任何访客都能删评论、改审核状态。删除与审核都是 UGC 审核动作，必须过 moderate，
+	// 与上面 GET `?all=1` 的判据保持一致。
 	if (!user) return json({ error: "未登录" }, { status: 401 });
+	if (!userCan(user, "moderate")) return json({ error: "无评论管理权限" }, { status: 403 });
 	if (action === "delete") return json({ ok: deleteComment(body.id) });
 	if (action === "toggle") return json({ ok: toggleCommentApproval(body.id) });
 	return json({ error: "unknown action" }, { status: 400 });

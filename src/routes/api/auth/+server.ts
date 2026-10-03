@@ -20,7 +20,7 @@ import {
 import { checkLoginLock, recordLoginFailure, clearLoginFailures } from "$lib/server/login-guard.js";
 import { listUsersOverview, recordActivity } from "$lib/server/activity.js";
 import { syncUserToCims } from "$lib/server/cims-account.js";
-import type { Role } from "$lib/permissions.js";
+import { can, type Role } from "$lib/permissions.js";
 
 function clientMeta(event: RequestEvent) {
 	let ip = "";
@@ -137,7 +137,9 @@ export async function POST(event: RequestEvent) {
 	// 以下动作均需登录
 	const current = verifyToken(cookies.get("admin_token"));
 	if (!current) return json({ error: "未登录" }, { status: 401 });
-	const isAdmin = current.role === "admin";
+	// T12（2026-10-03）：原判 `role === "admin"` 把站长(owner) 当普通用户。
+	// 用户管理语义 = manageUsers（admin 与 owner 同持该能力，行为对 admin 完全不变）。
+	const isAdmin = can(current.role, "manageUsers");
 
 	if (action === "create_user") {
 		if (!isAdmin) return json({ error: "无权限" }, { status: 403 });
