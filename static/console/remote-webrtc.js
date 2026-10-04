@@ -32,8 +32,8 @@ async function connect() {
   try {
     setStatus('正在获取信令…');
     const cfg = await getConfig(uid);
-    p2p = new StelarithP2P({ signalUrl: cfg.signalUrl, deviceUid: uid, secret: cfg.secret, roomId: cfg.roomId });
-    p2p.onTrack((stream) => {
+    p2p = new StelarithP2P({ signalUrl: cfg.signalUrl, deviceUid: uid, secret: cfg.secret, roomId: cfg.roomId, rtcConfig: cfg.iceServers ? { iceServers: cfg.iceServers } : undefined });
+    p2p.on('track', (stream) => {
       els.video.srcObject = stream;
       els.video.style.display = 'block';
       els.placeholder.style.display = 'none';

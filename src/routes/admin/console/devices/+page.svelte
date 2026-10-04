@@ -7,7 +7,7 @@
 	import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "$lib/components/ui/card/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select/index.js";
-	import { MonitorSmartphone, RefreshCw, Lock, Camera, Power, Clock, Search, Loader2, KeyRound, Copy, Trash2, Plus, Volume2 } from "@lucide/svelte";
+	import { MonitorSmartphone, RefreshCw, Lock, Camera, Power, Clock, Search, Loader2, KeyRound, Copy, Trash2, Plus, Volume2, Upload } from "@lucide/svelte";
 	import type { PageData } from "./$types";
 
 	// 设备控制（Svelte 版 · 2026-09-26 从原生面板迁移）。
@@ -36,15 +36,22 @@
 	async function load() {
 		loading = true; error = "";
 		try {
-			const [sr, mr] = await Promise.all([
-				fetch("/api/console/cims/class/device-status"),
-				fetch("/api/console/cims/class/device-map"),
+			// 2026-10-05：彻底去 CIMS——设备列表+在线状态走自有 device-status（合并 bindings+云端），
+			// 班级映射走 device-bindings。
+			const [br, sr] = await Promise.all([
+				fetch("/api/console/device-bindings"),
+				fetch("/api/console/control/device-status")
 			]);
-			const s = await sr.json();
-			const m = await mr.json();
-			fresh = Number(s.fresh_seconds || 90) || 90;
-			devices = Array.isArray(s.devices) ? s.devices.map(norm) : [];
-			devMap = m && typeof m === "object" ? m : { devices: {}, classes: [] };
+			const b: any = await br.json().catch(() => ({}));
+			const s: any = await sr.json().catch(() => ({}));
+			const m: any = b && typeof b === "object" ? b : { devices: {}, classes: [] };
+			fresh = Number(s.fresh_seconds || 30) || 30;
+			devices = [];
+			devMap = { devices: { ...(m.devices || {}) }, classes: [...(m.classes || [])] };
+			// device-status 已返回兼容形态的 devices[]（含在线状态）
+			for (const d of (Array.isArray(s.devices) ? s.devices : [])) {
+				devices.push(norm(d as Record<string, unknown>));
+			}
 		} catch (e) {
 			error = (e as Error)?.message || "设备状态加载失败";
 		} finally {
@@ -97,8 +104,10 @@
 		for (const d of targets) {
 			if (!force && shots[d.id]) continue;
 			try {
-				const cap = await (await fetch(`/api/console/ext/captures?uid=${encodeURIComponent(d.id)}`)).json();
-				if (cap?.image_base64) shots[d.id] = `data:image/png;base64,${cap.image_base64}`;
+				const cap = await (await fetch(`/api/console/control/captures?uid=${encodeURIComponent(d.id)}`)).json();
+				// ⚠️ 取值路径是 **cap.capture.image_base64**（响应外层是 {capture, reason}），
+				// 原先读顶层 cap.image_base64 → 恒 undefined，截图预览从来没生效过（2026-10-02 修）。
+				if (cap?.capture?.image_base64) shots[d.id] = `data:image/png;base64,${cap.capture.image_base64}`;
 			} catch { /* 单台失败跳过 */ }
 		}
 		shotBusy = false;
@@ -139,40 +148,21 @@
 	});
 
 	// ---- 操作 ----
-	async function sign(action: string, ts: number): Promise<string> {
-		try {
-			const r = await fetch("/api/console/sign-task", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action, ts }),
-				credentials: "same-origin",
-			});
-			const j = await r.json();
-			if (r.ok && j?.ok && j.token) return j.token;
-		} catch {
-			/* fall through to placeholder */
-		}
-		return String(Date.now());
-	}
 
-	async function deviceAction(d: Dev, act: string) {
+	async function deviceAction(d: Dev, act: string, extra: Record<string, unknown> = {}) {
 		if (!data.can.control) { toast.error("无权限：设备控制"); return; }
 		if (act === "shutdown" && !confirm(`确认关机设备 ${d.id} 吗？\n关机后需人工到教室开机，请谨慎操作。`)) return;
 		try {
-			const native = { restart: "restart", refresh: "update-data" } as Record<string, string>;
-			if (native[act]) {
-				await fetch(`/api/console/cims/account/${data.accountId}/client/${d.id}/command/${native[act]}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-			} else {
-				// lock/screenshot/reboot/shutdown → stelarith_task（插件/代理执行）
-				const ts = Math.floor(Date.now() / 1000);
-				const token = await sign(act, ts);
-				const payload = { stelarith_task: { action: act, token, scope: "device", ts } };
-				await fetch(`/api/console/cims/account/${data.accountId}/client/${d.id}/command/send-notification`, {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ MessageContent: JSON.stringify(payload) }),
-				});
-			}
+			// 2026-10-05：设备指令走自有通道（云端 /api/instructions），不再经 CIMS。
+			// restart（旧 CIMS 原生动作名）→ 云端 action 是 reboot；refresh(update-data) 由截图/刷新替代。
+			const cloudAction = act === "restart" ? "reboot" : act;
+			const r = await fetch("/api/console/control/device-command", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ uid: d.id, action: cloudAction, params: extra })
+			});
+			const j = await r.json();
+			if (!r.ok) throw new Error(j.detail || j.error || `HTTP ${r.status}`);
 			await audit("device." + act, d.id, "下发设备指令");
 			toast.success(`已下发指令：${act} → ${d.id}`);
 			if (act === "screenshot") waitForCapture(d);
@@ -181,9 +171,73 @@
 		}
 	}
 
+	/**
+	 * 音量：被控端（Flutter 桌面端 device_agent.dart）的动作名是 `set_volume`，
+	 * 参数 `{ value: 0-100, muted?: bool }`。
+	 * ⚠️ 2026-09-29：这里原先调用的 `setVolume` 在整个代码库里没有任何定义
+	 * —— 按钮在，函数不在，点一次抛一次 ReferenceError。现补实现。
+	 */
+	async function setVolume(d: Dev) {
+		const raw = prompt(`设置「${d.id}」的音量（0-100）：`, "50");
+		if (raw === null) return;
+		const value = Number(raw.trim());
+		if (!Number.isFinite(value) || value < 0 || value > 100) {
+			toast.error("音量需要 0-100 之间的数字");
+			return;
+		}
+		await deviceAction(d, "set_volume", { value: Math.round(value) });
+	}
+
+	/**
+	 * 发文件：选本地文件 → POST /api/console/control/files 上传拿 file_id
+	 * → POST /api/console/control/file-push 指定 uids 推给这一台。
+	 * （老静态面板的 filetransfer 视图走的是同一对端点。）
+	 * ⚠️ 2026-09-29：此前 `sendFile` 也没有定义，同样是「按钮在、函数不在」。
+	 */
+	let filePickFor = $state<Dev | null>(null);
+	let fileInput = $state<HTMLInputElement | null>(null);
+
+	function sendFile(d: Dev) {
+		if (!data.can.control) { toast.error("无权限：传文件"); return; }
+		if (!d.online) { toast.error(`${d.id} 当前离线，收不到文件`); return; }
+		filePickFor = d;
+		fileInput?.click();
+	}
+
+	async function onFilePicked(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const f = input.files?.[0];
+		input.value = ""; // 清空以便连续选同一个文件也能触发 change
+		const d = filePickFor;
+		filePickFor = null;
+		if (!f || !d) return;
+		if (f.size > 100 * 1024 * 1024) { toast.error("文件超过 100MB 上限"); return; }
+		try {
+			const fd = new FormData();
+			fd.append("file", f, f.name);
+			fd.append("kind", "file");
+			const up = await fetch("/api/console/control/files", { method: "POST", body: fd });
+			const uj = await up.json().catch(() => ({}));
+			if (!up.ok) throw new Error(uj?.error || "上传失败 HTTP " + up.status);
+			const fid = uj?.file?.id;
+			if (!fid) throw new Error("上传成功但没拿到 file_id");
+			const pr = await fetch("/api/console/control/file-push", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ file_id: fid, uids: [d.id] }),
+			});
+			const pj = await pr.json().catch(() => ({}));
+			if (!pr.ok || pj?.error) throw new Error(pj?.error || "下发失败 HTTP " + pr.status);
+			await audit("file_push", d.id, `下发文件 ${f.name}`);
+			toast.success(`已推给 ${d.id}：${f.name}`);
+		} catch (err) {
+			toast.error("传文件失败：" + ((err as Error)?.message || err));
+		}
+	}
+
 	async function audit(action: string, target: string, detail: string) {
 		try {
-			await fetch("/api/console/ext/audit", {
+			await fetch("/api/console/control/audit", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ action, target, detail }),
@@ -201,9 +255,9 @@
 			await new Promise((r) => setTimeout(r, 2000));
 			for (const k of keys) {
 				try {
-					const cap = await (await fetch(`/api/console/ext/captures?uid=${encodeURIComponent(String(k))}`)).json();
-					if (cap?.image_base64) {
-						window.open(`data:image/png;base64,${cap.image_base64}`);
+					const cap = await (await fetch(`/api/console/control/captures?uid=${encodeURIComponent(String(k))}`)).json();
+					if (cap?.capture?.image_base64) {
+						window.open(`data:image/png;base64,${cap.capture.image_base64}`);
 						captureBusy = false;
 						return;
 					}
@@ -222,7 +276,12 @@
 		const cid = selClasses[d.id] || "";
 		if (!cid) { toast.error("请先选择班级"); return; }
 		try {
-			const r = await fetch(`/api/console/cims/class/device/assign?class_id=${encodeURIComponent(cid)}&client_id=${encodeURIComponent(d.id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+			// 2026-10-04：走自有归班端点（写 device_bindings），不再经 CIMS
+			const r = await fetch("/api/class/device", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ uid: d.id, classId: cid })
+			});
 			const j = await r.json();
 			if (!r.ok && j?.error) throw new Error(j.error);
 			await audit("device.assign", d.id, "绑定到 " + cid);
@@ -235,7 +294,8 @@
 
 	async function unassign(d: Dev) {
 		try {
-			const r = await fetch(`/api/console/cims/class/device/unassign?client_id=${encodeURIComponent(d.id)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+			// 2026-10-04：走自有移班端点（写 device_bindings），不再经 CIMS
+			const r = await fetch(`/api/class/device?uid=${encodeURIComponent(d.id)}`, { method: "DELETE" });
 			const j = await r.json();
 			if (!r.ok && j?.error) throw new Error(j.error);
 			await audit("device.unassign", d.id, "解除班级绑定");
@@ -255,26 +315,31 @@
 	// ── 设备接入码（统一接入，2026-09-26）──────────────────────────────
 	type ActCode = { code: string; classId: string; className: string; createdAt: string; expiresAt: string; used: boolean; usedBy?: string };
 	let actCodes = $state<ActCode[]>([]);
-	let actClass = $state("class_08");
-	let actClassLabel = $state("星璃演示班");
+	// 目标班级**从真实班级列表点选**（devMap.classes ← CIMS /class/device-map），不再手填。
+	// 手填的 classId / 班名与 CIMS 实体对不上 → 接入码绑到不存在的班 → 教室机「绑了班却
+	// 看不到自己的设备」（同 /admin/console/bind 已踩过的坑）。默认值也不再写死
+	// 「class_08 / 星璃演示班」—— 那是演示数据，不能拿来绑真实教室机。
+	let actClassId = $state("");
 	let actHours = $state(48);
 	let actGenerating = $state(false);
+	const actClassName = $derived((devMap.classes || []).find((c) => c.class_id === actClassId)?.name ?? "");
 
 	async function loadActCodes() {
 		try {
-			const r = await fetch("/api/console/ext/device-activate");
+			const r = await fetch("/api/console/control/activation-codes");
 			const j = await r.json();
 			actCodes = j.codes ?? [];
 		} catch { /* 静默：无权限时不打扰 */ }
 	}
 
 	async function genActCode() {
+		if (!actClassId) { toast.error("请先选择目标班级"); return; }
 		actGenerating = true;
 		try {
-			const r = await fetch("/api/console/ext/device-activate", {
+			const r = await fetch("/api/console/control/activation-codes", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ classId: actClass, className: actClassLabel, hours: actHours })
+				body: JSON.stringify({ classId: actClassId, className: actClassName, hours: actHours })
 			});
 			const j = await r.json();
 			if (!r.ok) { toast.error(j.error ?? "生成失败"); return; }
@@ -285,7 +350,7 @@
 
 	async function revokeAct(code: string) {
 		try {
-			const r = await fetch("/api/console/ext/device-activate?code=" + encodeURIComponent(code), { method: "DELETE" });
+			const r = await fetch("/api/console/control/activation-codes?code=" + encodeURIComponent(code), { method: "DELETE" });
 			if (r.ok) { toast.success("已作废 " + code); await loadActCodes(); }
 			else toast.error("作废失败");
 		} catch { toast.error("作废失败"); }
@@ -302,6 +367,10 @@
 </svelte:head>
 
 <div class="mx-auto max-w-6xl p-4 md:p-6">
+	<!-- 「发文件」用的隐藏文件选择器：sendFile() 记下目标设备后触发它，
+	     onFilePicked 取文件 → 上传（/api/console/control/files）→ 推给该设备。
+	     放在最外层，避免被下面的 {#each} 复制出多份。 -->
+	<input bind:this={fileInput} type="file" class="hidden" onchange={onFilePicked} />
 	<div class="mb-5 flex items-center gap-3">
 		<div class="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary">
 			<MonitorSmartphone class="size-5" />
@@ -318,7 +387,7 @@
 				</ol>
 				<!-- 图片占位：后续接入设备截图示例图 -->
 				<div class="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground/70">
-					<span class="inline-block size-3 rounded bg-primary/20" />
+					<span class="inline-block size-3 rounded bg-primary/20"></span>
 					占位图：真实画面会在教室机接入并上报后显示
 				</div>
 			</div>
@@ -377,8 +446,12 @@
 										<Button size="sm" variant="outline" class="h-7 px-2 text-xs" onclick={() => deviceAction(d, "remote_control_start")}><MonitorSmartphone class="mr-1 size-3" />远控</Button>
 									{/if}
 									<Button size="sm" variant="outline" class="h-7 px-2 text-xs" onclick={() => deviceAction(d, "screenshot")}><Camera class="mr-1 size-3" />截图</Button>
+									{#if data.can.control}
 										<Button size="sm" variant="outline" class="h-7 px-2 text-xs" onclick={() => setVolume(d)}><Volume2 class="mr-1 size-3" />音量</Button>
-										<Button size="sm" variant="outline" class="h-7 px-2 text-xs" onclick={() => sendFile(d)}><MonitorSmartphone class="mr-1 size-3" />发文件</Button>
+									{/if}
+									{#if data.can.file}
+										<Button size="sm" variant="outline" class="h-7 px-2 text-xs" onclick={() => sendFile(d)}><Upload class="mr-1 size-3" />发文件</Button>
+									{/if}
 									{#if data.can.control}
 										<Button size="sm" variant="outline" class="h-7 px-2 text-xs" onclick={() => deviceAction(d, "lock")}><Lock class="mr-1 size-3" />锁屏</Button>
 										<Button size="sm" variant="destructive" class="h-7 px-2 text-xs" onclick={() => deviceAction(d, "shutdown")}><Power class="mr-1 size-3" />关机</Button>
@@ -443,27 +516,34 @@
 	<Card class="mt-4">
 		<CardHeader>
 			<CardTitle class="flex items-center gap-2"><KeyRound class="size-4" /> 设备接入码</CardTitle>
-			<CardDescription>生成班级接入码，发给教室机输入后自动完成绑定（班级/上报密钥/站点均为自动配置），无需手动填写</CardDescription>
+			<CardDescription>
+				选一个真实班级生成接入码，发给教室机；在教室那台电脑上打开「星集控」，首次启动的引导页填入该码，
+				即自动完成绑定（班级 / 上报密钥 / 站点地址均为自动配置，无需手动填写）。
+			</CardDescription>
 		</CardHeader>
 		<CardContent class="space-y-4">
 			<div class="flex items-end gap-3">
 				<div class="grid gap-1.5">
-					<Label>班级 ID</Label>
-					<Input bind:value={actClass} placeholder="class_08" class="w-40" />
+					<Label for="act-class">目标班级</Label>
+					<select id="act-class" bind:value={actClassId} class="h-9 w-52 rounded-md border border-input bg-transparent px-2 text-sm outline-none">
+						<option value="">— 选择班级 —</option>
+						{#each devMap.classes || [] as c (c.class_id)}
+							<option value={c.class_id}>{c.name}</option>
+						{/each}
+					</select>
 				</div>
 				<div class="grid gap-1.5">
-					<Label>班级名</Label>
-					<Input bind:value={actClassLabel} placeholder="星璃演示班" class="w-44" />
+					<Label for="act-hours">有效期(小时)</Label>
+					<Input id="act-hours" bind:value={actHours} type="number" class="w-24" />
 				</div>
-				<div class="grid gap-1.5">
-					<Label>有效期(小时)</Label>
-					<Input bind:value={actHours} type="number" class="w-24" />
-				</div>
-				<Button onclick={genActCode} disabled={actGenerating}>
+				<Button onclick={genActCode} disabled={actGenerating || !actClassId}>
 					{#if actGenerating}<Loader2 class="size-4 animate-spin" />{:else}<Plus class="size-4" />{/if}
 					生成接入码
 				</Button>
 			</div>
+			{#if !(devMap.classes || []).length}
+				<p class="text-xs text-muted-foreground">读不到真实班级列表 —— 请先确认集控服务端已接入（见集控面板首页的接入引导），否则生成的码会绑到不存在的班级。</p>
+			{/if}
 			{#if actCodes.length}
 				<div class="space-y-2">
 					{#each actCodes as c}

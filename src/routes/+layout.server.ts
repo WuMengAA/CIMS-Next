@@ -1,5 +1,5 @@
 import { getSettings, getNav, getSiteUrl } from "$lib/server/content-store.js";
-import { verifyToken } from "$lib/server/auth.js";
+import { verifyToken, sanitizeAvatar } from "$lib/server/auth.js";
 import type { LayoutServerLoad } from "./$types";
 
 export const load: LayoutServerLoad = ({ cookies }) => {
@@ -16,7 +16,10 @@ export const load: LayoutServerLoad = ({ cookies }) => {
 					username: user.username,
 					role: user.role,
 					displayName: (user as any).displayName || user.username,
-					avatar: (user as any).avatar || ""
+					// avatar 必须经 sanitizeAvatar 规整：DB 存在历史脏值（如 "admin" 裸文件名），
+					// 直接下发到 <img src> 会在后台任意路由（如 /admin/console）下被解析成
+					// "/admin/admin" 并 404。脏值归空串后 UI 回落默认头像。
+					avatar: sanitizeAvatar((user as any).avatar)
 				}
 			: null,
 		// 是否有编辑权限（admin / editor 可进后台改内容；普通读者/未登录为 false）。

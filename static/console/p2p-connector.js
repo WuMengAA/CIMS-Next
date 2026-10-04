@@ -110,7 +110,13 @@ import { EVENTS, envelope, roomKey, uid } from './protocol.mjs';
 
     async _onRemoteCandidate(data) {
       if (!data || !data.candidate || !this.pc) return;
-      try { await this.pc.addIceCandidate(data.candidate); } catch (e) { console.error('addIceCandidate', e); }
+      // agent(webrtc 0.21 candidate.to_json) 会带 sdpMid:"" / usernameFragment:null，
+      // 浏览器 addIceCandidate 对空 sdpMid 报 "Media section for sdpMid was not found"，
+      // 导致 ICE 永远连不通。这里清洗后再投递（2026-09-27 实测）。
+      const c = { ...data.candidate };
+      if (!c.sdpMid) delete c.sdpMid;
+      if (c.usernameFragment == null) delete c.usernameFragment;
+      try { await this.pc.addIceCandidate(c); } catch (e) { console.error('addIceCandidate', e); }
     }
 
     // 主控：发 offer（localStream 可选，用于反向音视频/无则仅数据通道）
@@ -119,6 +125,10 @@ import { EVENTS, envelope, roomKey, uid } from './protocol.mjs';
       if (localStream) localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       this._dataChannel = pc.createDataChannel('stelarith-ctrl');
       this._wireDataChannel();
+      // 主控必须自订阅 answer：INBOUND 把 billdDeskAnswer 映射为 remoteAnswer 事件，
+      // 若不在这里 acceptAnswer()，setRemoteDescription(answer) 永不执行，
+      // ICE 会一直报 "The remote description was null"（2026-09-27 实测根因）。
+      this.on('remoteAnswer', (ans) => { void this.acceptAnswer(ans); });
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       this._send(EVENTS.OFFER, { sdp: pc.localDescription });

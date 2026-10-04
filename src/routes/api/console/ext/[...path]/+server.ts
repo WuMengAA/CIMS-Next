@@ -7,7 +7,7 @@ import { can, userCan, canDevice, broadcastScope, canBroadcastTo, clampBroadcast
 	permissionMatrix, canDeviceAction, deviceActionsOf, canSendNoticeType, NOTICE_TYPE_LABELS, type Action, type DeviceTier, type DeviceAction, type NoticeType } from "$lib/permissions.js";
 import { broadcastToClassrooms } from "$lib/server/broadcast.js";
 import { classScopeOf, scopeCovers, listBindings } from "$lib/server/class-scope.js";
-import { fetchClassList, fetchDeviceClassMap, classOfDevice } from "$lib/server/cims-client.js";
+import { fetchClassList, fetchDeviceClassMap, classOfDevice, canonicalUid } from "$lib/server/cims-client.js";
 import {
 	saveUpload,
 	getFileObject,
@@ -428,7 +428,9 @@ export async function GET(event: RequestEvent) {
 		}
 		case "user-features": {
 			// 查看某人的功能开关覆盖值（管理员核对用）。
-			if (!userCan(u, "manage")) return json({ error: "无权限（需要管理权限）" }, { status: 403 });
+			// ⚠️ 必须用设备轴的 canDevice —— "manage" 根本不是内容轴 Action，
+			// 写成 userCan(u, "manage") 会恒为 false，把这条端点对所有人（含站长）永久 403 掉。
+			if (!canDevice(u.role, "manage")) return json({ error: "无权限（需要管理权限）" }, { status: 403 });
 			const uid = String(q.get("uid") ?? "").trim();
 			if (!uid) return json({ error: "缺少 uid" }, { status: 400 });
 			return json({ uid, overrides: getUserFeatureOverrides(uid) });
@@ -651,6 +653,15 @@ export async function POST(event: RequestEvent) {
 		const className = String(body.className ?? classId).trim();
 		const hours = Math.min(Math.max(Number(body.hours) || 24, 1), 720);
 		if (!classId) return json({ error: "缺少 classId" }, { status: 400 });
+		// 班级真实性校验：前端已改成「只能从真实班级下拉里选」，但那只是**体验层**，
+		// 不是安全边界。这里再确认一次该班在 CIMS 里确实存在 —— 否则会发出一个绑到
+		// 不存在班级的接入码，教室机绑上后看不到自己的设备，排障极难（同 bind 页的坑）。
+		// 取不到班级列表时（CIMS 不可达）**不拦**：那属于上层要暴露的接入问题，
+		// 不该在这里把一个可用的功能堵死。
+		const knownClasses = await fetchClassList();
+		if (knownClasses && knownClasses.length && !knownClasses.some((c) => c.class_id === classId)) {
+			return json({ error: `班级不存在：${classId}（请从真实班级列表中选择）` }, { status: 400 });
+		}
 		const item = generateActivationCode({ classId, className, hours });
 		addAudit({ actor: up.displayName || up.username, role: up.role, action: "device-activate", target: "console", detail: "生成接入码 " + item.code + " 绑 " + className });
 		return json({ ok: true, code: item }, { status: 201 });
@@ -711,8 +722,21 @@ export async function POST(event: RequestEvent) {
 		if (verifyDeviceReportSecret(secret)) {
 			if (path === "captures") {
 				// 截图回传：body {uid, image_base64}。PNG 以 base64 内嵌（与 GET 取图对称）。
+				// 注意：请求体若超过服务端 BODY_SIZE_LIMIT（adapter-node 默认 512 KiB），
+				// readBody 里 request.json() 会抛错并整体回落成 {} —— 那不是「设备没带
+				// uid」，而是整个报文被拒了。分开提示，免得排查时被误导到设备那一侧。
 				const uid = String(body.uid ?? "").trim();
-				if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
+				if (!uid) {
+					const empty = !body || Object.keys(body).length === 0;
+					return json(
+						{
+							error: empty
+								? "请求体为空：多半是报文超过服务端 BODY_SIZE_LIMIT 上限、被整体拒绝（截图 base64 后会膨胀约 4/3，请检查图片体积）"
+								: "uid 不能为空"
+						},
+						{ status: 400 }
+					);
+				}
 				const b64 = String(body.image_base64 ?? "").trim();
 				if (!b64) return json({ error: "缺少 image_base64" }, { status: 400 });
 				let raw: Buffer;
@@ -1065,21 +1089,47 @@ export async function POST(event: RequestEvent) {
 				);
 			}
 			// 类型化旗标：只收白名单字段（其余忽略），避免把任意 JSON 塞进库/指令。
+			//
+			// ⚠️⚠️ 2026-10-01 修（**谎报成功**级）：面板把旗标放在 **body.flags** 对象里
+			//     （见 /admin/console/notify 的 doSend：`if (Object.keys(flags).length) body.flags = flags`，
+			//     里面装 severity / auto_dismiss_seconds / emergency_confirm），
+			//     而这里原先只读**顶层** body.auto_dismiss_seconds / reply_presets /
+			//     emergency_confirm / tts —— 于是面板发的一切旗标被**整个丢掉**：
+			//     实测发 fullscreen 后响应 `flags:"{}" / flagsParsed:{}`，
+			//     老师把「自动关屏」填成 30 秒、选「紧急·需确认已读」，界面显示设置成功、
+			//     服务端也回 201「已下发到 N 台设备」，教室端却一条旗标都没收到
+			//     —— 全屏通知因此**永不自动关闭**，只能等人在大屏前手动点掉。
+			//     （设备侧 device_agent.dart 读的是信封里的 flags['auto_dismiss_seconds'] /
+			//      flags['severity']，即它一直是按「嵌套」这一侧约定的 —— 错的是服务端。）
+			// 现在两边都收：**body.flags 优先**，顶层字段保留兼容（早期直连脚本按顶层发）。
+			const flagSrc: Record<string, unknown> =
+				body.flags && typeof body.flags === "object" && !Array.isArray(body.flags)
+					? (body.flags as Record<string, unknown>)
+					: {};
+			const pick = (k: string): unknown => (flagSrc[k] !== undefined ? flagSrc[k] : body[k]);
+
 			const flags: Record<string, unknown> = {};
 			if (typed === "popup") {
-				const presets = Array.isArray(body.reply_presets)
-					? body.reply_presets.map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 6)
+				const rawPresets = pick("reply_presets");
+				const presets = Array.isArray(rawPresets)
+					? rawPresets.map((s: unknown) => String(s).trim()).filter(Boolean).slice(0, 6)
 					: [];
 				if (presets.length) flags.reply_presets = presets;
-				if (body.emergency_confirm === true) flags.emergency_confirm = true;
+				if (pick("emergency_confirm") === true) flags.emergency_confirm = true;
 			}
 			if (typed === "popup" || typed === "fullscreen") {
-				const ads = Number(body.auto_dismiss_seconds);
+				const ads = Number(pick("auto_dismiss_seconds"));
 				if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
 				// 语音播报（TTS）：会出声的能力，同样只走白名单、严格判定 true。
-				// 上面 1013 行已按「能发弹窗确认」的档位收过权，这里只负责把旗标透传给
+				// 上面 1085 行已按「能发弹窗确认」的档位收过权，这里只负责把旗标透传给
 				// 教室端（否则会被这段"只收白名单字段"静默丢弃）。
-				if (body.tts === true) flags.tts = true;
+				if (pick("tts") === true) flags.tts = true;
+			}
+			// 全屏严重度（决定大屏配色 + 是否要求「确认已读」）：面板发 remind/inform/urgent。
+			// 非白名单值一律**忽略**（绝不把一个任意串塞进下发给教室端的指令里）。
+			if (typed === "fullscreen") {
+				const sev = String(pick("severity") ?? "").trim();
+				if (["remind", "inform", "urgent"].includes(sev)) flags.severity = sev;
 			}
 
 			// 真推送到教室端（这是「自动推送」的核心：留痕不等于送达）。
@@ -1275,9 +1325,15 @@ export async function POST(event: RequestEvent) {
 			const map = await fetchDeviceClassMap();
 			if (!map) return json({ error: "CIMS 不可达，无法解析目标设备" }, { status: 502 });
 
-			// 班级 → 设备；每个目标班先过范围关（class_id 或名称命中都算）。
+			// ⚠️ 目标 uid 必须用 **CIMS 里真实登记的那个大小写**：
+			// send-notification 是大小写敏感的，同一台机器常并存
+			// `N7-20091211`（桌面端，在线）与 `n7-20091211`（旧记录，离线）两条。
+			// 一律小写会把指令投进那条没人轮询的离线记录 —— CIMS 照样回
+			// 「通知已递送」，设备却收不到、回执永远停在 pending。
+			// 详见 cims-client.ts 的 canonicalUid 注释（2026-09-30 实测）。
 			const uids = new Set<string>();
 			const targets: string[] = [];
+			// 班级 → 设备；每个目标班先过范围关（class_id 或名称命中都算）。
 			for (const c of wantClasses) {
 				const hit = map.classes.find((x) => x.class_id === c || x.name === c);
 				if (!hit) return json({ error: `班级不存在或未绑定设备：${c}` }, { status: 404 });
@@ -1288,8 +1344,10 @@ export async function POST(event: RequestEvent) {
 					);
 				}
 				targets.push(hit.class_id);
-				for (const [uidKey, cid] of map.uidToClass) {
-					if (cid.toLowerCase() === hit.class_id.toLowerCase()) uids.add(uidKey);
+				for (const d of map.devices) {
+					if (d.class_id && d.class_id.toLowerCase() === hit.class_id.toLowerCase()) {
+						uids.add(d.uid);
+					}
 				}
 			}
 			// 直接指定设备：逐台查班级、过范围关。
@@ -1303,7 +1361,7 @@ export async function POST(event: RequestEvent) {
 						);
 					}
 				}
-				uids.add(uid.toLowerCase());
+				uids.add(canonicalUid(map, uid));
 				if (cid && !targets.includes(cid)) targets.push(cid);
 			}
 			if (uids.size === 0) return json({ error: "目标班级下没有可推送的设备" }, { status: 404 });

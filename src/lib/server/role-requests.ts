@@ -3,19 +3,20 @@
  *
  * ## 为什么需要它
  *
- * 等级轴（L1 游客 … L6 站长）此前只能由管理员在「用户管理」里**直接改角色**：
+ * 角色/权限此前只能由管理员在「用户管理」里**直接改角色**：
  * 没有人知道「这人凭什么该进集控」。本模块把这条链路显式化 ——
  *
- *   低等级用户提交申请（附能力证明）→ 高等级用户批准 → 角色升级
+ *   低秩位用户提交申请（附能力证明）→ 高秩位用户批准 → 角色升级
  *
  * ## 三条硬规则（都在服务端，前端只是提示）
  *
- * 1. **逐级晋升**：目标等级必须恰好是当前等级 + 1。不能 L2 直接申 L5 审核员 ——
+ * 1. **逐级晋升**：目标角色秩必须恰好是当前角色秩 + 1。不能 秩2 直接申 秩5 审核员 ——
  *    否则「能力证明」无从证明（学生拿不出审核履历），审核权会在一步之内被套走。
- * 2. **审批人必须严格高于目标等级**（`reviewerLevel > targetLevel`）。只校验
- *    `can(reviewPermission)` 是不够的：该动作定在 L5，于是 L5 审核员能批准
- *    「升到 L5」的申请 —— 等于自己给自己发审核权。要求严格大于之后，
- *    L3/L4 由 L5 批、L5 只能由 L6 批。
+ *    秩按 `ROLE_RANK`（permissions.ts）判定；**与经验等级（xp→Lv）无关**（#248 解耦）。
+ * 2. **审批人必须严格高于目标角色秩**（`reviewerRank > targetRank`）。只校验
+ *    `can(reviewPermission)` 是不够的：该称号授予 秩5 审核员，于是 秩5 审核员能批准
+ *    「升到 秩5」的申请 —— 等于自己给自己发审核权。要求严格大于之后，
+ *    秩3/秩4 由 秩5 批、秩5 只能由 秩6 批。
  * 3. **陈旧申请不执行**：批准前比对申请人**当前**角色与申请里的 `from_role`。
  *    若中途已被别的管理员改过角色，这张申请已失去前提 —— 直接照 target_role
  *    写回去会把人家**降级**。此时拒绝执行并要求重新申请。
@@ -28,8 +29,8 @@
 
 import { getDb, nowIso } from "./db.js";
 import { getUser, adminUpdateUser } from "./auth.js";
-import { can, userCan, roleToLevel, ROLE_LABELS, LEVEL_LABELS, PROOF_TYPES, PROOF_TYPE_KEYS } from "$lib/permissions.js";
-import type { Role, Level } from "$lib/permissions.js";
+import { can, userCan, roleRank, ROLE_LABELS, PROOF_TYPES, PROOF_TYPE_KEYS } from "$lib/permissions.js";
+import type { Role } from "$lib/permissions.js";
 
 export { PROOF_TYPES };
 
@@ -61,13 +62,16 @@ export interface RoleRequest {
 
 // ── 可申请的目标角色 ────────────────────────────────────────────────────────
 //
-// 每个等级对应「该等级的代表角色」。L5 有**两个**职能岗（审核员 / 编辑），
-// 二者等级相同但广播范围不同（本年级 / 全校），因此申请时要显式二选一，
-// 不能替申请人猜 —— 猜错等于默默给了全校广播权。
+// 每个「角色秩」（1–6，见 permissions.ts ROLE_RANK）对应「该秩的代表角色」。
+// 秩 5 有**两个**职能岗（审核员 / 编辑），二者秩相同但广播范围不同
+// （本年级 / 全校），因此申请时要显式二选一，不能替申请人猜 —— 猜错等于默默给了全校广播权。
 //
-// L6（站长）**不开放申请**：现任站长直接指派，避免「申请 → 审批」在最高层
-// 自我循环（按规则 2，没有任何等级能批准 L6）。
-const PROMOTION_ROLES: Record<Level, Role[]> = {
+// 秩 6（站长）**不开放申请**：现任站长直接指派，避免「申请 → 审批」在最高层
+// 自我循环（按规则 2，没有任何角色能批准秩 6）。
+//
+// ⚠️ #248：这里的「秩」是权限链上的高低，与「经验等级（xp→Lv）」完全无关。
+//    等级只是展示，晋升只按角色秩走。数据库 from_level/target_level 列存的也是秩。
+const PROMOTION_ROLES: Record<number, Role[]> = {
 	1: [],
 	2: ["user"],
 	3: ["techrep"],
@@ -80,16 +84,16 @@ const PROMOTION_ROLES: Record<Level, Role[]> = {
 // 目录本体在 `$lib/permissions.ts`（纯模块，客户端页面也要用），此处仅按需再导出。
 const PROOF_TYPE_KEYS_SET = new Set(PROOF_TYPE_KEYS);
 
-/** 当前角色可申请的目标角色清单（逐级：只有上一级的角色）。 */
+/** 当前角色可申请的目标角色清单（逐级：只有上一秩的角色）。 */
 export function applicableTargets(fromRole: Role | string | null | undefined): Role[] {
-	const lv = roleToLevel((fromRole ?? null) as Role | null);
-	if (lv === null) return [];
-	if (lv >= 6) return [];
-	return PROMOTION_ROLES[(lv + 1) as Level] ?? [];
+	const rank = roleRank((fromRole ?? null) as Role | null);
+	if (rank <= 0) return [];
+	if (rank >= 6) return [];
+	return PROMOTION_ROLES[rank + 1] ?? [];
 }
 
 /**
- * 供界面/接口下发的目标清单（带中文标签与等级）。
+ * 供界面/接口下发的目标清单（带中文标签与角色秩）。
  *
  * 页面 load 与 `/api/role-requests?scope=mine` **必须**共用这一个函数 ——
  * 否则两处会各自拼一份：曾经接口下发裸字符串 `["techrep"]`、页面下发富对象，
@@ -98,24 +102,18 @@ export function applicableTargets(fromRole: Role | string | null | undefined): R
 export function targetOptions(fromRole: Role | string | null | undefined): {
 	role: Role;
 	label: string;
-	level: Level | null;
-	levelLabel: string;
+	rank: number;
 }[] {
-	return applicableTargets(fromRole).map((t) => {
-		const lv = roleToLevel(t);
-		return {
-			role: t,
-			label: ROLE_LABELS[t],
-			level: lv,
-			levelLabel: lv === null ? "" : LEVEL_LABELS[lv as Level]
-		};
-	});
+	return applicableTargets(fromRole).map((t) => ({
+		role: t,
+		label: ROLE_LABELS[t],
+		rank: roleRank(t)
+	}));
 }
 
-/** 目标角色 -> 等级（申请时服务端自行推导，**不信任前端传来的等级**）。 */
-function targetLevelOf(role: string): number {
-	const lv = roleToLevel(role as Role);
-	return lv === null ? 0 : lv;
+/** 目标角色 -> 角色秩（申请时服务端自行推导，**不信任前端传来的秩**）。 */
+function targetRankOf(role: string): number {
+	return roleRank(role as Role);
 }
 
 function genId(): string {
@@ -198,25 +196,25 @@ export function submitRoleRequest(input: SubmitInput): { ok: true; request: Role
 	if (!user) return { ok: false, error: "用户不存在" };
 
 	const fromRole = user.role as Role;
-	const fromLevel = roleToLevel(fromRole);
-	if (fromLevel === null) return { ok: false, error: "当前账号角色异常，无法申请" };
+	const fromRank = roleRank(fromRole);
+	if (fromRank <= 0) return { ok: false, error: "当前账号角色异常，无法申请" };
 
 	const targets = applicableTargets(fromRole);
 	if (targets.length === 0) {
 		return {
 			ok: false,
 			error:
-				fromLevel >= 6
-					? "已是最高等级（L6 管理·站长），无需申请"
-					: "当前等级无可申请的晋升目标"
+				fromRank >= 6
+					? "已是最高权限档（站长），无需申请"
+					: "当前角色无可申请的晋升目标"
 		};
 	}
 	const target = String(input.targetRole || "").trim();
 	if (!targets.includes(target as Role)) {
-		// 把可选清单一并回给调用方，前端提示才具体（"只能申 L3 电教委员"）。
+		// 把可选清单一并回给调用方，前端提示才具体（"只能申电教委员"）。
 		return {
 			ok: false,
-			error: `只允许逐级晋升：当前 ${LEVEL_LABELS[fromLevel as Level] ?? fromLevel}，可申请 ${targets
+			error: `只允许逐级晋升：当前 ${ROLE_LABELS[fromRole] ?? fromRole}，可申请 ${targets
 				.map((t) => ROLE_LABELS[t])
 				.join(" / ")}`
 		};
@@ -258,9 +256,9 @@ export function submitRoleRequest(input: SubmitInput): { ok: true; request: Role
 			user.id ?? -1,
 			user.username,
 			fromRole,
-			fromLevel,
+			fromRank,
 			target,
-			targetLevelOf(target),
+			targetRankOf(target),
 			realName,
 			contact.slice(0, 120),
 			proofType,
@@ -330,15 +328,15 @@ export function reviewRoleRequest(
 	const rv = getUser(reviewer);
 	if (!rv) return { ok: false, error: "审批人不存在" };
 
-	// 规则 2：审批人须持 reviewPermission，且**严格高于**目标等级。
+	// 规则 2：审批人须持 reviewPermission，且**严格高于**目标角色秩。
 	if (!userCan(rv, "reviewPermission")) {
 		return { ok: false, error: "无权审批权限申请" };
 	}
-	const rvLevel = roleToLevel(rv.role as Role) ?? 0;
-	if (rvLevel <= req.targetLevel) {
+	const rvRank = roleRank(rv.role as Role);
+	if (rvRank <= req.targetLevel) {
 		return {
 			ok: false,
-			error: `审批人等级（L${rvLevel}）须高于目标等级（L${req.targetLevel}），否则等于自行放权`
+			error: `审批人角色秩（${rvRank}）须高于目标角色秩（${req.targetLevel}），否则等于自行放权`
 		};
 	}
 	// 不能审自己：一是利益冲突，二是配合「严格高于」会形成自升链。

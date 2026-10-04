@@ -29,3 +29,29 @@ export function readCampusOpen(): boolean {
 export function writeCampusOpen(v: boolean): void {
 	writePref("nav:campus-expanded", v);
 }
+
+/**
+ * 自定义分组（镜像站等）的展开态 —— 按 group key 各记一份。
+ *
+ * 为什么存成「一个对象」而不是每个组一个键：组的增删是后台随时可做的动作，
+ * 若按组名展开成独立 localStorage 键，删组后旧键会永远留在用户浏览器里；
+ * 存成一个 map 则在组消失后，后续写入自然把它覆盖掉，无需清理逻辑。
+ */
+const GROUP_OPEN_KEY = "nav:groups";
+
+function readGroupMap(): Record<string, boolean> {
+	const raw = readPref<unknown>(GROUP_OPEN_KEY, {});
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+	return raw as Record<string, boolean>;
+}
+
+export function readGroupOpen(key: string, fallback = false): boolean {
+	const map = readGroupMap();
+	return typeof map[key] === "boolean" ? map[key] : fallback;
+}
+
+export function writeGroupOpen(key: string, v: boolean): void {
+	const map = readGroupMap();
+	map[key] = v;
+	writePref(GROUP_OPEN_KEY, map);
+}

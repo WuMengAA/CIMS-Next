@@ -199,8 +199,32 @@ export function getUserById(id: number): User | null {
 	return row ? rowToUser(row) : null;
 }
 
-export function verifyLogin(username: string, password: string): User | null {
-	const user = getUser(username);
+/**
+ * 按「用户名 / 邮箱」识别用户，2026-10-04 起全链路共用（登录 + 重发验证）。
+ * 识别顺序：精确用户名 → 忽略大小写的用户名 → 忽略大小写的邮箱。
+ * ⚠️ 歧义防线：模糊查询（忽略大小写 / 邮箱）**只允许恰中一条**；命多条 = 重名或
+ *    重复邮箱，返回 null（fail-closed）—— 宁可让用户用精确用户名，也不能登错账号。
+ *    这条防线**必须**和注册端的大小写查重配套（注册禁止产生 WuMengAA/wumengaa 并存）。
+ */
+function findUserByIdentifier(identifier: string): User | null {
+	const exact = getUser(identifier);
+	if (exact) return exact;
+	const nameRows = getDb()
+		.prepare(`${SELECT_USER} WHERE lower(username) = lower(?)`)
+		.all(identifier) as unknown as UserRow[];
+	if (nameRows.length === 1) return rowToUser(nameRows[0]);
+	const mailRows = getDb()
+		.prepare(`${SELECT_USER} WHERE lower(email) = lower(?)`)
+		.all(identifier) as unknown as UserRow[];
+	if (mailRows.length === 1) return rowToUser(mailRows[0]);
+	return null;
+}
+
+export function verifyLogin(identifier: string, password: string): User | null {
+	// 2026-10-04：识别放宽为「精确用户名 → 忽略大小写的用户名 → 邮箱」三连查，
+	// 修 WuMengAA 这类大小写账号：填 wumengaa / 2498517208@qq.com 都该能登录。
+	// 歧义防线见 findUserByIdentifier —— 模糊查询命中多条时拒绝，绝不静默二选一。
+	const user = findUserByIdentifier(identifier);
 	if (!user) return null;
 	const hash = hashPassword(password, user.salt);
 	if (hash !== user.passwordHash) return null;
@@ -297,6 +321,11 @@ export function validatePasswordStrength(password: string, username = ""): strin
  * 开放注册：创建「待验证」账号（status=pending）。
  * 默认角色 user，无需管理员介入；验证邮箱或管理员批准后方可登录。
  * 注册门槛（敏感词 / 邮箱域名白名单 / 邀请码）默认全关，由环境变量开启。
+ *
+ * ⚠️ 2026-10-04 安全修复：**只有邮件渠道可用（mailEnabled）时才回传 verifyToken**。
+ *    此前无条件回传，而无 SMTP 的生产环境（本站当前就是）里 verifyToken 被当
+ *    激活钥匙直接回给客户端 → 「注册即自激活」，任何人可批量注册有效账号。
+ *    现在无邮件渠道时注册成功但账号保持 pending，需管理员在后台激活，杜绝自激活。
  */
 export function registerUser(
 	username: string,
@@ -304,7 +333,7 @@ export function registerUser(
 	password: string,
 	displayName?: string,
 	opts?: { inviteCode?: string }
-): { ok: boolean; error?: string; verifyToken?: string; username?: string; email?: string } {
+): { ok: boolean; error?: string; verifyToken?: string; username?: string; email?: string; mailAvailable?: boolean } {
 	const name = (username || "").trim();
 	const mail = (email || "").trim();
 	const nick = (displayName || "").trim();
@@ -330,8 +359,19 @@ export function registerUser(
 		const code = (opts?.inviteCode || "").trim();
 		if (!REGISTER_INVITE_CODES.includes(code)) return { ok: false, error: "需要有效的邀请码" };
 	}
-	if (getUser(name)) return { ok: false, error: "用户名已存在" };
-	if (mail && isEmailTaken(mail)) return { ok: false, error: "该邮箱已被注册" };
+	// 2026-10-04：用户名/邮箱查重一律**忽略大小写**（lower 归一），
+	// 否则已存在 WuMengAA 时还能再注册 wumengaa —— 登录识别放宽后就产生歧义（见 verifyLogin 注释）。
+	// 邮箱同理：Foo@Bar.com 与 foo@bar.com 是同一个人家，不该各占一个号。
+	const nameDup = getDb()
+		.prepare("SELECT id FROM users WHERE lower(username) = lower(?) LIMIT 1")
+		.get(name);
+	if (nameDup) return { ok: false, error: "用户名已存在" };
+	if (mail) {
+		const mailDup = getDb()
+			.prepare("SELECT id FROM users WHERE lower(email) = lower(?) LIMIT 1")
+			.get(mail);
+		if (mailDup) return { ok: false, error: "该邮箱已被注册" };
+	}
 
 	const salt = crypto.randomBytes(16).toString("hex");
 	const token = crypto.randomBytes(32).toString("base64url");
@@ -345,12 +385,18 @@ export function registerUser(
 		)
 		.run(name, nick || name, mail, token, exp, hashPassword(password, salt), salt, ts, ts);
 	// 邮件渠道可用时立即发验证邮件（未配置 SMTP 则静默跳过，前端回显链接兜底）
-	if (mail) {
+	const mailOk = mailEnabled();
+	if (mail && mailOk) {
 		sendVerificationMail(mail, token).catch((e) => {
 			console.error("[mailer] 注册验证邮件发送失败：", e);
 		});
 	}
-	return { ok: true, verifyToken: token, username: name, email: mail };
+	// 2026-10-04 安全修复：verifyToken 只在邮件渠道可用时才回传 —— 否则它等于
+	// "注册即自激活"的钥匙（无 SMTP 时任何人注册都能立刻激活，批量造号）。
+	// 无邮件渠道时账号保持 pending，由管理员在后台激活；前端据 mailAvailable 提示。
+	return mailOk
+		? { ok: true, verifyToken: token, username: name, email: mail }
+		: { ok: true, verifyToken: "", username: name, email: mail, mailAvailable: false };
 }
 
 /** 发送注册验证邮件（内部：拼链接 + 调 sendMail）。 */
@@ -389,22 +435,27 @@ export function verifyEmail(token: string): { ok: boolean; error?: string } {
 	return { ok: true };
 }
 
-/** 重发验证令牌（按用户名或邮箱）。 */
-export function resendVerification(identifier: string): { ok: boolean; error?: string; verifyToken?: string; email?: string } {
-	const user = getUser(identifier) || getUserByEmail(identifier || "");
+/** 重发验证令牌（按用户名或邮箱；复用同一套歧义安全识别，见 findUserByIdentifier）。
+ * 2026-10-04 安全修复：与 registerUser 同规 —— 只有邮件渠道可用（mailEnabled）才回传
+ * verifyToken；无 SMTP 时绝不把激活令牌交给客户端（否则 resend 就是第二条自激活通道）。 */
+export function resendVerification(identifier: string): { ok: boolean; error?: string; verifyToken?: string; email?: string; mailAvailable?: boolean } {
+	const user = findUserByIdentifier(identifier || "");
 	if (!user) return { ok: false, error: "账号不存在" };
 	if (user.status === "active" && user.verified) return { ok: false, error: "账号已激活" };
+	const mailOk = mailEnabled();
 	const token = crypto.randomBytes(32).toString("base64url");
 	const exp = new Date(Date.now() + VERIFY_TTL_MS).toISOString();
 	getDb()
 		.prepare("UPDATE users SET verify_token = ?, verify_token_expires = ?, updated_at = ? WHERE id = ?")
 		.run(token, exp, nowIso(), user.id ?? -1);
-	if (user.email) {
+	if (user.email && mailOk) {
 		sendVerificationMail(user.email, token).catch((e) => {
 			console.error("[mailer] 重发验证邮件失败：", e);
 		});
 	}
-	return { ok: true, verifyToken: token, email: user.email };
+	return mailOk
+		? { ok: true, verifyToken: token, email: user.email, mailAvailable: true }
+		: { ok: true, verifyToken: "", email: user.email, mailAvailable: false };
 }
 
 export function deleteUser(username: string): { ok: boolean; error?: string } {

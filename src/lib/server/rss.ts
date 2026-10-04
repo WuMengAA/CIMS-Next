@@ -9,7 +9,7 @@ import { listItems, getAnnouncements, getSettings, getFeedConfig, getSiteUrl } f
 // 远程抓取全部 try/catch，单个源失败不影响整体；结果落盘缓存，限流防抖。
 // ───────────────────────────────────────────────────────────────────────────
 
-const CONTENT_DIR = path.resolve("content");
+import { CONTENT_DIR } from "./paths.js";
 const CACHE_DIR = path.join(CONTENT_DIR, "cache");
 const NEWS_CACHE_FILE = path.join(CACHE_DIR, "news-cache.json");
 const NEWS_TTL_MS = 10 * 60 * 1000; // 聚合结果缓存 10 分钟

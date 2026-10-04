@@ -439,6 +439,67 @@
       </div>`;
   };
 
+  // ── 课表下发回执（总纲 §4：每个下发都要落到四态）────────────────────────
+  // 课表链是「面板写 CIMS 资源 → 教室端每 30s 回拉并写回本机档案（ClassIsland）」，
+  // 所以保存成功只说明**资源写进去了**；教室端有没有换过来是另一回事：
+  // 设备离线 / 大屏壳插件没启用 / 档案里选中的还是别的课表群，都会让"保存成功但大屏没变"。
+  // 这里把设备**自报**的「当前生效课表群」摆出来对照，而不是再喊一句"已下发"。
+  /** 课表群名压成短名：「8班课表群」「高三(3)班课表」→「8班」「高三(3)班」。 */
+  function schedGroupShort(v) {
+    return String(v || "").trim().replace(/(的)?课表群$|(的)?课表$/, "");
+  }
+  /** 拉一次课表回执：当前资源名 + 本班设备各自的"正在显示哪张课表"。 */
+  async function schedReceipt() {
+    const planName = API.state.classId || "";
+    const cls = (classList || []).find((c) => c.id === planName) || null;
+    const className = cls ? String(cls.name || "") : "";
+    const classId = cls ? String(cls.classId || "") : "";
+    let devs = [];
+    let err = "";
+    try { devs = await API.listDevices(); } catch (e) { err = (e && e.message) || String(e); }
+    // 只为"本班名下"的设备负责：别的班的设备在显示别的课表是正常的。
+    const rows = (devs || [])
+      .filter((d) => classId && String(d.classId || "") === classId)
+      .map((d) => {
+        const g = String(d.activeGroup || "");
+        return {
+          uid: String(d.id || ""),
+          host: String(d.host || ""),
+          online: !!d.online,
+          last: String(d.last || ""),
+          group: g,
+          // ok 正在显示本班 / other 显示的是别的班 / unknown 没上报（多半大屏壳没跑）
+          state: !g ? "unknown" : (className && schedGroupShort(g) === className) ? "ok" : "other",
+        };
+      });
+    return { planName, className, classId, err, rows };
+  }
+  /** 回执卡片（课表页底部；"保存并下发"之后也靠它给出真实结果）。 */
+  function schedReceiptHtml(rc) {
+    const rows = rc.rows.map((r) => {
+      const label = r.state === "ok" ? "正在显示本班课表"
+        : r.state === "other" ? `当前显示的是「${schedGroupShort(r.group) || r.group}」`
+        : "未上报课表群";
+      return `<div class="ftd-row"><span class="tag ${r.state === "ok" ? "ok" : "warn"}">${esc(label)}</span>` +
+        `<b>${esc(r.uid)}</b>` +
+        `<span class="muted">${esc(r.host || "（未上报主机名）")}${r.online ? "" : " · 离线"}</span>` +
+        (r.last ? `<span class="muted">· 上次心跳 ${esc(r.last)}</span>` : "") + `</div>`;
+    }).join("");
+    return `
+      <div class="card"><h3>下发回执 · 本班教室端</h3>
+        <p class="muted" style="font-size:12px">
+          这份课表写进的是 CIMS 资源 <code>${esc(rc.planName || "—")}</code>；
+          教室端每 30 秒回拉一次并刷新大屏，通常半分钟内生效。下面每台设备显示的是它自己上报的
+          「当前生效课表群」——设备离线时看到的是它最后一次上报的值。
+        </p>
+        ${rc.err ? `<p class="muted">设备列表取不到：${esc(rc.err)}</p>` : ""}
+        ${!rc.classId ? `<p class="muted">当前选中的不是某个班级（或该班没有班级实体），无法定位它名下的设备。</p>` : ""}
+        ${rc.classId && !rc.rows.length ? `<p class="muted">本班名下还没有登记设备 —— 教室机接入后才会出现在这里。</p>` : ""}
+        ${rows ? `<div class="ftd-box">${rows}</div>` : ""}
+        <div class="row" style="margin-top:8px"><button data-act="sched-receipt">刷新回执</button></div>
+      </div>`;
+  }
+
   views.schedule = async () => {
     const s = await API.getSchedule();
     // days 可能是空数组（合法空信封）或后端结构异常，用 (s.days||[]) 兜底，
@@ -501,7 +562,8 @@
           <button class="primary" data-act="save-schedule" data-need="control">保存并下发</button>
           <button data-act="reload">重新拉取</button>
         </div>
-      </div>`;
+      </div>
+      ${schedReceiptHtml(await schedReceipt())}`;
   };
 
   views.config = async () => {
@@ -584,6 +646,51 @@
 
   /** 设备状态标签：未接入 / 在线 / 离线，三态而不是两态。 */
   const stateTag = (d) => `<span class="tag ${d.stateKind}">${esc(d.stateLabel)}</span>`;
+
+  // ── 设备指令「四态」状态位（总纲 §4：待下发 → 已下发 → 执行中 → 成功/失败）──────
+  // 历史缺陷：dev 动作只弹一句 toast「已下发指令」，且**完全不读 deviceAction 的返回值**。
+  // 而 CIMS 习惯用 HTTP 200 表达业务失败（例如 gRPC 通道未开启），于是"被拒绝"与"已下发"
+  // 在面板上长得一模一样 —— 这正是总纲 §4 点名要删掉的「不把没做到当成功」。
+  // 现在还口：动作结果落成行内状态位，并由**只读**队列统计推进到真实回执态。
+  const DEVSTATE_CLASS = { pending: "", sent: "warn", running: "warn", done: "ok", failed: "err" };
+  function setDevState(uid, kind, text) {
+    const el = document.querySelector(`[data-devstate="${CSS.escape(String(uid))}"]`);
+    if (!el) return;
+    el.className = `devstate tag ${DEVSTATE_CLASS[kind] ?? ""}`.trim();
+    el.textContent = text ? `· ${text}` : "";
+  }
+  /** 把后端/CIMS 的返回翻译成一句人话原因（绝不显示"未知"以外的英文堆栈）。 */
+  function humanReason(r) {
+    if (!r) return "无响应";
+    return String(r.message || r.reason || r.error || r.status || "未知原因");
+  }
+  /**
+   * 用**只读**队列统计把「已下发」推进到真实回执态。
+   *
+   * 只读是硬要求：`/v1/client/{uid}/command/queued` 是「取走」语义，拿它当探针
+   * 会静默吃掉真实命令（教室那条广播再也不会播，且两边都不报错）。
+   *
+   * 超时**不下任何结论**：既不判成功也不判失败，只标「未见回执」并指向「指令回执」页
+   * —— 总纲 §4 明写「不把超时/无回执当失败」。
+   */
+  async function pollDevOutcome(uid, before) {
+    const b = {
+      pending: before?.pending ?? 0,
+      delivered: before?.delivered ?? 0,
+      done: before?.done ?? 0,
+      failed: before?.failed ?? 0,
+    };
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const s = await API.deviceCommandStats(uid);
+      if (!s || s.status === "demo") return;
+      if ((s.failed ?? 0) > b.failed) return setDevState(uid, "failed", "执行失败·见指令回执");
+      if ((s.done ?? 0) > b.done) return setDevState(uid, "done", "已执行完成");
+      if ((s.delivered ?? 0) > b.delivered) setDevState(uid, "running", "执行中…");
+      else if ((s.pending ?? 0) > b.pending) setDevState(uid, "sent", "已下发·待设备取走");
+    }
+    setDevState(uid, "sent", "已下发·25s 内未见回执");
+  }
 
   /**
    * 「设备」单元格：主机名 + 设备号。
@@ -677,6 +784,7 @@
             <button data-act="dev" data-need="control" data-id="${d.id}" data-host="${esc(d.host || d.id)}" data-a="screenshot" ${d.online ? "" : "disabled"}>截图</button>
             <button class="danger" data-act="dev" data-need="control" data-id="${d.id}" data-a="shutdown" data-confirm="1" ${d.online ? "" : "disabled"}>关机</button>
             <button data-act="shutdown-sched" data-need="control" data-id="${esc(d.id)}" data-name="${esc(d.host || d.id)}" ${d.online ? "" : "disabled"} title="设置定时关机计划（教室端 60s 确认后生效）">定时关机</button>
+            <span class="devstate tag" data-devstate="${esc(d.id)}" role="status" aria-live="polite"></span>
           </td></tr>`;
 
     const body = !rows.length
@@ -2758,32 +2866,115 @@
   //   "送达 x/y 台"实时亮出。设备端收文后自动弹本机通知。
   // 目标班级唯一来源 /api/classes（CIMS 真实班级），取不到明示、绝不放假班。
   let ftHistory = []; // 本次会话内的推送记录（持久化历史在桌面端）
+  // 班级 id→name 映射（ft-upload 显示目标班级名；views.filetransfer 填充）
+  let ftClassMap = {};
+
+  // ── 文件投递回执（总纲 §4 / §6 P2：文件下发要真回执）────────────────────
+  // 历史缺陷：面板只把一句「已下发 N 台」当结果。而 CIMS 的 HTTP 200 只代表
+  // **指令入队**，文件本体有没有落到学生机是**另一回事**（设备要自己下载 + 校验 sha256）。
+  // 于是「没收到」和「收到了」在面板上长得一模一样。
+  // 现在口：逐台回执（file_deliveries）落成明细行；状态用琥珀色表示"已下发≠送达"，
+  // 绿色只在**真的收到回执**时才出现。
+  /** 逐台回执行 → 汇总（面板与桌面端同一套口径：done 全部送达 / partial 部分 / failed 全败 / sent 待回执）。 */
+  function ftSummary(rows) {
+    const total = rows.length;
+    const acked = rows.filter((d) => d.state === "acked").length;
+    const failed = rows.filter((d) => d.state === "failed").length;
+    const pending = Math.max(0, total - acked - failed);
+    let status = "sent";
+    if (total > 0 && pending === 0) status = failed === 0 ? "done" : acked === 0 ? "failed" : "partial";
+    return { total, acked, failed, pending, status };
+  }
+  /** 回执态 → 标签样式。**sent/partial/noack 一律琥珀**：已下发不等于送达。 */
+  const FT_TAG = { pending: "warn", sent: "warn", partial: "warn", noack: "warn", done: "ok", failed: "err" };
+  /** 回执态 → 人话。绝不把「已下发但没回执」说成送达，也不把它当成失败。 */
+  function ftLabel(h) {
+    if (h.status === "pending") return "发送中…";
+    if (h.status === "failed") return h.failed ? `没发出去（${h.failed} 台失败）` : "没发出去";
+    if (h.status === "done") return `全部送达（${h.total} 台）`;
+    if (h.status === "partial") return `部分送达 ${h.acked}/${h.total} 台（${h.failed} 台失败）`;
+    if (h.status === "noack") {
+      const mins = Math.round((Date.now() - new Date(h.at || Date.now()).getTime()) / 60000);
+      // 死账可能挂好几天 —— 直接印「1560 分钟」没人读得出来是多久。
+      if (mins >= 1440) return `已下发 · ${Math.round(mins / 1440)} 天未见回执`;
+      if (mins >= 60) return `已下发 · ${Math.round(mins / 60)} 小时未见回执`;
+      return mins >= 1 ? `已下发 · ${mins} 分钟未见回执` : "已下发 · 未见回执";
+    }
+    if (!h.total) return "已下发 · 未拿到逐台回执";
+    return h.acked > 0 ? `已下发 ${h.total} 台 · 已回执 ${h.acked} 台` : `已下发 ${h.total} 台 · 等待回执`;
+  }
+  /** 逐台明细块（默认收起，点「逐台明细」展开）。带上"该设备当前在线与否"。 */
+  function ftDetailHtml(rows, devState) {
+    if (!rows || !rows.length) return "";
+    // 设备行归一后 `stateKind` 只有三值：ok 在线 / err 离线 / warn 从未上报（至今没接入）。
+    // 拿它给"没回执"的那几台补一句原因 —— 老师真正要问的是"为什么没到"。
+    const OFF_HINT = {
+      err: "（设备当前离线，指令已入队，等它开机后领取）",
+      warn: "（这台设备从未上报过心跳，可能还没接入集控）",
+    };
+    const body = rows.map((d) => {
+      const st = d.state === "acked" ? "ok" : d.state === "failed" ? "err" : "warn";
+      const stText = d.state === "acked" ? "已送达" : d.state === "failed" ? "失败" : "待回执";
+      const kind = (devState || {})[String(d.uid || "").toLowerCase()];
+      const hint = d.state === "acked" ? "" : (OFF_HINT[kind] || "");
+      return `<div class="ftd-row"><span class="tag ${st}">${stText}</span>` +
+        `<b>${esc(d.uid)}</b>` +
+        (hint ? `<span class="muted">${hint}</span>` : "") +
+        `<span class="muted">${esc(d.detail || "")}</span></div>`;
+    }).join("");
+    return `<tr class="ftd hidden"><td colspan="5"><div class="ftd-box">${body}</div></td></tr>`;
+  }
+  /** 拉一次逐台回执并覆盖到会话列表里那一条（上传时与「刷新回执」按钮共用）。 */
+  async function ftApplyDeliveries(fileId) {
+    const rows = await API.fileDeliveries(fileId);
+    const idx = ftHistory.findIndex((x) => x.fileId === fileId);
+    if (idx < 0) return null;
+    const s = ftSummary(rows);
+    const item = { ...ftHistory[idx], ...s, details: rows };
+    // 长时间无一回执 → 明确标成「未见回执」，别让它一直挂在"等待回执"上装作还在进行。
+    if (s.pending > 0 && Date.now() - new Date(item.at).getTime() > 10 * 60 * 1000) item.status = "noack";
+    ftHistory[idx] = item;
+    return item;
+  }
   views.filetransfer = async () => {
     let classes = [];
     let classErr = "";
     try { classes = await API.listSiteClasses(); }
     catch (e) { classErr = (e && e.message) || String(e); }
+    // 班号 → 班名。历史里记的是「推送那一刻」的班名；不填这张表的话
+    // 传输历史的目标列会露出原始 class_id（class_08），老师认不出是哪个班。
+    ftClassMap = Object.fromEntries(classes.map((c) => [String(c.class_id), String(c.name || c.class_id)]));
     const chips = classes.length
       ? classes.map((c) => `<label class="row" style="gap:6px">
             <input type="checkbox" class="ft-cls" value="${esc(c.class_id)}"/>
             <span>${esc(c.name || c.class_id)}</span>
           </label>`).join("")
       : `<p class="muted" style="grid-column:1/-1">${classErr ? esc(classErr) : "暂无班级（需先在 CIMS 导入/创建班级）"}</p>`;
-    const hist = ftHistory.map((h) => {
-      const tag = h.status === "sent" ? "ok" : h.status === "failed" ? "err" : "warn";
-      const label = h.status === "pending" ? "发送中…"
-        : h.status === "failed" ? "没发出去"
-        : `送达 ${h.delivered}/${h.total} 台${h.failed ? `（${h.failed} 台失败）` : ""}`;
+    // 设备在线态（只用于给"没回执"的那几台补一句原因：是设备离线，还是纯粹还没轮到）。
+    let devState = {};
+    try {
+      const devs = await API.listDevices();
+      (devs || []).forEach((d) => { devState[String(d.uid || d.id).toLowerCase()] = d.stateKind; });
+    } catch (_) {}
+    const hist = ftHistory.map((h, i) => {
+      const tag = FT_TAG[h.status] || "warn";
+      const label = ftLabel(h);
+      const det = h.details || [];
+      const actions = [
+        h.fileId ? `<button data-act="ft-refresh" data-fid="${esc(h.fileId)}">刷新回执</button>` : "",
+        det.length ? `<button data-act="ft-detail" data-i="${i}">逐台明细（${det.length}）</button>` : "",
+      ].filter(Boolean).join(" ");
       return `<tr data-fid="${esc(h.fileId)}">
         <td>${esc(h.name)}<span class="muted" style="font-size:12px"> · ${Math.max(1, Math.round(h.size / 1024))}KB</span></td>
         <td>${esc(h.classes)}</td>
         <td><span class="tag ${tag}">${esc(label)}</span></td>
         <td class="muted" style="font-size:12px">${new Date(h.at).toLocaleTimeString("zh-CN", { hour12: false })}</td>
-      </tr>`;
+        <td class="nowrap">${actions || `<span class="muted">—</span>`}</td>
+      </tr>${ftDetailHtml(det, devState)}`;
     }).join("");
     return `
       <div class="card"><h3>发文件</h3>
-        <p class="muted">把文件送到所选班级的全部教室电脑；教室端收到后自动弹通知，这里逐台亮出送达情况。</p>
+        <p class="muted">把文件送到所选班级的全部教室电脑；教室端下载并校验后回报，这里逐台亮出真实送达情况（「已下发」只说明指令进了队列，不等于文件已到）。</p>
         <div class="row"><input id="ft-file" type="file" multiple style="flex:1"/></div>
         <div class="row" style="margin-top:8px"><span class="muted">发给班级</span></div>
         <div class="grid g4" style="gap:6px 10px">${chips}</div>
@@ -2794,8 +2985,9 @@
       </div>
       <div class="card">
         <h3>传输历史（本次会话）</h3>
-        <table class="tbl"><thead><tr><th>文件</th><th>目标</th><th>状态</th><th>时间</th></tr></thead>
-        <tbody>${hist || `<tr><td colspan="4" class="muted" style="text-align:center;padding:14px 0">暂无传输记录。</td></tr>`}</tbody></table>
+        <p class="muted" style="font-size:12px">「已送达」= 教室端已下载落盘并回报；「未收回执」= 指令已入队但设备还没回。设备没开机时回执会一直等。</p>
+        <table class="tbl"><thead><tr><th>文件</th><th>目标</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+        <tbody>${hist || `<tr><td colspan="5" class="muted" style="text-align:center;padding:14px 0">暂无传输记录。</td></tr>`}</tbody></table>
       </div>`;
   };
 
@@ -3132,12 +3324,87 @@
       if (act === "ft-upload") {
         const f = document.getElementById("ft-file");
         if (!f || !f.files || !f.files.length) return toast("请先选择文件");
-        const target = (document.getElementById("ft-target") || {}).value || "";
-        // 后端存储/下发接口为本期后端联调项：先回显已选文件与目标，真实上传待接口就位。
-        const names = Array.from(f.files).map((x) => x.name).join("、");
+        // v2 三环（2026-09-25 设计）：① multipart 上传实体 → ② 服务端代推 file_push
+        // 到所选班级 → ③ fileDeliveries 轮询「送达 x/y 台」。目标班级取 .ft-cls 勾选，
+        // 不再有 /#ft-target（旧占位读不存在的元素，恒显"全校"的根因）。
+        const classes = Array.from(document.querySelectorAll("input.ft-cls:checked"))
+          .map((x) => x.value).filter(Boolean);
+        if (!classes.length) return toast("请先勾选至少一个目标班级");
         const st = document.getElementById("ft-status");
-        if (st) st.textContent = `已选 ${f.files.length} 个文件：${names} → ${target || "全校"}（后端接口联调中，暂未落库下发）`;
-        toast("文件已选，等待后端接口联调");
+        const names = Array.from(f.files).map((x) => x.name).join("、");
+        const targetName = (() => {
+          const map = (ftClassMap || {});
+          const picked = classes.map((id) => map[id] || id).slice(0, 3).join("、");
+          return picked + (classes.length > 3 ? ` 等 ${classes.length} 个班` : "");
+        })();
+        // 逐个文件上传 → 代推（一次发一个文件；多文件串行，避免并发把班级判定打乱）
+        (async () => {
+          let ok = 0, fail = 0;
+          for (const file of Array.from(f.files)) {
+            try {
+              if (st) st.textContent = `正在上传 ${file.name}（${Math.max(1, Math.round(file.size / 1024))}KB）…`;
+              const up = await API.uploadFile(file, "file");
+              if (!up || !up.id) throw new Error("上传未返回文件 id");
+              if (st) st.textContent = `正在下发 ${file.name} → ${targetName}…`;
+              const push = await API.filePush(up.id, classes);
+              const fid = up.id;
+              // 回执轮询：短轮询把「已送达 x/y 台」亮出来（超过这一小段就交给行内「刷新回执」按钮，
+              // 不在浏览器里空等 —— 设备没开机时它可能几小时都不回，等下去没有意义）。
+              let rows = [];
+              for (let r = 0; r < 8; r++) {
+                try {
+                  rows = await API.fileDeliveries(fid);
+                  const cur = ftSummary(rows);
+                  if (st) st.textContent = `文件 ${file.name} → ${targetName}：${ftLabel({ ...cur, at: new Date() })}`;
+                  if (cur.total > 0 && cur.pending === 0) break;
+                } catch (_) {}
+                await new Promise((res) => setTimeout(res, 1500));
+              }
+              ftHistory.unshift({
+                name: file.name, size: file.size, fileId: fid, classes: targetName,
+                ...ftSummary(rows), details: rows, at: new Date(),
+              });
+              ok++;
+            } catch (e) {
+              fail++;
+              ftHistory.unshift({
+                name: file.name, size: file.size, fileId: "", classes: targetName,
+                ...ftSummary([]), status: "failed", details: [], at: new Date(),
+              });
+              toast("下发失败：" + ((e && e.message) || e));
+            }
+          }
+          if (st) st.textContent = ok + " 个文件已下发" + (fail ? `，${fail} 个失败` : "") + "（是否真送达看下方回执，可点「刷新回执」再看）";
+          if (ok > 0) go("filetransfer");
+        })();
+      }
+      // 重新拉一条记录的逐台回执（真闭环：发完不是终点，回执可以随时再查）。
+      if (act === "ft-refresh") {
+        const fid = el.dataset.fid;
+        el.disabled = true;
+        try {
+          const item = await ftApplyDeliveries(fid);
+          if (!item) { toast("这条记录已不在本次会话列表里（刷新页面后传输历史会清空）"); return; }
+          go("filetransfer");
+          toast(item.total ? `回执已刷新：${ftLabel(item)}` : "服务端还没有这条记录的逐台回执行");
+        } catch (e) {
+          toast("刷新回执失败：" + ((e && e.message) || e));
+        } finally {
+          el.disabled = false;
+        }
+        return;
+      }
+      // 展开/收起逐台明细（纯前端显隐，不重渲染，避免收起状态被 go() 冲掉）。
+      if (act === "ft-detail") {
+        const tr = el.closest("tr");
+        const nx = tr && tr.nextElementSibling;
+        if (nx && nx.classList.contains("ftd")) {
+          nx.classList.toggle("hidden");
+          el.textContent = nx.classList.contains("hidden")
+            ? el.textContent.replace("收起", "逐台明细")
+            : el.textContent.replace("逐台明细", "收起");
+        }
+        return;
       }
       // ---- 音量调节（面板侧；下发依赖部署包）----
       if (act === "vol-mute") {
@@ -3283,14 +3550,29 @@
           `课表下发｜节次=${(s.days || []).reduce((n, d) => n + (d.items || []).length, 0)}` +
             `｜未识别科目=${drops.length}`
         );
+        // 保存成功 ≠ 教室端换过来了。把"本班几台设备在显示这张课表"如实报出来
+        // （设备离线时那是它最后一次上报的值，别当成本次生效）。
+        let rc = { rows: [], planName: API.state.classId || "—", err: "" };
+        try { rc = await schedReceipt(); } catch (e) { rc = { rows: [], planName: API.state.classId || "—", err: (e && e.message) || String(e) }; }
+        const okN = rc.rows.filter((x) => x.state === "ok").length;
         if (drops.length) {
-          toast(`已保存并下发，但有 ${drops.length} 节科目无法识别，未写入：${drops.slice(0, 3).join("；")}${drops.length > 3 ? " …" : ""}`);
+          toast(`已写入 ${rc.planName}，但有 ${drops.length} 节科目无法识别，未写入：${drops.slice(0, 3).join("；")}${drops.length > 3 ? " …" : ""}`);
           console.warn("未写入的课表格子：", drops);
+        } else if (rc.err) {
+          toast(`已写入课表资源 ${rc.planName}；下发结果未知（设备列表取不到：${rc.err}）`);
+        } else if (!rc.classId) {
+          toast(`已写入课表资源 ${rc.planName}（当前不是具体班级，无法核对教室端）`);
+        } else if (!rc.rows.length) {
+          toast(`已写入课表资源 ${rc.planName}；本班名下暂无设备`);
         } else {
-          toast("课表已保存并下发");
+          toast(`已写入课表资源 ${rc.planName}；本班 ${rc.rows.length} 台设备中 ${okN} 台正在显示本班课表（其余见下方「下发回执」）`);
         }
+        return go("schedule");
       }
-      else if (act === "sched-add") {
+      // 课表回执：纯重拉一次再渲染，不在浏览器里空转轮询（教室端是 30s 周期回拉）。
+      if (act === "sched-receipt") return go("schedule");
+
+      if (act === "sched-add") {
         // 新增一节：改 DOM 后立即重渲染（不落库），由「保存并下发」统一提交。
         // 注意用 `el`（被点的那个按钮）取 day —— 曾经误写成未定义的 `b`，
         // 结果点「+ 新增一节」直接抛 ReferenceError，按钮看起来"没反应"。
@@ -3365,16 +3647,37 @@
         toast("组件布局已保存"); go("plugins");
       }
       else if (act === "dev") {
+        const uid = el.dataset.id, action = el.dataset.a;
         // 关机是不可逆动作：必须二次确认（防误触把整间教室的机器全关掉）
-        if (el.dataset.a === "shutdown" && !el.dataset.confirmed && !confirm(`确认关机设备 ${el.dataset.id} 吗？\n关机后需人工到教室开机，请谨慎操作。`)) return;
+        if (action === "shutdown" && !el.dataset.confirmed && !confirm(`确认关机设备 ${uid} 吗？\n关机后需人工到教室开机，请谨慎操作。`)) return;
         el.dataset.confirmed = "1";
-        await API.deviceAction(el.dataset.id, el.dataset.a);
-        API.audit("device." + el.dataset.a, el.dataset.id, "下发设备指令");
-        toast(`已下发指令：${el.dataset.a} → ${el.dataset.id}`);
-        // #T07.7 步骤 3：截图指令下发后轮询回传 —— 教室端代理截屏后会把 PNG
-        // 回传到 ext 网关（/api/console/ext/captures），这里等待并弹窗展示。
-        // data-host 是 agent 的 UID（设备行只带 client_id，回传 key 是 UID）。
-        if (el.dataset.a === "screenshot") waitForCapture(el.dataset.id, el.dataset.host);
+        setDevState(uid, "pending", "下发中…");
+        el.disabled = true;
+        try {
+          // 基线（只读）：只用于判断回执计数有没有前进；取不到也不阻断下发。
+          const before = await API.deviceCommandStats(uid);
+          const r = await API.deviceAction(uid, action);
+          // 铁律：远端用 HTTP 200 表达业务失败 → **必须读回执体**。
+          // 不读就会把「被拒绝 / 通道未开」显示成「已下发」，等于假成功。
+          if (r && (r.status === "error" || r.ok === false)) {
+            const why = humanReason(r);
+            setDevState(uid, "failed", `失败：${why}`);
+            toast(`下发失败：${action} → ${uid}（${why}）`);
+            return;
+          }
+          API.audit("device." + action, uid, "下发设备指令");
+          setDevState(uid, "sent", "已下发");
+          toast(`已下发指令：${action} → ${uid}（是否收到看设备回执）`);
+          // 截图：教室端代理截屏后回传 PNG 到 ext 网关，等它落地再翻成成功。
+          // data-host 是 agent 的 UID（设备行只带 client_id，回传 key 是 UID）。
+          if (action === "screenshot") waitForCapture(uid, el.dataset.host);
+          else pollDevOutcome(uid, before);
+        } catch (e) {
+          setDevState(uid, "failed", `失败：${(e && e.message) || e}`);
+          toast(`下发异常：${action} → ${uid}`);
+        } finally {
+          el.disabled = false;
+        }
       }
       else if (act === "assign") {
         const id = el.dataset.id;

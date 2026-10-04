@@ -84,7 +84,7 @@
 
 <PageHero icon={MessageSquare} title="反馈" desc="意见、建议与 Bug 反馈。提交后公开可见，官方会在此跟进状态。" />
 
-<div class="mx-auto grid max-w-5xl gap-6 px-4 py-8 md:grid-cols-[minmax(0,360px)_1fr]">
+<div class="ef-shell ef-shell--wide grid gap-6 py-8 md:grid-cols-[minmax(0,360px)_1fr]">
 	<!-- 提交卡片 -->
 	<div class="space-y-3">
 		<Card class="p-4">

@@ -109,12 +109,14 @@ export async function POST(event: RequestEvent) {
 			userId: 0, username: result.username || "", action: "user_register",
 			detail: "开放注册（待验证）", ip: meta.ip, userAgent: meta.userAgent
 		});
+		// 2026-10-04 安全修复：verifyToken 只在邮件渠道可用时回传（见 registerUser 注释）。
+		// 无 SMTP 时账号保持 pending，需管理员激活 —— 绝不把激活钥匙发给客户端。
 		return json({
 			ok: true,
 			username: result.username,
 			email: result.email,
-			// 本地无 SMTP 时直接回传令牌，方便页面生成验证链接；部署到邮件环境后该字段应收敛。
-			verifyToken: result.verifyToken
+			mailAvailable: result.mailAvailable !== false,
+			...(result.mailAvailable !== false && result.verifyToken ? { verifyToken: result.verifyToken } : {})
 		});
 	}
 
@@ -131,7 +133,13 @@ export async function POST(event: RequestEvent) {
 			userId: 0, username: body.identifier || "", action: "user_verify_resend",
 			ip: meta.ip, userAgent: meta.userAgent
 		});
-		return json({ ok: true, email: result.email, verifyToken: result.verifyToken });
+		// 2026-10-04 安全修复：无邮件渠道时同样不回传 verifyToken（防 resend 自激活）。
+		return json({
+			ok: true,
+			email: result.email,
+			mailAvailable: result.mailAvailable !== false,
+			...(result.mailAvailable !== false && result.verifyToken ? { verifyToken: result.verifyToken } : {})
+		});
 	}
 
 	// 以下动作均需登录

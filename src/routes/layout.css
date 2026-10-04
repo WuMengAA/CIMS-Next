@@ -524,32 +524,61 @@
 }
 
 
-/* --- 全局分段式加载动画（spring 阻尼 / 缓冲 / 曲线运动） --- */
+/* --- 全局分段式出场动画（blur 溶解 + 上浮微缩 + 展式缓出 · 滚动连贯触发） --- */
 :root {
-	--spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);  /* 弹簧回弹曲线 */
-	--ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);      /* 舒缓缓冲曲线 */
+	--spring-curve: cubic-bezier(0.34, 1.56, 0.64, 1);  /* 弹簧回弹（交互悬停） */
+	--ease-buffer: cubic-bezier(0.22, 1, 0.36, 1);      /* 舒缓缓冲（模糊溶解） */
+	--ease-expo: cubic-bezier(0.16, 1, 0.3, 1);          /* 展式缓出（出场主曲线：丝滑长尾收尾） */
 }
 
-.reveal {
+/* ⚠️ 2026-09-29（W1）渐进增强：隐藏初态一律挂在 html.js 下。
+   语义从「默认藏、等 JS 解锁」改为「**先证明 JS 在跑，才藏**」——
+   原来只要 hydration 没跑到（脚本被延迟/失败/报错），整站就是空白页。
+   现在最坏情况只是没有入场动画。html.js 由 app.html 的内联探针打上。 */
+html:where(.js) .reveal {
 	opacity: 0;
-	transform: translateY(24px) scale(0.985);
+	transform: translateY(30px) scale(0.98);
+	filter: blur(10px);
 	transition:
-		opacity 0.65s var(--spring-curve),
-		transform 0.7s var(--spring-curve);
-	transition-delay: calc(var(--reveal-delay, 0) * 80ms);
-	will-change: opacity, transform;
+		opacity 0.9s var(--ease-expo),
+		transform 0.95s var(--ease-expo),
+		filter 0.8s var(--ease-buffer);
+	transition-delay: calc(var(--reveal-delay, 0) * 70ms);
+	will-change: opacity, transform, filter;
 }
 
 .reveal.revealed {
 	opacity: 1;
 	transform: translateY(0) scale(1);
+	filter: blur(0);
 }
+
+	/* 标题遮罩揭开：clip-path 自上而下逐行揭开，比淡入更戏剧。
+	   与 blur 溶解叠加，clip-path 比 fade 晚 90ms 起，形成「先显形、后展开」的层叠感。
+	   （同样只在 html.js 下隐藏，见上方注释） */
+	html:where(.js) .reveal-mask {
+		clip-path: inset(0 0 100% 0);
+		transition-property: opacity, transform, filter, clip-path;
+		transition-duration: 0.9s, 0.95s, 0.8s, 1.15s;
+		transition-timing-function: var(--ease-expo), var(--ease-expo), var(--ease-buffer), var(--ease-expo);
+		transition-delay:
+			calc(var(--reveal-delay, 0) * 70ms),
+			calc(var(--reveal-delay, 0) * 70ms),
+			calc(var(--reveal-delay, 0) * 70ms),
+			calc(var(--reveal-delay, 0) * 70ms + 90ms);
+	}
+	.reveal-mask.revealed {
+		clip-path: inset(0);
+	}
 
 @media (prefers-reduced-motion: reduce) {
 	.reveal {
 		opacity: 1 !important;
 		transform: none !important;
 		transition: none !important;
+	}
+	.reveal-mask {
+		clip-path: none !important;
 	}
 }
 
@@ -558,6 +587,9 @@
 	.reveal {
 		opacity: 1 !important;
 		transform: none !important;
+	}
+	.reveal-mask {
+		clip-path: none !important;
 	}
 }
 
@@ -1206,4 +1238,360 @@ body > .modal-root-fix { z-index: 80; }
 .rhine-docs .prose pre {
 	border-radius: 2px;
 	border: 1px solid var(--rhine-rule-alpha);
+}
+
+
+/* ════════════════════════════════════════════════════════════════════
+   编辑流体 Editorial Fluid (E+F) · 组件层
+   杂志式组件形态（信号线标签 / 衬线大标题 / 大数字 / 编号 / 无框 hairline 列表 /
+   pill CTA / 跑马灯 / 首字下沉）。配色随令牌走，暖系或冷系都成立。
+   ════════════════════════════════════════════════════════════════════ */
+@layer components {
+	.ef-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.625rem;
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--muted-foreground);
+	}
+	.ef-label::before {
+		content: "";
+		width: 1.5rem;
+		height: 1px;
+		flex: none;
+		background: var(--accent);
+	}
+
+	.ef-hero-title {
+		font-family: var(--font-heading);
+		font-weight: 600;
+		letter-spacing: -0.03em;
+		line-height: 0.98;
+		font-size: clamp(2.75rem, 8.5vw, 5.25rem);
+	}
+
+	.ef-big-num {
+		font-family: var(--font-heading);
+		font-weight: 600;
+		font-size: clamp(2.75rem, 5.5vw, 4.25rem);
+		line-height: 1;
+		letter-spacing: -0.02em;
+	}
+
+	.ef-num {
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		letter-spacing: 0.12em;
+		color: var(--accent);
+	}
+
+	.ef-list-row {
+		display: flex;
+		align-items: baseline;
+		gap: 1rem;
+		padding: 1rem 0;
+		border-bottom: 1px solid var(--hairline);
+		transition: padding 0.45s var(--ease-expo);
+	}
+	.ef-list-row:hover {
+		padding-left: 0.75rem;
+	}
+
+	.ef-cta {
+		border-radius: 9999px;
+		padding: 0.625rem 1.375rem;
+		font-weight: 600;
+		transition:
+			transform 0.4s var(--spring-curve),
+			box-shadow 0.4s var(--ease-expo);
+	}
+	.ef-cta:hover {
+		transform: translateY(-2px);
+	}
+
+	.ef-marquee {
+		overflow: hidden;
+		-webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+		mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+	}
+	.ef-marquee-track {
+		display: flex;
+		gap: 2.5rem;
+		width: max-content;
+		animation: ef-marquee 26s linear infinite;
+	}
+	.ef-marquee-track > * {
+		display: flex;
+		gap: 2.5rem;
+		flex: none;
+		align-items: center;
+	}
+
+	.ef-drop-cap > p:first-of-type::first-letter {
+		font-family: var(--font-heading);
+		font-weight: 600;
+		font-size: 3.1em;
+		line-height: 0.8;
+		float: left;
+		padding: 0.08em 0.14em 0 0;
+		color: var(--accent);
+	}
+}
+
+@keyframes ef-marquee {
+	to {
+		transform: translateX(-50%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ef-marquee-track {
+		animation: none;
+	}
+	.ef-list-row,
+	.ef-cta {
+		transition: none;
+	}
+	.ef-cta:hover {
+		transform: none;
+	}
+}
+
+
+/* ════════════════════════════════════════════════════════════════════
+   v2 · 统一布局系统 + 遮罩效果库
+   容器四档 / 区块节奏 / 区块标题 / 统一网格 / 统一卡片
+   遮罩：横向揭开 · 纵向升起 · 双向夹击 · 线条描绘 · 字符级揭开
+   ════════════════════════════════════════════════════════════════════ */
+:root {
+  --shell-narrow: 720px;
+  --shell-content: 980px;
+  --shell-wide: 1200px;
+  --shell-max: 1400px;
+  --section-pad: 5rem;
+  --section-pad-lg: 7rem;
+  --hairline: color-mix(in oklab, var(--foreground) 12%, transparent);
+}
+
+@layer components {
+  /* ── 统一容器（四档宽度）── */
+  .ef-shell { width: 100%; max-width: var(--shell-content); margin-inline: auto; padding-inline: 1.5rem; }
+  .ef-shell--narrow { max-width: var(--shell-narrow); }
+  .ef-shell--wide { max-width: var(--shell-wide); }
+  .ef-shell--max { max-width: var(--shell-max); }
+  @media (min-width: 768px) { .ef-shell { padding-inline: 2rem; } }
+
+  /* ── 统一区块节奏 ── */
+  .ef-section { padding-block: var(--section-pad); }
+  .ef-section--lg { padding-block: var(--section-pad-lg); }
+  .ef-section--tight { padding-block: 3rem; }
+
+  /* ── 统一区块标题（信号线 + 衬线大标题 + 副标题）── */
+  .ef-section-head { display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 2.5rem; max-width: 48ch; }
+  .ef-section-head .ef-title {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    font-size: clamp(1.875rem, 4vw, 2.75rem);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+  }
+  .ef-section-head .ef-sub { color: var(--muted-foreground); font-size: 1rem; line-height: 1.7; }
+
+  /* ── 统一网格 ── */
+  .ef-grid { display: grid; gap: 1.5rem; }
+  .ef-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ef-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ef-grid-auto { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  @media (max-width: 767px) { .ef-grid-2, .ef-grid-3 { grid-template-columns: 1fr; } }
+
+  /* ── 统一卡片（无框 hairline + 遮罩浮起）── */
+  .ef-card {
+    display: flex; flex-direction: column; gap: 0.9rem;
+    padding: 1.75rem;
+    border: 1px solid var(--hairline);
+    border-radius: 1rem;
+    background: color-mix(in oklab, var(--muted) 26%, transparent);
+    transition:
+      border-color 0.55s var(--ease-expo),
+      transform 0.55s var(--ease-expo),
+      background-color 0.55s var(--ease-expo),
+      box-shadow 0.55s var(--ease-expo);
+  }
+  .ef-card:hover {
+    border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+    transform: translateY(-4px);
+    background: color-mix(in oklab, var(--muted) 46%, transparent);
+    box-shadow: 0 20px 44px -24px color-mix(in oklab, var(--foreground) 32%, transparent);
+  }
+  .ef-card-icon {
+    display: grid; place-items: center;
+    width: 2.75rem; height: 2.75rem;
+    border-radius: 0.75rem;
+    background: color-mix(in oklab, var(--accent) 14%, transparent);
+    color: var(--accent);
+  }
+
+  /* ── 遮罩①：横向揭开（卡片 / 列表行 / 图片，从左向右）──
+     以下四种遮罩同样只在 html.js 下隐藏初态（见上方 .reveal 的注释）。 */
+  html:where(.js) .reveal-wipe {
+    clip-path: inset(0 100% 0 0);
+    transition:
+      clip-path 0.95s var(--ease-expo),
+      opacity 0.6s var(--ease-expo);
+    transition-delay:
+      calc(var(--reveal-delay, 0) * 70ms),
+      calc(var(--reveal-delay, 0) * 70ms);
+    will-change: clip-path;
+  }
+  .reveal-wipe.revealed { clip-path: inset(0 0 0 0); }
+
+  /* ── 遮罩②：纵向升起（封面图 / 媒体，从下向上）── */
+  html:where(.js) .reveal-rise {
+    clip-path: inset(100% 0 0 0);
+    transition:
+      clip-path 1.05s var(--ease-expo),
+      opacity 0.65s var(--ease-expo);
+    transition-delay:
+      calc(var(--reveal-delay, 0) * 70ms),
+      calc(var(--reveal-delay, 0) * 70ms);
+    will-change: clip-path;
+  }
+  .reveal-rise.revealed { clip-path: inset(0); }
+
+  /* ── 遮罩③：双向夹击（强调元素，从中线向上下展开）── */
+  html:where(.js) .reveal-clamp {
+    clip-path: inset(50% 0);
+    transition:
+      clip-path 0.9s var(--ease-expo),
+      opacity 0.5s var(--ease-expo);
+    transition-delay:
+      calc(var(--reveal-delay, 0) * 70ms),
+      calc(var(--reveal-delay, 0) * 70ms);
+    will-change: clip-path;
+  }
+  .reveal-clamp.revealed { clip-path: inset(0); }
+
+  /* ── 遮罩④：线条描绘（分割线 / 下划线，scaleX 0→1）── */
+  html:where(.js) .ef-draw {
+    display: block;
+    height: 1px;
+    width: 100%;
+    background: linear-gradient(90deg, var(--accent), transparent 85%);
+    transform-origin: left center;
+    transform: scaleX(0);
+    transition: transform 1.15s var(--ease-expo);
+    transition-delay: calc(var(--reveal-delay, 0) * 70ms);
+  }
+  .ef-draw.revealed { transform: scaleX(1); }
+
+  /* ── 遮罩⑤：字符级揭开（由 splitReveal action 注入逐字 span）── */
+  .ef-split { display: inline; }
+  .ef-split > span {
+    display: inline-block;
+    clip-path: inset(0 0 105% 0);
+    opacity: 0;
+    transform: translateY(0.35em) scale(1.05);
+    will-change: clip-path, opacity, transform;
+  }
+  .ef-split.play > span {
+    clip-path: inset(0);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition:
+      clip-path 0.85s var(--ease-expo),
+      opacity 0.45s ease,
+      transform 0.9s var(--ease-expo);
+  }
+}
+
+/* 统一区块标题里的线条（配合 reveal 触发） */
+.ef-section-head.ef-draw-host { position: relative; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-wipe, .reveal-rise, .reveal-clamp {
+    clip-path: none !important;
+    transition: none !important;
+  }
+  .ef-draw { transform: scaleX(1) !important; transition: none !important; }
+  .ef-split > span {
+    clip-path: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .ef-card { transition: none !important; }
+  .ef-card:hover { transform: none !important; }
+}
+@media (scripting: none) {
+  .reveal-wipe, .reveal-rise, .reveal-clamp { clip-path: none !important; }
+  .ef-draw { transform: scaleX(1) !important; }
+  .ef-split > span { clip-path: none !important; opacity: 1 !important; transform: none !important; }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   兜底闸（2026-09-29 W1）—— 与 app.html 里的 3s 内联定时器配对。
+
+   为什么需要：noscript / @media (scripting: none) / prefers-reduced-motion
+   这三重兜底，都只覆盖「脚本压根不执行」或「用户主动要求减少动效」。
+   覆盖不到最阴的一种 —— **脚本加载了、但没跑起来**（被 Rocket Loader 之类
+   的加载器推迟、CSP 拦截、chunk 404、hydration 抛错）。此时 html.js 已经
+   打上（所以内容被藏了），而 revealed 永远加不上 → 整站空白。
+
+   内联定时器在 3s 后检查 html.app-ready（由 +layout.svelte 的 onMount 打上）；
+   没打上就加 html.reveal-late，由下面这条**非分层**规则强制放行。
+   非分层 + !important → 压过 @layer components 里那几条遮罩规则。
+   ════════════════════════════════════════════════════════════════════ */
+html.reveal-late .reveal,
+html.reveal-late .reveal-mask,
+html.reveal-late .reveal-wipe,
+html.reveal-late .reveal-rise,
+html.reveal-late .reveal-clamp,
+html.reveal-late .ef-draw {
+	opacity: 1 !important;
+	transform: none !important;
+	filter: none !important;
+	clip-path: none !important;
+	transition: none !important;
+	will-change: auto !important;
+}
+
+/* ═══════════ 灵动微交互 v3 ═══════════ */
+html { scroll-behavior: smooth; }
+
+/* 鼠标光晕：跟随光标的环境光斑（桌面端） */
+.cursor-glow {
+	position: fixed;
+	width: 360px;
+	height: 360px;
+	border-radius: 50%;
+	pointer-events: none;
+	z-index: 4;
+	background: radial-gradient(circle, color-mix(in oklab, var(--accent) 9%, transparent) 0%, transparent 68%);
+	transform: translate(-50%, -50%);
+	opacity: 0;
+	transition: opacity 0.5s var(--ease-buffer);
+	will-change: transform, opacity;
+}
+.cursor-glow.on { opacity: 1; }
+
+/* 通用卡片/按钮 hover 灵动 */
+.ef-card, .ef-cta, .btn { transition: transform 0.45s var(--spring-curve), box-shadow 0.45s var(--ease-buffer), border-color 0.45s var(--ease-buffer), background-color 0.45s var(--ease-buffer); }
+.ef-card:hover, .ef-cta:hover { transform: translateY(-3px); }
+
+/* 链接下划线灵动 */
+a { text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 0.3s var(--ease-buffer), color 0.3s var(--ease-buffer); }
+
+/* 图片柔和放大（hover 灵动） */
+img { transition: transform 0.6s var(--ease-buffer), filter 0.6s var(--ease-buffer); }
+
+/* 平滑滚动锚点留白 */
+[id] { scroll-margin-top: 72px; }
+
+/* 减少动态效果时全部关闭 */
+@media (prefers-reduced-motion: reduce) {
+	html { scroll-behavior: auto; }
+	.cursor-glow { display: none; }
 }

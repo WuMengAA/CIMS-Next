@@ -20,7 +20,7 @@
 	let backupPass = $state("");
 	let bgStyle = $state("aurora");
 	let bgColor1 = $state("#cc785c");
-	let bgColor2 = $state("#8b5cf6");
+	let bgColor2 = $state("#cc785c");
 	let bgColor3 = $state("#0ea5e9");
 	let bgIntensity = $state(0.5);
 	let bgSpeed = $state(1);
@@ -45,7 +45,7 @@
 					icon: f.icon || "sparkles"
 				}));
 				const bg = s.background || {};
-				bgStyle = bg.style || "aurora"; bgColor1 = bg.color1 || "#cc785c"; bgColor2 = bg.color2 || "#8b5cf6"; bgColor3 = bg.color3 || "#0ea5e9";
+				bgStyle = bg.style || "aurora"; bgColor1 = bg.color1 || "#cc785c"; bgColor2 = bg.color2 || "#cc785c"; bgColor3 = bg.color3 || "#0ea5e9";
 				bgIntensity = bg.intensity ?? 0.5; bgSpeed = bg.speed ?? 1; bgParticles = bg.particles ?? true;
 			intensityArr = [bg.intensity ?? 0.5]; speedArr = [bg.speed ?? 1];
 			}

@@ -2,8 +2,8 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Check, X, ShieldPlus, AlertTriangle } from "@lucide/svelte";
-	import { roleToLevel, ROLE_LABELS, LEVEL_LABELS, PROOF_TYPE_LABELS } from "$lib/permissions.js";
-	import type { Role, Level } from "$lib/permissions.js";
+	import { roleRank, ROLE_LABELS, PROOF_TYPE_LABELS } from "$lib/permissions.js";
+	import type { Role } from "$lib/permissions.js";
 
 	interface Req {
 		id: string; username: string; fromRole: string; fromLevel: number;
@@ -23,14 +23,15 @@
 	let notes = $state<Record<string, string>>({});
 	let busy = $state<Record<string, boolean>>({});
 
-	// 审批人自己的等级：低于等于目标等级的申请，服务端会拒（「不得自行放权」）。
+	// 审批人自己的角色秩：低于等于目标角色秩的申请，服务端会拒（「不得自行放权」）。
 	// 前端把这一条提前显示，避免管理员点了才吃到 400 却不知为何。
+	// ⚠️ #248：这里用的是角色秩（ROLE_RANK），与经验等级（xp→Lv）无关。
 	const myRole = $derived((data?.user?.role ?? null) as Role | null);
-	const myLevel = $derived(roleToLevel(myRole));
-	const canReview = $derived(myLevel !== null && myLevel >= 5);
+	const myRank = $derived(roleRank(myRole));
+	const canReview = $derived(myRank >= 5);
 
 	const label = (r: string) => ROLE_LABELS[r as Role] ?? r;
-	const lvLabel = (n: number) => LEVEL_LABELS[n as Level] ?? `L${n}`;
+	const rankLabel = (n: number) => (n >= 1 ? `第${n}档` : "未定档");
 
 	async function load() {
 		loading = true;
@@ -74,7 +75,7 @@
 	<div>
 		<h1 class="font-heading text-2xl font-semibold">权限申请</h1>
 		<p class="text-sm text-muted-foreground">
-			审核用户提交的等级晋升申请。通过后<strong>立即改写该用户的角色</strong>（无需其重新登录）。
+			审核用户提交的角色晋升申请。通过后<strong>立即改写该用户的角色</strong>（无需其重新登录）。
 		</p>
 	</div>
 	<div class="flex items-center gap-2">
@@ -85,7 +86,7 @@
 
 {#if !canReview}
 	<p class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700">
-		你的等级（{myLevel === null ? "未识别" : lvLabel(myLevel)}）不具备审批权限（需 L5 及以上）。
+		你的角色秩（{myRank < 1 ? "未识别" : `第${myRank}档`}）不具备审批权限（需秩 5 及以上）。
 	</p>
 {/if}
 
@@ -102,13 +103,13 @@
 {:else}
 	<div class="max-w-3xl space-y-3">
 		{#each requests as r (r.id)}
-			{@const blocked = myLevel !== null && myLevel <= r.targetLevel}
+			{@const blocked = myRank <= r.targetLevel}
 			<div class="rounded-lg border p-4">
 				<div class="flex flex-wrap items-center gap-2">
 					<ShieldPlus class="size-4 shrink-0 text-primary" />
 					<span class="font-medium">{r.username}</span>
 					<span class="text-xs text-muted-foreground">
-						{lvLabel(r.fromLevel)} {label(r.fromRole)} → <strong>{lvLabel(r.targetLevel)} {label(r.targetRole)}</strong>
+						{rankLabel(r.fromLevel)} {label(r.fromRole)} → <strong>{rankLabel(r.targetLevel)} {label(r.targetRole)}</strong>
 					</span>
 					{#if r.status === "pending"}<Badge variant="outline">待审核</Badge>{/if}
 					{#if r.status === "approved"}<Badge>已通过</Badge>{/if}
@@ -153,7 +154,7 @@
 					{#if blocked}
 						<p class="mt-3 flex items-center gap-1 text-xs text-amber-700">
 							<AlertTriangle class="size-3.5" />
-							你的等级（L{myLevel}）不高于目标等级（L{r.targetLevel}）—— 按「不得自行放权」规则无法审批，需更高等级管理员处理。
+							你的角色秩（第{myRank}档）不高于目标角色秩（第{r.targetLevel}档）—— 按「不得自行放权」规则无法审批，需更高档位管理员处理。
 						</p>
 					{:else if r.username === data?.user?.username}
 						<p class="mt-3 flex items-center gap-1 text-xs text-amber-700">

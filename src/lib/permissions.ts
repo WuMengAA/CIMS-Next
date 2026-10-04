@@ -60,6 +60,11 @@ export type DeviceTier = "watch" | "control" | "remote" | "manage";
  *   file     传文件（上传并推送到教室）
  *   shutdown 关机（**仅学校管理员**；含 reboot 同级危险动作）
  */
+// 软件管控拆成两格（老板 2026-09-27 定案：班主任能关，任课老师只能看）。
+// 拆两格而不是一格，是为了让「看」和「关」在服务端分别裁决 —— 客户端不得自判。
+// 设备日志再单列一格（logs_view，老板 2026-09-27 定案）：查日志是排障手段，
+// 任课老师/电教委员也该能看（看到了才会去喊人），故与「关机」等危险位彻底分开，
+// 且**不改变任何既有动作的权限** —— 只新增这一档。
 export type DeviceAction =
 	| "watch"
 	| "playback"
@@ -67,7 +72,10 @@ export type DeviceAction =
 	| "voice"
 	| "notify"
 	| "file"
-	| "shutdown";
+	| "shutdown"
+	| "apps_view"
+	| "apps_stop"
+	| "logs_view";
 
 export const DEVICE_ACTION_LABELS: Record<DeviceAction, string> = {
 	watch: "监控",
@@ -76,7 +84,10 @@ export const DEVICE_ACTION_LABELS: Record<DeviceAction, string> = {
 	voice: "发语音",
 	notify: "发通知",
 	file: "传文件",
-	shutdown: "关机"
+	shutdown: "关机",
+	apps_view: "查看运行软件",
+	apps_stop: "关闭运行软件",
+	logs_view: "查看设备日志"
 };
 
 /**
@@ -88,11 +99,14 @@ export const DEVICE_ACTION_LABELS: Record<DeviceAction, string> = {
  *   user / viewer / editor / moderator → 一律无设备动作（双重严禁里的后端半边）。
  */
 const ROLE_DEVICE_ACTIONS: Record<Role, DeviceAction[]> = {
-	owner: ["watch", "playback", "remote", "voice", "notify", "file", "shutdown"],
-	admin: ["watch", "playback", "remote", "voice", "notify", "file", "shutdown"],
-	homeroom: ["watch", "playback", "remote", "voice", "notify", "file"],
-	teacher: ["file"],
-	techrep: ["file"],
+	// 软件管控：管理员/班主任可看可关；任课老师与电教委员只能看（由 apps_view / apps_stop 两格区分）。
+	// 设备日志（logs_view）：与「能进面板看设备」同集 —— 站长/管理员/班主任/任课老师/电教委员都能看
+	// （排障用：老师看到「这台机器一直在回报失败」才会去喊人；日志内容已在桌面端脱敏）。
+	owner: ["watch", "playback", "remote", "voice", "notify", "file", "shutdown", "apps_view", "apps_stop", "logs_view"],
+	admin: ["watch", "playback", "remote", "voice", "notify", "file", "shutdown", "apps_view", "apps_stop", "logs_view"],
+	homeroom: ["watch", "playback", "remote", "voice", "notify", "file", "apps_view", "apps_stop", "logs_view"],
+	teacher: ["file", "apps_view", "logs_view"],
+	techrep: ["file", "apps_view", "logs_view"],
 	editor: [],
 	moderator: [],
 	user: [],
@@ -411,8 +425,15 @@ export const TITLES: Record<TitleKey, Title> = {
 	classTeacher: {
 		key: "classTeacher",
 		label: "任课教师",
-		description: "进入集控面板使用传文件等班级教学功能（≤2 班；不含监控与广播）。",
-		actions: ["viewConsole"]
+		description: "进入集控面板：向本班发通知（普通公告/岛通知）、传文件（≤2 班；不含监控与设备控制）。",
+		// ⚠️ sendBroadcast 必须在这里 —— 任课教师发通知是**内容能力**，与设备轴无关。
+		// 2026-10-01：此前只给 viewConsole，导致 ROLE_NOTICE_TYPES.teacher 里的
+		// notice/island（以及 ext 路由 /notices 的 isBroadcastable 判据、本文件
+		// NoticeType 注释「老师也能发本班上课提醒」）**全部不可达** ——
+		// 老师点发送必然 403「当前账号没有广播权限」，等于用户明示的
+		//「普通教师可以给自己班级发消息」被静默关掉。范围仍由 ROLE_SCOPE.teacher
+		// = "class" 收敛到本班，并由 user_class_bindings 二次强制。
+		actions: ["viewConsole", "sendBroadcast"]
 	},
 	broadcaster: {
 		key: "broadcaster",
@@ -709,9 +730,20 @@ const ROLE_SCOPE: Record<Role, BroadcastScope | null> = {
 	admin: "school",
 	editor: "school",
 	moderator: "grade",
-	// v2（2026-09-25 用户矩阵）：发通知收归班主任，老师只传文件 → 不能广播。
-	teacher: null,
-	// 班主任：发通知只到**本班**（1 个班；旧方案的本班·年级广播被 v2 收紧）。
+	// 任课教师：**本班**广播（2026-09-21 用户原话「除了电教委员、班主任、站长可以控制设备
+	// 的内容，普通教师则是可以给自己班级发消息；其他闲人拉一边去」）。
+	// 2026-10-01 修回：v2 曾写成 null（=完全不能广播），与 ROLE_NOTICE_TYPES.teacher
+	// = [notice, island]、ext 路由注释「老师仍须能发本班通知」、CIMS-判据详解「普通教师
+	// 只给本班发消息/广播」三处自相矛盾 —— 且那份 notice/island 因此永不可达。
+	// 范围收敛：class 档 + 绑班校验（ext /notices 里 broadcastScope==="class" 分支
+	// 会拒掉未绑定与非本班目标）。教师无设备档，二者正交。
+	teacher: "class",
+	// 班主任：发通知到**本班**。
+	// ⚠️ 判据写的是「本班·年级广播」，但当前 CIMS 班级数据**没有年级轴**
+	// （/class/list 的 graduation_year / class_number 实测全为 null，12 个班就叫
+	// 1班…12班），没有可靠的「同年级」集合可算。硬开 grade 会让 ext 路由跳过
+	// 绑班校验（那个分支只对 "class" 生效）→ 班主任可指定任意 class_id 下发
+	// = 越权。故在 CIMS 班级带上年级信息之前，维持 class（范围更窄，永远安全）。
 	homeroom: "class",
 	techrep: "class",
 	user: "class",

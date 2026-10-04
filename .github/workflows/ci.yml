@@ -125,6 +125,14 @@ jobs:
       - name: 面板静态资源完整性
         run: node scripts/check-console-assets.mjs
 
+      # 阻断级：.svelte 里出现 process.env 必须拦下。
+      # SvelteKit 在**客户端产物**里把 process.env 替换成空对象字面量 `({})`，
+      # 于是 `process.env.FOO` 在浏览器里恒为 undefined —— 不报错、不告警、构建照过，
+      # 只让 SSR 与 hydration 结果不一致，并渲染出与事实相反的提示（运维会照此走进死胡同）。
+      # 2026-09-26 实际发生过一次（admin/oauth 页把「已配置」显示成「未配置」，已修）。
+      - name: .svelte 客户端边界（禁止 process.env）
+        run: node scripts/check-svelte-client-env.mjs
+
   agent-node:
     name: Node 代理链路自测
     runs-on: ubuntu-24.04

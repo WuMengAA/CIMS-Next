@@ -10,7 +10,7 @@
 
 	// 互动广播发布面板（网站端）：在集控「通知广播」能力之上补一个**一键发布**入口——
 	// 发布按钮 + 发布确认 + 回执状态展示，对接现有广播接口
-	// POST /api/console/ext/notices（该接口会在服务端把通知**真推送到教室端大屏**）。
+	// POST /api/console/control/notices（该接口会在服务端把通知**真推送到教室端大屏**）。
 	//
 	// 为什么放这里（/admin/console/broadcast）而不是 /admin/broadcast：
 	// 后台非 console 路由统一卡 viewAdmin(L5)，而广播是「设备轴 control + 广播范围」
@@ -34,10 +34,19 @@
 
 	let title = $state("");
 	let content = $state("");
-	let scope = $state<"本班" | "本年级" | "全校">("本班");
+	// ⚠️ 2026-10-01 修：范围下拉原先把 本班/本年级/全校 三档**写死**，而本页没有任何权限来源
+	//    （没有 +page.server.ts，也不拉 /api/me），于是任课老师同样能选「全校」，
+	//    一点发布就是服务端 403「当前账号最多只能广播到「本班」」。
+	//    现在 onMount 拉 /api/me 的 identity.broadcastScopes，只列出真的发得出去的档，
+	//    并把默认值定在该账号的上限（永远发得出去）。
+	const SCOPE_ORDER = ["class", "grade", "school"] as const;
+	const SCOPE_LABEL: Record<string, string> = { class: "本班", grade: "本年级", school: "全校" };
+	let scopeOptions = $state<string[]>(["class"]);
+	let maxLabel = $state("本班");
+	let scope = $state<string>("本班");
 	let duration = $state<number | undefined>(undefined);
 
-	// v2（2026-09-25）：目标班级只从 CIMS 真实班级出（/api/classes）。
+	// v2（2026-09-25；2026-10-04 班级域收口 → /api/class/list）：目标班级只从真实班级出。
 	// 旧版是手输自由文本（"多个班级用逗号分隔"）——拼错一个字就静默发不到，
 	// 也没有了“班级选择列表不真实”的另一个入口。取不到=明示错误，绝不放假班。
 	let classOptions = $state<{ class_id: string; name: string }[]>([]);
@@ -46,16 +55,28 @@
 
 	onMount(async () => {
 		try {
-			const res = await fetch("/api/classes");
+			const res = await fetch("/api/class/list");
 			const d = await res.json();
 			if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
 			classOptions = (d.classes ?? []).map((c: { class_id?: string; name?: string }) => ({
 				class_id: String(c.class_id ?? ""),
 				name: String(c.name ?? c.class_id ?? "")
-			})).filter((c) => c.class_id);
+			})).filter((c: { class_id: string }) => Boolean(c.class_id));
 		} catch (e) {
 			classOptionsErr = (e as Error).message || "班级列表加载失败";
 		}
+		// 广播范围：按当前账号的真实上限（服务端 identity.broadcastScopes）决定可选档。
+		// 拉不到就维持最窄档 —— 安全侧永远收敛，绝不因为一个失败请求放开范围。
+		try {
+			const me = await (await fetch("/api/me")).json();
+			const allowed: string[] = me?.identity?.broadcastScopes ?? [];
+			const opts = SCOPE_ORDER.filter((s) => allowed.includes(s));
+			if (opts.length) {
+				scopeOptions = [...opts];
+				maxLabel = SCOPE_LABEL[opts[opts.length - 1]];
+				scope = maxLabel;
+			}
+		} catch { /* 维持最窄档 */ }
 	});
 
 	function parseClasses(): string[] {
@@ -71,6 +92,8 @@
 			toast.error("请填写广播标题");
 			return;
 		}
+		// 纵深防御：绕过下拉（改 DOM / 旧缓存页面）时也把范围收敛到账号上限。
+		if (!scopeOptions.some((s) => SCOPE_LABEL[s] === scope)) scope = maxLabel;
 		confirming = false;
 		submitting = true;
 		result = null;
@@ -86,7 +109,7 @@
 			if (scope === "本班" && classes.length) body.classes = classes;
 			if (Number.isFinite(durRaw) && durRaw > 0) body.duration_seconds = Math.min(durRaw, 3600);
 
-			const res = await fetch("/api/console/ext/notices", {
+			const res = await fetch("/api/console/control/notices", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body)
@@ -100,8 +123,8 @@
 			result = d;
 			const b = d.broadcast;
 			if (b?.deduped) toast.success("内容重复，未重复下发（去重窗口内）");
-			else if (b && (b.delivered ?? 0) > 0) toast.success(`已发布并推送到 ${b.delivered} 台设备`);
-			else if (b?.error) toast.warning(`已留痕，但推送未送达：${b.error}`);
+			else if (b && (b.delivered ?? 0) > 0) toast.success(`已下发到 ${b.delivered} 台设备（是否收到看「指令回执」）`);
+			else if (b?.error) toast.warning(`已留痕，但未下发成功：${b.error}`);
 			else toast.success("已发布");
 		} catch (e) {
 			result = { error: "网络错误，请重试" };
@@ -153,9 +176,7 @@
 						bind:value={scope}
 						class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
 					>
-						<option value="本班">本班</option>
-						<option value="本年级">本年级</option>
-						<option value="全校">全校</option>
+						{#each scopeOptions as s (s)}<option value={SCOPE_LABEL[s]}>{SCOPE_LABEL[s]}</option>{/each}
 					</select>
 				</div>
 				<div class="grid gap-1.5">
@@ -239,10 +260,15 @@
 					<div class="flex items-center gap-2"><span class="text-muted-foreground">范围：</span><Badge variant="secondary">{result.scope}</Badge></div>
 					{#if result.broadcast}
 						<div class="flex items-center gap-2">
-							<span class="text-muted-foreground">推送：</span>
+							<span class="text-muted-foreground">已下发：</span>
 							<span>
 								{result.broadcast.deduped ? "去重命中，未重复下发" : `${result.broadcast.delivered ?? 0} / ${result.broadcast.total ?? 0} 台设备`}
 							</span>
+							<!-- 诚实 UI：CIMS 回 200 只代表「入队成功」，不代表设备收到。
+							     真正的送达要看设备回执（指令回执页），不能在这里冒充送达。 -->
+							{#if !result.broadcast.deduped}
+								<a href="/admin/console/receipts" class="text-xs text-primary underline-offset-4 hover:underline">去「指令回执」看是否收到 →</a>
+							{/if}
 						</div>
 						{#if result.broadcast.error}
 							<div class="flex items-center gap-2 text-amber-600"><AlertTriangle class="size-3.5" /><span>推送警告：{result.broadcast.error}</span></div>

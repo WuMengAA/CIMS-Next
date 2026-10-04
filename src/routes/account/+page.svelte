@@ -125,7 +125,7 @@
 	<title>账号 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 md:px-8">
+<div class="ef-shell ef-shell--narrow flex flex-col gap-8 py-10">
 	<header class="flex flex-col gap-2">
 		<h1 class="font-heading text-3xl font-semibold tracking-tight">账号</h1>
 		<p class="text-sm text-muted-foreground">个人资料、登录状态、密码与数据管理</p>

@@ -66,19 +66,14 @@
 		loading = true;
 		listError = "";
 		try {
-			const res = await fetch("/api/console/cims/class/list");
+			// 2026-10-04：切自有班级真源（彻底去 CIMS），响应 {classes, source}
+			const res = await fetch("/api/class/list");
 			const d = await res.json();
 			if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`);
-			allClasses = Array.isArray(d) ? (d as ClassItem[]) : [];
-			// 管理端：拉待审队列（count + 列表）
-			if (data.canReview) {
-				const pr = await fetch("/api/console/cims/class/pending");
-				const pd = await pr.json();
-				if (pr.ok && pd.status === "success") {
-					pending = (pd.classes ?? []) as PendingItem[];
-					pendingCount = Number(pd.count ?? pending.length);
-				}
-			}
+			allClasses = Array.isArray(d.classes) ? (d.classes as ClassItem[]) : [];
+			// 自有真源没有"待审队列"（建班即生效），管理端待审区不再拉 CIMS
+			pending = [];
+			pendingCount = 0;
 		} catch (e) {
 			listError = (e as Error).message || "加载失败";
 		} finally {
@@ -98,35 +93,27 @@
 	});
 
 	async function createClass() {
-		const gy = Number(gradYear);
-		const cn = Number(classNum);
-		if (!Number.isFinite(gy) || !Number.isFinite(cn) || gy <= 0 || cn <= 0) {
-			createMsg = { ok: false, text: "请填写有效的毕业年份与班号（如 2025 / 3）" };
+		// 2026-10-04：切自有建班（彻底去 CIMS）——只需班级名，建班即生效，无审核流
+		const name = classNameNew.trim();
+		if (!name) {
+			createMsg = { ok: false, text: "请填写班级名（如 13班 / 2025届3班）" };
 			return;
 		}
 		creating = true;
 		createMsg = null;
 		try {
-			const body: Record<string, unknown> = { graduation_year: gy, class_number: cn };
-			if (classNameNew.trim()) body.name = classNameNew.trim();
-			const res = await fetch("/api/console/cims/class/create", {
+			const res = await fetch("/api/class", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body)
+				body: JSON.stringify({ name })
 			});
 			const d = await res.json();
 			if (!res.ok) {
 				createMsg = { ok: false, text: d.error || `创建失败（HTTP ${res.status}）` };
 				return;
 			}
-			const st = d.review_status;
-			if (st === "pending") {
-				createMsg = { ok: true, text: "班级已提交，当前状态：班级审核中（待管理员审核通过后才能绑定设备）" };
-				toast.success("已提交，等待管理员审核");
-			} else {
-				createMsg = { ok: true, text: `班级已创建${st === "approved" ? "并审核通过" : ""}（${d.code || d.class_id}）` };
-				toast.success("班级已创建");
-			}
+			createMsg = { ok: true, text: `班级已创建：${d.class?.name ?? name}（${d.class?.class_id ?? ""}）` };
+			toast.success("班级已创建");
 			showCreate = false;
 			gradYear = "";
 			classNum = "";
@@ -140,32 +127,17 @@
 	}
 
 	async function review(id: string, action: "approve" | "reject") {
-		reviewingId = id;
-		try {
-			const res = await fetch(`/api/console/cims/class/${encodeURIComponent(id)}/review`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ action, reason: action === "reject" ? "管理员驳回" : "" })
-			});
-			const d = await res.json();
-			if (!res.ok) {
-				toast.error(d.error || "审核失败");
-				return;
-			}
-			toast.success(action === "approve" ? "已通过审核" : "已驳回");
-			await loadAll();
-		} catch {
-			toast.error("网络错误");
-		} finally {
-			reviewingId = "";
-		}
+		// 自有真源无审核流（建班即生效）——保留函数避免模板引用错误，实际不再调用
+		void id;
+		void action;
+		await loadAll();
 	}
 
 	loadAll();
 </script>
 
 <svelte:head>
-	<title>班级与审核 · 集控面板 | Stelarith</title>
+	<title>班级管理 · 集控面板 | Stelarith</title>
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
@@ -175,8 +147,8 @@
 			<UsersRound class="size-5" />
 		</div>
 		<div>
-			<h1 class="font-heading text-lg font-semibold">班级与审核</h1>
-			<p class="text-xs text-muted-foreground">管理班级实体与建班审核流（班级以 CIMS 为权威）</p>
+			<h1 class="font-heading text-lg font-semibold">班级管理</h1>
+			<p class="text-xs text-muted-foreground">班级实体由站点自有数据源维护（已脱离 CIMS），建班即生效</p>
 		</div>
 	</div>
 
@@ -222,24 +194,14 @@
 						<Button variant="outline" class="gap-1.5" onclick={() => (showCreate = true)}><Plus class="size-4" /> 新建班级</Button>
 					{:else}
 						<div class="mt-2 grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-							<div class="grid grid-cols-2 gap-3">
-								<div class="grid gap-1.5">
-									<Label for="gy">毕业年份</Label>
-									<Input id="gy" type="number" bind:value={gradYear} placeholder="如 2025" />
-								</div>
-								<div class="grid gap-1.5">
-									<Label for="cn">班号</Label>
-									<Input id="cn" type="number" bind:value={classNum} placeholder="如 3" />
-								</div>
-							</div>
 							<div class="grid gap-1.5">
-								<Label for="cn-name">班名（选填）</Label>
-								<Input id="cn-name" bind:value={classNameNew} placeholder="留空则按「{gradYear}届{classNum}班」生成" />
+								<Label for="cn-name">班级名</Label>
+								<Input id="cn-name" bind:value={classNameNew} placeholder="如 13班 / 2025届3班" />
 							</div>
 							{#if createMsg}<p class="text-sm {createMsg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}">{createMsg.text}</p>{/if}
 							<div class="flex items-center gap-2">
 								<Button onclick={createClass} disabled={creating} class="gap-1.5">
-									{#if creating}<Loader2 class="size-4 animate-spin" />{:else}<Plus class="size-4" />{/if} 提交建班
+									{#if creating}<Loader2 class="size-4 animate-spin" />{:else}<Plus class="size-4" />{/if} 创建班级
 								</Button>
 								<Button variant="outline" onclick={() => (showCreate = false)}>取消</Button>
 							</div>
@@ -248,40 +210,6 @@
 				</div>
 			{/if}
 		</section>
-
-		<!-- 管理端：待审队列 + 角标 -->
-		{#if data.canReview}
-			<section class="mt-4 rounded-xl border border-border/60 bg-card p-5 shadow-sm">
-				<div class="flex items-center justify-between gap-2">
-					<h2 class="flex items-center gap-2 font-heading text-base font-semibold"><Clock class="size-4" /> 待审队列</h2>
-					<Badge variant={pendingCount > 0 ? "destructive" : "secondary"} class="gap-1">
-						{pendingCount > 0 ? `待审 ${pendingCount}` : "无待审"}
-					</Badge>
-				</div>
-				{#if pending.length === 0}
-					<p class="mt-3 text-sm text-muted-foreground">当前没有待审核的班级。</p>
-				{:else}
-					<div class="mt-3 grid gap-2">
-						{#each pending as c (c.class_id)}
-							<div class="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-								<div class="min-w-0">
-									<div class="truncate text-sm font-medium">{c.name}{c.code && c.code !== c.name ? ` · ${c.code}` : ""}</div>
-									<div class="truncate text-xs text-muted-foreground">ID: {c.class_id}{c.owner_user_id ? ` · 属主 ${c.owner_user_id}` : ""}</div>
-								</div>
-								<div class="flex shrink-0 items-center gap-2">
-									<Button size="sm" class="gap-1" disabled={reviewingId === c.class_id} onclick={() => review(c.class_id, "approve")}>
-										<CheckCircle2 class="size-3.5" /> 通过
-									</Button>
-									<Button size="sm" variant="destructive" class="gap-1" disabled={reviewingId === c.class_id} onclick={() => review(c.class_id, "reject")}>
-										<XCircle class="size-3.5" /> 驳回
-									</Button>
-								</div>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</section>
-		{/if}
 
 		<div class="mt-4 flex justify-end">
 			<Button variant="ghost" size="sm" class="gap-1.5" onclick={loadAll}><RefreshCw class="size-3.5" /> 刷新</Button>

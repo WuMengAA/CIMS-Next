@@ -1,35 +1,62 @@
 <script lang="ts">
 	export let data: {
 		authed: boolean;
-		user: { username: string; displayName: string; role: string } | null;
+		user: { username: string; displayName: string; role: string; avatar?: string } | null;
+		client: { id: string; name: string; description?: string; loopback?: boolean; scopes?: string[] } | null;
 		error: string | null;
 		client_id: string;
 		redirect_uri: string;
 		state: string;
+		scope: string;
 		response_type: string;
 	};
 	export let form: { error?: string } | null = null;
 
 	const errMap: Record<string, string> = {
-		unsupported_response_type: "不支持的 response_type",
-		unauthorized_client: "未授权的客户端",
-		invalid_redirect_uri: "非法的回拨地址（必须为 http://127.0.0.1 的 /oauth-callback）"
+		unsupported_response_type: "不支持的 response_type（本站只支持 authorization code）",
+		unauthorized_client: "未授权的客户端（client_id 未在本站登记）",
+		invalid_redirect_uri: "非法的回拨地址（该客户端未登记这个地址）",
+		client_not_configured: "该客户端尚未配置密钥，请联系站长先在 .env 里补上",
+		client_disabled: "该客户端已被站长停用（配置保留，暂不发放授权）"
+	};
+
+	// scope 的中文说明：让用户知道自己到底授权了什么，而不是看到一串英文缩写。
+	const scopeLabels: Record<string, string> = {
+		profile: "读取你的昵称与头像",
+		email: "读取你的邮箱",
+		cims: "以你的身份使用集控功能"
 	};
 
 	$: shownError = form?.error ?? data.error;
+	$: clientName = data.client?.name ?? "第三方应用";
+	$: granted = (data.scope || "").split(/[\s,]+/).filter(Boolean);
 </script>
 
 <svelte:head>
-	<title>星集控 · 授权登录</title>
+	<title>授权登录 | Stelarith</title>
 </svelte:head>
 
 <div class="wrap">
 	<div class="card">
-		<h1>星集控 · 授权登录</h1>
-		<p class="sub">桌面集控端请求使用你的 Stelarith 网站账号登录</p>
+		<h1>授权登录</h1>
+		<p class="sub">{data.client?.description ?? `${clientName} 请求使用你的 Stelarith 账号登录`}</p>
 
 		{#if shownError}
 			<div class="err">{errMap[shownError] ?? shownError}</div>
+		{/if}
+
+		{#if data.client}
+			<div class="app">
+				<span class="app-name">{clientName}</span>
+				<span class="app-id">{data.client.id}</span>
+			</div>
+			{#if granted.length > 0}
+				<ul class="scopes">
+					{#each granted as s (s)}
+						<li>{scopeLabels[s] ?? `访问 ${s}`}</li>
+					{/each}
+				</ul>
+			{/if}
 		{/if}
 
 		{#if !data.authed}
@@ -38,6 +65,7 @@
 				<input type="hidden" name="client_id" value={data.client_id} />
 				<input type="hidden" name="redirect_uri" value={data.redirect_uri} />
 				<input type="hidden" name="state" value={data.state} />
+				<input type="hidden" name="scope" value={data.scope} />
 				<label>用户名 / 邮箱
 					<input name="username" autocomplete="username" required />
 				</label>
@@ -47,19 +75,29 @@
 				<button type="submit">登录并继续</button>
 			</form>
 		{:else}
-			<!-- 已登录：展示同意。原生提交，使 302 回拨到桌面端本地端口被浏览器跟随 -->
+			<!-- 已登录：展示同意。原生提交，使 302 回拨被浏览器跟随 -->
 			<p class="who">
+				{#if data.user?.avatar}
+					<img class="avatar" src={data.user.avatar} alt="" />
+				{/if}
 				当前登录：<b>{data.user?.displayName ?? data.user?.username}</b>
 				<span class="role">（{data.user?.role}）</span>
 			</p>
-			<p class="ask">是否授权「星集控桌面集控端」访问你的集控权限？</p>
+			<p class="ask">是否授权「{clientName}」使用你的 Stelarith 账号登录？</p>
 			<form method="POST" action="?/consent">
 				<input type="hidden" name="client_id" value={data.client_id} />
 				<input type="hidden" name="redirect_uri" value={data.redirect_uri} />
 				<input type="hidden" name="state" value={data.state} />
-				<button type="submit" class="primary">授权并登录桌面端</button>
+				<input type="hidden" name="scope" value={data.scope} />
+				<button type="submit" class="primary">授权并继续</button>
 			</form>
-			<p class="hint">授权后浏览器会跳回本地桌面端（http://127.0.0.1），你可关闭此页面。</p>
+			<p class="hint">
+				{#if data.client?.loopback}
+					授权后浏览器会跳回本地桌面端（http://127.0.0.1），你可关闭此页面。
+				{:else}
+					授权后浏览器会跳回 {clientName}，你可关闭此页面。
+				{/if}
+			</p>
 		{/if}
 	</div>
 </div>
@@ -100,6 +138,33 @@
 		font-size: 13px;
 		margin-bottom: 14px;
 	}
+	.app {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 8px;
+		background: #10141b;
+		border: 1px solid #232938;
+		border-radius: 10px;
+		padding: 10px 12px;
+		margin-bottom: 12px;
+	}
+	.app-name {
+		font-size: 14px;
+		font-weight: 600;
+	}
+	.app-id {
+		font-size: 11px;
+		color: #6f7a8c;
+		font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+	}
+	.scopes {
+		margin: 0 0 16px;
+		padding-left: 18px;
+		color: #9aa3b2;
+		font-size: 12px;
+		line-height: 1.7;
+	}
 	label {
 		display: block;
 		font-size: 13px;
@@ -133,6 +198,17 @@
 	}
 	.who {
 		font-size: 14px;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.avatar {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		object-fit: cover;
+		margin: 0;
+		padding: 0;
 	}
 	.role {
 		color: #9aa3b2;

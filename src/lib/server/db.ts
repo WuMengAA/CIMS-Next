@@ -274,15 +274,41 @@ CREATE INDEX IF NOT EXISTS idx_board_comments_issue ON board_issue_comments(issu
 --     绑定接口在写入前会实时校验存在性，绝不允许自由文本进这张表；
 --   · 一人可绑多班（老师带两个班），上限按角色收敛（班主任=1、电教委员=1、老师=2）；
 --   · 站长（owner/admin）不需要绑定 —— 他们的范围就是全校。
+-- 用户 ↔ 班级绑定（人归哪个班；**school_id 为多学校预留**，2026-10-05 定位 v2）
 CREATE TABLE IF NOT EXISTS user_class_bindings (
   uid        INTEGER NOT NULL,
+  school_id  TEXT    NOT NULL DEFAULT '',
   class_id   TEXT    NOT NULL,
   class_name TEXT    NOT NULL DEFAULT '',
   bound_by   TEXT    NOT NULL DEFAULT '',
   created_at TEXT    NOT NULL,
-  PRIMARY KEY (uid, class_id)
+  PRIMARY KEY (uid, school_id, class_id)
 );
 CREATE INDEX IF NOT EXISTS idx_ucb_class ON user_class_bindings(class_id);
+
+-- ── 设备 ↔ 班级绑定（2026-10-04，「取代 CIMS」第一步）────────────────────────
+-- 与上面 user_class_bindings（**人** ↔ 班级）正交：这张表管的是**机器**归哪个班。
+--
+-- 为什么必须落库：在此之前，"哪台机器在哪个班"只有 CIMS 的 /class/device-map 能回答；
+-- 接入码消费成功只把 usedBy 写在码上，设备→班级**不落任何库**（事后查不到、不可审计）。
+-- 一旦 CIMS 不可达，classOfDevice 直接返 null，面板就"不知道机器在哪班"。
+-- 现在站点自持这条映射：登记为准、可审计、CIMS 仅作兜底 —— 为"机器归班不再依赖
+-- CIMS 在线"打底。本表只做**登记**（记录事实），不做**准入**（不拦截未登记的设备）。
+--
+-- uid 直接作主键：一台机器只能归一个班，重复激活 = 改归属（幂等 upsert）。
+-- display_name 是管理员给机器起的"好认的名字"（如"高三3班讲台机"），空串则回落班级名。
+CREATE TABLE IF NOT EXISTS device_bindings (
+  uid          TEXT PRIMARY KEY,
+  school_id    TEXT NOT NULL DEFAULT '',
+  class_id     TEXT NOT NULL DEFAULT '',
+  class_name   TEXT NOT NULL DEFAULT '',
+  bound_by     TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL DEFAULT 'active',
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_device_bindings_class ON device_bindings(class_id);
 
 -- 截图回放索引：设备每回传一张截图，除了进内存 TTL 缓存（面板实时看），
 -- 再落一行 SQLite + 磁盘文件（content/captures/），「监控视频回放」= 按设备翻时间线。
@@ -453,6 +479,56 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE INDEX IF NOT EXISTS idx_att_owner      ON attachments(owner_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_att_folder     ON attachments(folder_id);
 CREATE INDEX IF NOT EXISTS idx_att_owner_kind ON attachments(owner_id, is_image, created_at);
+
+-- ── 课表 + 调课 + 作息（2026-10-05 · 定位 v2：课表按班、作息全校共用；调课/换课是核心）──────────
+-- 定位：取代 CIMS ClassPlan（教室端读课表从此读这里）。三张表正交：
+--   学校作息（节次时间）全校共用一张；课表每班一张（引用作息节次）；调课是课表之上的
+--   变更流（含金量：换课/调课走申请→审批→生效，不是直接改课表）。
+CREATE TABLE IF NOT EXISTS school_timetable (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  school_id   TEXT NOT NULL DEFAULT '',          -- 多学校预留（默认 '' 单学校）
+  period_no   INTEGER NOT NULL,                  -- 第几节（1 开始）
+  name        TEXT NOT NULL DEFAULT '',          -- 节名（如"第一节"）
+  start_time  TEXT NOT NULL DEFAULT '',          -- "08:00"
+  end_time    TEXT NOT NULL DEFAULT '',
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL,
+  UNIQUE (school_id, period_no)
+);
+CREATE INDEX IF NOT EXISTS idx_tt_school ON school_timetable(school_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS class_schedules (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  school_id   TEXT NOT NULL DEFAULT '',
+  class_id    TEXT NOT NULL,                     -- stelarith_classes.class_id
+  weekday     INTEGER NOT NULL,                  -- 1-7（周一=1）
+  period_no   INTEGER NOT NULL,                  -- 第几节（对齐 school_timetable.period_no）
+  subject     TEXT NOT NULL DEFAULT '',          -- 科目名（中文，如"数学"）
+  teacher     TEXT NOT NULL DEFAULT '',          -- 任课教师（显示名）
+  remark      TEXT NOT NULL DEFAULT '',          -- 备注（教室/合班等）
+  updated_at  TEXT NOT NULL,
+  UNIQUE (school_id, class_id, weekday, period_no)
+);
+CREATE INDEX IF NOT EXISTS idx_sched_class ON class_schedules(school_id, class_id, weekday);
+
+CREATE TABLE IF NOT EXISTS schedule_swaps (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  school_id       TEXT NOT NULL DEFAULT '',
+  class_id        TEXT NOT NULL,
+  -- 原节（被调走的那节）
+  from_weekday    INTEGER NOT NULL,
+  from_period     INTEGER NOT NULL,
+  -- 目标节（调去那节）
+  to_weekday      INTEGER NOT NULL,
+  to_period       INTEGER NOT NULL,
+  reason          TEXT NOT NULL DEFAULT '',      -- 调课原因
+  requested_by    TEXT NOT NULL DEFAULT '',      -- 申请人（显示名）
+  status          TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected | applied
+  reviewed_by     TEXT NOT NULL DEFAULT '',      -- 审批人
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_swaps_class ON schedule_swaps(school_id, class_id, status);
 `;
 
 export function nowIso(): string {

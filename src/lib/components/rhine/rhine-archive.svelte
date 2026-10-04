@@ -14,17 +14,30 @@
 	import { onMount } from "svelte";
 	import { CornerDownLeft } from "@lucide/svelte";
 	import { mode } from "mode-watcher";
-	import { buildArchiveContent, type DocInput } from "$lib/rhinelab/archive-content";
+	import { buildArchiveContent, type DocInput, type ArchiveContent } from "$lib/rhinelab/archive-content";
 	import { setContent, columnFiles, fileLocation, type ArchiveRecord } from "$lib/rhinelab/data";
 	import { wrap } from "$lib/rhinelab/archive-loop";
 
-	type Props = {
-		/** 后端下发的教程列表 */
-		docs: DocInput[];
-		onOpen?: (href: string) => void;
+	type Labels = {
+		db?: string;
+		hint?: string;
 	};
 
-	let { docs = [], onOpen }: Props = $props();
+	type Props = {
+		/** 后端下发的教程列表（与 archiveContent 二选一，archiveContent 优先） */
+		docs?: DocInput[];
+		/** 直接注入的档案内容（班级档案等复用引擎时走这条） */
+		archiveContent?: ArchiveContent | null;
+		onOpen?: (href: string) => void;
+		/** HUD 文案覆盖（默认教程库文案） */
+		labels?: Labels;
+		/** 退出档案库回链（默认 /docs） */
+		exitHref?: string;
+		/** 强制明暗：true=暗场，false=亮场，null=跟随站点主题 */
+		forceTheme?: boolean | null;
+	};
+
+	let { docs = [], archiveContent = null, onOpen, labels, exitHref = "/docs", forceTheme = null }: Props = $props();
 
 	let hostEl: HTMLDivElement | undefined = $state();
 	let webglFailed = $state(false);
@@ -37,9 +50,11 @@
 	// 当前选中档案（HUD 显示用）
 	let selectedRecord: ArchiveRecord | null = $state(null);
 	let selectedIndex = $state(0);
+	let hoveredIndex = $state(-1);
+	let hoveredRecord: ArchiveRecord | null = $state(null);
 
-	const content = $derived(buildArchiveContent(docs ?? []));
-	const columnCount = $derived(content?.columns.length ?? 0);
+	const archive = $derived(archiveContent ?? buildArchiveContent(docs ?? []));
+	const columnCount = $derived(archive?.columns.length ?? 0);
 
 	// 每一列最近一次选中哪份档案（切列回来时回到该列上次的位置）
 	let columnMemory: Record<number, number> = {};
@@ -54,17 +69,17 @@
 
 	/** 切换档案（flat index） */
 	function pick(index: number, navigation?: any) {
-		if (!scene || !content) return;
-		const total = content.records.length;
+		if (!scene || !archive) return;
+		const total = archive.records.length;
 		selectedIndex = ((index % total) + total) % total;
 		columnMemory[fileLocation(selectedIndex).lane] = selectedIndex;
 		scene.select(selectedIndex, navigation);
-		selectedRecord = content.records[selectedIndex] ?? null;
+		selectedRecord = archive.records[selectedIndex] ?? null;
 	}
 
 	/** 上下：列内切档 */
 	function stepFile(direction: number) {
-		if (!content) return;
+		if (!archive) return;
 		const lane = fileLocation(selectedIndex).lane;
 		const files = columnFiles(lane);
 		if (files.length < 2) return;
@@ -76,7 +91,7 @@
 
 	/** 左右：切列 */
 	function stepColumn(direction: number) {
-		if (!content) return;
+		if (!archive) return;
 		const lane = fileLocation(selectedIndex).lane;
 		const next = wrap(lane + direction, columnCount);
 		pick(columnMemory[next] ?? 0, { axis: "lane", direction });
@@ -125,9 +140,9 @@
 		window.addEventListener("keydown", onKeydown);
 
 		(async () => {
-			if (!content) return;
+			if (!archive) return;
 			// 注入数据
-			setContent(content);
+			setContent(archive);
 
 			// 动态 import：three + 引擎只在客户端加载
 			try {
@@ -136,7 +151,7 @@
 
 				scene = new ArchiveScene(hostEl);
 				scene.setReduced(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true);
-				scene.setTheme(mode.current === "dark", true);
+				scene.setTheme(forceTheme ?? (mode.current === "dark"), true);
 				(globalThis as any).__rhineScene = scene; // 调试钩子
 				(globalThis as any).__rhineCam = () => ({
 					pos: scene.camera.position.toArray(),
@@ -148,9 +163,12 @@
 				// 档案选择（含方向键导航后的 onSelect 回调整合）
 				scene.onSelect = (i: number) => {
 					selectedIndex = i;
-					selectedRecord = content.records[i] ?? null;
+					selectedRecord = archive.records[i] ?? null;
 				};
-				scene.onHover = () => {};
+				scene.onHover = (i: number | null) => {
+				hoveredIndex = i ?? -1;
+				hoveredRecord = i != null ? (archive?.records[i] ?? null) : null;
+			};
 
 				// static/rhinelab/ 始终部署在站点根；asset-url 用 BASE_URL 拼，但 GLTFLoader
 				// 对以 / 开头的绝对路径不会拼页面目录。这里显式写根路径。
@@ -161,7 +179,7 @@
 				scene.select(0);
 				// 初始选中第一份档案（HUD 抽屉立即可见，不必等用户交互）
 				selectedIndex = 0;
-				selectedRecord = content.records[0] ?? null;
+				selectedRecord = archive.records[0] ?? null;
 
 				// 每帧驱动
 				let last = 0;
@@ -196,7 +214,7 @@
 	$effect(() => {
 		// 主题跟随
 		if (!scene || !ready) return;
-		scene.setTheme?.(mode.current === "dark", false);
+		scene.setTheme?.(forceTheme ?? (mode.current === "dark"), false);
 	});
 </script>
 
@@ -208,10 +226,10 @@
 
 	{#if webglFailed}
 		<div class="rhine-hall-fallback">
-			<p>当前环境不支持三维渲染（WebGL 不可用）。</p>
+			<p>当前环境不支持三维渲染（WebGL 不可用）。以下是平面档案列表：</p>
 			<ul>
-				{#each docs as d (d.slug)}
-					<li><a href={`/docs/${d.slug}`}>{d.title}</a></li>
+				{#each archive?.records ?? [] as r (r.id)}
+					<li><a href={r.source}>{r.title}</a> · {r.department}</li>
 				{/each}
 			</ul>
 		</div>
@@ -220,17 +238,20 @@
 	<!-- HUD：左侧标题栏 -->
 	<div class="rhine-hud">
 		<div class="rhine-hud-title">
-			<span class="rhine-label">INTERNAL DATABASE / 教程库</span>
+			<span class="rhine-label">{labels?.db ?? "INTERNAL DATABASE / 教程库"}</span>
 			<span class="rhine-hud-count">
-				{String(selectedIndex + 1).padStart(3, "0")} / {String(content?.records.length ?? 0).padStart(3, "0")}
+				{String(selectedIndex + 1).padStart(3, "0")} / {String(archive?.records.length ?? 0).padStart(3, "0")}
 			</span>
 		</div>
 
 		<!-- 操作提示 -->
-		<div class="rhine-hud-hint">← → 切换列 · ↑ ↓ 换档案 · Enter 读取</div>
+		<div class="rhine-hud-hint">{labels?.hint ?? "← → 切换列 · ↑ ↓ 换档案 · Enter 读取"}</div>
+		{#if hoveredRecord && hoveredRecord !== selectedRecord}
+			<div class="rhine-hud-hover">悬停 · {hoveredRecord.title}</div>
+		{/if}
 
 		<!-- 全屏模式的返回入口（无侧边栏，需手动提供出口） -->
-		<a class="rhine-exit" href="/docs" onclick={(e) => { if (onOpen) { e.preventDefault(); onOpen("/docs"); } }}>
+		<a class="rhine-exit" href={exitHref} onclick={(e) => { if (onOpen) { e.preventDefault(); onOpen(exitHref); } }}>
 			<span>退出档案库</span>
 			<CornerDownLeft size={13} />
 		</a>
@@ -283,11 +304,13 @@
 		inset: 0;
 		pointer-events: none;
 		background: var(--rhine-paper, #eae5e1);
-		clip-path: inset(0 0 100% 0);
+		/* 初始：盖满全屏（loading 遮罩）。ready 后卷起消失。 */
+		clip-path: inset(0 0 0 0);
 		transition: clip-path 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.15s;
 	}
 	.rhine-hall-veil[data-ready="true"] {
-		clip-path: inset(0 0 0 0);
+		/* ready：从底部向上裁切，遮罩上卷揭开（显示三维墙，不再盖屏） */
+		clip-path: inset(0 0 100% 0);
 	}
 
 	.rhine-hud {
@@ -319,6 +342,15 @@
 		color: var(--rhine-label, #6d6a60);
 		opacity: 0.85;
 		letter-spacing: 0.04em;
+	}
+	.rhine-hud-hover {
+		position: absolute;
+		left: 14px;
+		bottom: 36px;
+		font-size: 12px;
+		color: var(--rhine-accent, #9b7247);
+		letter-spacing: 0.04em;
+		opacity: 0.95;
 	}
 	.rhine-exit {
 		position: absolute;

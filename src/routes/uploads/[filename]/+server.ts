@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { UPLOADS_DIR as UPLOAD_ROOT } from "$lib/server/paths.js";
 
 // 上传文件直出。
 //
@@ -8,7 +9,6 @@ import path from "node:path";
 //    decodeURIComponent，path.resolve("uploads", "%E9%A2%84...") 必然找不到文件，
 //    表现为上传成功但预览 404。
 // 2) 解码后必须做目录穿越校验：`..%2F..%2Fetc` 之类会逃出 uploads/。
-const UPLOAD_ROOT = path.resolve("uploads");
 
 export async function GET({ url }) {
 	let filename: string;

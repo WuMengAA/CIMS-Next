@@ -48,7 +48,7 @@
 
 	async function loadNotices() {
 		try {
-			const r = await (await fetch("/api/console/ext/notices")).json();
+			const r = await (await fetch("/api/console/control/notices")).json();
 			notices = Array.isArray(r) ? r.map((n: Record<string, unknown>) => ({ id: n.id ?? "", title: String(n.title ?? ""), at: String(n.at ?? "") })) : [];
 		} catch {
 			notices = [];
@@ -58,7 +58,7 @@
 	async function loadDeliveries() {
 		if (!selected) { deliveries = []; dvNotice = null; return; }
 		try {
-			const r = await (await fetch(`/api/console/ext/notice-deliveries?notice=${encodeURIComponent(selected)}`)).json();
+			const r = await (await fetch(`/api/console/control/notice-deliveries?notice=${encodeURIComponent(selected)}`)).json();
 			dvNotice = r?.notice ? { id: r.notice.id ?? "", title: String(r.notice.title ?? ""), at: String(r.notice.at ?? "") } : null;
 			deliveries = Array.isArray(r?.deliveries) ? r.deliveries.map((d: Record<string, unknown>) => ({ uid: String(d.uid ?? ""), state: String(d.state ?? ""), reply: d.reply ? String(d.reply) : undefined, action_result: d.action_result ? String(d.action_result) : undefined, at: d.at ? String(d.at) : undefined, updated_at: d.updated_at ? String(d.updated_at) : undefined })) : [];
 			dvErr = "";
@@ -70,7 +70,7 @@
 	async function loadEvents() {
 		if (!data.can.control) return;
 		try {
-			const r = await (await fetch("/api/console/ext/events")).json();
+			const r = await (await fetch("/api/console/control/events")).json();
 			events = Array.isArray(r?.events) ? r.events.map((e: Record<string, unknown>) => ({ created_at: e.created_at ? String(e.created_at) : undefined, uid: String(e.uid ?? ""), event: String(e.event ?? ""), ok: !!e.ok, detail: e.detail ? String(e.detail) : undefined })) : [];
 			evStats = r?.stats && typeof r.stats === "object" ? { total: Number(r.stats.total ?? 0), ok: Number(r.stats.ok ?? 0), failed: Number(r.stats.failed ?? 0) } : null;
 		} catch {

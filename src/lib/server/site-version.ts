@@ -19,13 +19,13 @@ export const SITE_SERVICE = "stelarith-website";
  * 注意 build 必须是**整数**（单调递增），不要写成 "20260921-nightly" 这类字符串——
  * 客户端对字符串 build 会解析成 0，比较逻辑会失效。
  */
-export const XK_LATEST_VERSION = "1.0.1";
-export const XK_LATEST_BUILD = 2;
+export const XK_LATEST_VERSION = "1.0.7";
+export const XK_LATEST_BUILD = 9;
 export const XK_RELEASE_URL =
-  "https://www.245959623.xyz/downloads/xingjikong-release.zip";
+  "https://www.245959623.xyz/downloads/xingjikong-setup.exe";
 export const XK_RELEASE_SHA256 =
-  "55c67246f43ae2e8cd959048b955b4f0205e84a385ab97c1a5e3c34b5263e4a2";
+  "f4dddf1a3faf377cf5bb5299979860d474bbf034f0064ca0e82bc9162463be66";
 export const XK_RELEASE_NOTES =
-  "修复指令回执（ack）假阳性、内置 OTA 一键更新，稳定性提升。";
+  "本次修复：全屏通知点「关闭」后卡住退不出（现 1 秒内可关，并支持 Esc 键）；检测到新版本时更新提示变成灰块、「立即更新」按钮点不到，导致无法升级；长期后台空转轮询引起的界面卡顿。另新增：在集控面板远程查看本机运行日志。";
 export const XK_MIN_SUPPORTED = "1.0.0";
-export const XK_UPDATED_AT = "2026-09-25T12:00:00+08:00";
+export const XK_UPDATED_AT = "2026-09-28T23:04:00+08:00";

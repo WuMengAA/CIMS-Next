@@ -13,9 +13,9 @@
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import {
 		RefreshCw, BookOpen, Rocket, BookMarked, Image, MessageSquare, Megaphone,
-		Flag, FileText, Eye, Plus, Upload, FolderOpen, LayoutTemplate, ScanEye
+		Flag, FileText, Eye, Plus, Upload, FolderOpen, LayoutTemplate, ScanEye, School
 	} from "@lucide/svelte";
-	import { can, userCan, roleLevelLabel, type Role, type Action } from "$lib/permissions.js";
+	import { can, userCan, levelLabelOfXp, type Role, type Action } from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -38,7 +38,8 @@
 	const canContent = $derived(userCan(data.user as any, "manageContent"));
 	const canPages = $derived(userCan(data.user as any, "managePages"));
 	const canModerate = $derived(userCan(data.user as any, "moderate"));
-	const levelLabel = $derived(roleLevelLabel(role));
+	// 经验等级（#248：xp→Lv 纯展示，与权限无关）。
+	const levelLabel = $derived(levelLabelOfXp((data.user as any)?.xp ?? 0));
 
 	async function loadStats() {
 		loading = true;
@@ -88,6 +89,7 @@
 		{ group: "内容", title: "媒体文件", href: "/admin/media", icon: Image, get: () => mediaCount, need: "manageFiles" },
 		{ group: "互动", title: "评论", href: "/admin/comments", icon: MessageSquare, get: () => commentsCount, need: "moderate" },
 		{ group: "互动", title: "反馈", href: "/admin/feedback", icon: Flag, get: () => feedbackCount, need: "moderate" },
+		{ group: "内容", title: "班级栏目", href: "/admin/class8", icon: School, get: () => 1, need: "manageContent" },
 		{ group: "互动", title: "公告", href: "/admin/announcements", icon: Megaphone, get: () => announcementsCount, need: "manageContent" }
 	];
 
@@ -192,7 +194,7 @@
 			{/if}
 			{#if !canContent && !canPages && !canModerate}
 				<p class="text-sm text-muted-foreground">
-					当前等级（{levelLabel}）无编辑或审核权限，可前往有权限的模块处理事务。
+					当前账号（{levelLabel} · 无编辑或审核称号）无可编辑模块，可前往有权限的模块处理事务。
 				</p>
 			{/if}
 		</div>

@@ -10,7 +10,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
 const postsDir = resolve(root, "content/posts");
 const coversDir = resolve(root, "static/covers");
+const cardDir = resolve(root, "static/covers/card");
 const liveDir = resolve(root, "build/client/covers");
+const liveCardDir = resolve(root, "build/client/covers/card");
 
 const ICON_BY_SLUG = {
 	"audio-metadata-scraping": "audio-lines",
@@ -27,7 +29,9 @@ const ICON_BY_SLUG = {
 const ICON_BY_CAT = { 工程笔记: "sparkles", 体验设计: "palette" };
 
 mkdirSync(coversDir, { recursive: true });
+mkdirSync(cardDir, { recursive: true });
 mkdirSync(liveDir, { recursive: true });
+mkdirSync(liveCardDir, { recursive: true });
 
 const list = readdirSync(postsDir).filter((f) => f.endsWith(".md"));
 
@@ -39,17 +43,24 @@ for (const f of list) {
 	const icon = ICON_BY_SLUG[slug] || ICON_BY_CAT[data.category] || "image";
 	const subtitle = (data.excerpt || "").slice(0, 24);
 
-	const svg = buildCoverSvg({
+	// 同一份内容出两种图：
+	//   art  = 无字头图，给文章详情页的通栏头图用（标题由页面渲染，图上再烘字会重影）
+	//   card = 带标题的卡片版，给 og:image/social 用（分享出去得看得出是哪篇）
+	const base = {
 		title: data.title || slug,
 		subtitle,
 		category: data.category || "",
 		icon,
 		ratio: "16:9"
-	});
+	};
+	const artSvg = buildCoverSvg({ ...base, variant: "art" });
+	const cardSvg = buildCoverSvg(base);
 
 	const outName = `${slug}.svg`;
-	writeFileSync(resolve(coversDir, outName), svg, "utf-8");
+	writeFileSync(resolve(coversDir, outName), artSvg, "utf-8");
+	writeFileSync(resolve(cardDir, outName), cardSvg, "utf-8");
 	copyFileSync(resolve(coversDir, outName), resolve(liveDir, outName));
+	copyFileSync(resolve(cardDir, outName), resolve(liveCardDir, outName));
 	count++;
 
 	// 最小改动写回 cover 字段
@@ -65,4 +76,4 @@ for (const f of list) {
 	console.log(`✓ ${slug}  (icon=${icon})`);
 }
 
-console.log(`\n生成 ${count} 张封面 → static/covers + build/client/covers，并已写回 cover 字段。`);
+console.log(`\n生成 ${count} 张图 → static/covers（无字头图，页面用）+ static/covers/card（带标题卡片，og:image 用），并已写回 cover 字段。`);

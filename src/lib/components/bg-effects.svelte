@@ -5,7 +5,7 @@
 	interface BgCfg { style: string; color1: string; color2: string; color3: string; intensity: number; speed: number; particles: boolean }
 	let { config }: { config?: BgCfg } = $props();
 
-	const cfg = $derived(config || { style: "aurora", color1: "#cc785c", color2: "#8b5cf6", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true });
+	const cfg = $derived(config || { style: "aurora", color1: "#cc785c", color2: "#cc785c", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true });
 
 	// CSS vars for the effect layers
 	const styleVars = $derived({

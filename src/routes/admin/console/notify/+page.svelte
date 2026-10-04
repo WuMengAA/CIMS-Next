@@ -9,15 +9,25 @@
 	import type { PageData } from "./$types";
 
 	// 发布通知（Svelte 版 · 2026-09-26 从原生面板迁移）。
-	// 发布走 /api/console/ext/notices（服务端 broadcastToClassrooms：留痕 + 推送教室端）；
+	// 发布走 /api/console/control/notices（服务端 broadcastToClassrooms：留痕 + 推送教室端）；
 	// 呈现方式/预设回复/自动关屏随 flags 下发，范围受账号权限约束（服务端强制）。
 	let { data }: { data: PageData } = $props();
 
 	type Notice = { id?: string|number; title: string; scope: string; classes: string[]; channel: string; sent: number; at: string };
 
+	// ── 广播范围：**只列出这个账号真的发得出去的档**（data.broadcastScopes 由服务端按角色算）──
+	// ⚠️ 2026-10-01 修：这里原先把 本班/本年级/全校 三档**写死**，于是任课老师也能选「全校」，
+	//    一点发送就被服务端 403「当前账号最多只能广播到「本班」」——正是 +page.server.ts
+	//    注释里说要避免的挫败感；更自相矛盾的是页面下方同时还写着「本账号可广播最大范围：本班」。
+	//    现在按 broadcastScopes 过滤，并把默认值定在该账号的最大档（永远发得出去）。
+	const SCOPE_ORDER = ["class", "grade", "school"] as const;
+	const SCOPE_LABEL: Record<string, string> = { class: "本班", grade: "本年级", school: "全校" };
+	const scopeOptions = SCOPE_ORDER.filter((s) => (data.broadcastScopes ?? []).includes(s));
+	const maxLabel = scopeOptions.length ? SCOPE_LABEL[scopeOptions[scopeOptions.length - 1]] : "";
+
 	let title = $state("");
 	let content = $state("");
-	let scope = $state<"本班" | "本年级" | "全校">("本班");
+	let scope = $state<string>(maxLabel || "本班");
 	let duration = $state<number | undefined>(undefined);
 	let ntType = $state("");
 	let ntSeverity = $state("remind"); // 全屏严重度：remind/inform/urgent
@@ -33,12 +43,12 @@
 	onMount(async () => {
 		try {
 			const [cRes, nRes] = await Promise.all([
-				fetch("/api/classes"),
-				fetch("/api/console/ext/notices"),
+				fetch("/api/class/list"),
+				fetch("/api/console/control/notices"),
 			]);
 			const c = await cRes.json();
 			if (cRes.ok) {
-				classes = (c.classes ?? []).map((x: { class_id?: string; name?: string; device_count?: number }) => ({ class_id: String(x.class_id ?? ""), name: String(x.name ?? ""), device_count: Number(x.device_count ?? 0) })).filter((x) => x.class_id);
+				classes = (c.classes ?? []).map((x: { class_id?: string; name?: string; device_count?: number }) => ({ class_id: String(x.class_id ?? ""), name: String(x.name ?? ""), device_count: Number(x.device_count ?? 0) })).filter((x: { class_id: string }) => Boolean(x.class_id));
 				picked = classes.filter((x) => x.name === data.className).map((x) => x.name);
 			} else { classErr = c.error || "班级列表加载失败"; }
 			const n = await nRes.json();
@@ -50,7 +60,7 @@
 
 	function norm(n: Record<string, unknown>): Notice {
 		return {
-			id: n.id ?? "", title: String(n.title ?? ""), scope: String(n.scope ?? "本班"),
+			id: String(n.id ?? ""), title: String(n.title ?? ""), scope: String(n.scope ?? "本班"),
 			classes: Array.isArray(n.classes) ? n.classes.map(String) : [],
 			channel: String(n.channel ?? ""), sent: Number(n.sent ?? 0), at: String(n.at ?? n.createdAt ?? ""),
 		};
@@ -62,6 +72,9 @@
 
 	async function doSend() {
 		if (!title.trim()) { toast.error("请填写通知标题"); return; }
+		// 纵深防御：即便有人绕过下拉（改 DOM / 旧缓存页面），也在提交前把范围收敛到账号上限，
+		// 免得白跑一趟服务端 403。服务端仍会独立再校验一次（前端从来不是安全边界）。
+		if (scopeOptions.length && !scopeOptions.some((s) => SCOPE_LABEL[s] === scope)) scope = maxLabel;
 		submitting = true;
 		try {
 			const flags: Record<string, unknown> = {};
@@ -77,17 +90,17 @@
 			const durRaw = Number(duration);
 			if (ntType === "fullscreen" && Number.isFinite(durRaw) && durRaw > 0) body.duration_seconds = Math.min(durRaw, 3600);
 			if (ntType === "island") body.duration_seconds = 0; // 弹幕：设备端按文字长短自动适配
-			const res = await fetch("/api/console/ext/notices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+			const res = await fetch("/api/console/control/notices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 			const d = await res.json();
 			if (!res.ok) { toast.error(d.error || "发布失败"); return; }
 			const b = d.broadcast;
 			if (b?.deduped) toast.success("内容重复，未重复下发（去重窗口内）");
-			else if (b && (b.delivered ?? 0) > 0) toast.success(`已发布并推送到 ${b.delivered} 台设备`);
-			else if (b?.error) toast.warning(`已留痕，但推送未送达：${b.error}`);
+			else if (b && (b.delivered ?? 0) > 0) toast.success(`已下发到 ${b.delivered} 台设备（是否收到看「指令回执」）`);
+			else if (b?.error) toast.warning(`已留痕，但未下发成功：${b.error}`);
 			else toast.success("已发布");
 			title = ""; content = ""; presetsText = ""; adsText = ""; emergency = false; ntType = "";
-			const nRes = await fetch("/api/console/ext/notices");
-			notices = Array.isArray(await nRes.json()) ? (await (await fetch("/api/console/ext/notices")).json()).map(norm) : [];
+			const nRes = await fetch("/api/console/control/notices");
+			notices = Array.isArray(await nRes.json()) ? (await (await fetch("/api/console/control/notices")).json()).map(norm) : [];
 		} catch (e) {
 			toast.error("网络错误，请重试");
 		} finally {
@@ -95,8 +108,6 @@
 		}
 	}
 
-	const SCOPE_LABEL: Record<string, string> = { class: "本班", grade: "本年级", school: "全校" };
-	const maxLabel = $derived((data.broadcastScopes?.length ? SCOPE_LABEL[data.broadcastScopes[data.broadcastScopes.length - 1]] : "") || "本班");
 </script>
 <svelte:head>
 	<title>发布通知 · 集控面板 | Stelarith</title>
@@ -126,7 +137,7 @@
 				<div class="grid gap-1.5">
 					<Label for="nt-scope">广播范围</Label>
 					<select id="nt-scope" bind:value={scope} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
-						<option value="本班">本班</option><option value="本年级">本年级</option><option value="全校">全校</option>
+						{#each scopeOptions as s (s)}<option value={SCOPE_LABEL[s]}>{SCOPE_LABEL[s]}</option>{/each}
 					</select>
 				</div>
 				<div class="grid gap-1.5">

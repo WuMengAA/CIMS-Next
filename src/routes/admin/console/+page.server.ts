@@ -1,25 +1,11 @@
 import { redirect } from "@sveltejs/kit";
 import os from "node:os";
+import { env } from "$env/dynamic/private";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, userCan, canDevice, isConsoleReadOnly, roleLevelLabel, allowedBroadcastScopes } from "$lib/permissions.js";
+import { can, userCan, canDevice, canDeviceAction, isConsoleReadOnly, levelLabelOfXp, allowedBroadcastScopes } from "$lib/permissions.js";
 import { getCimsAccount } from "$lib/server/cims-account.js";
 import type { PageServerLoad } from "./$types";
 
-// 老师手机页二维码内容 = 局域网 IPv4 + /teacher（老师手机与本机同 Wi-Fi 即可扫码直通）。
-// 站点 8090 监听 0.0.0.0，局域网可达；查不到就回落 127.0.0.1。
-function firstLanIPv4(): string {
-	try {
-		const nets = os.networkInterfaces();
-		for (const list of Object.values(nets)) {
-			for (const n of list || []) {
-				if (n.family === "IPv4" && !n.internal) return n.address;
-			}
-		}
-	} catch {
-		/* 查不到用回退值 */
-	}
-	return "127.0.0.1";
-}
 
 // 集控面板子页面：仅对具备 viewConsole 的角色开放（L2+：站长/编辑/审核员/电教委员/注册用户）。
 // L1 只读访客已被 can(viewConsole) 挡在门外（门槛 2026-09-16 由 L1 提到 L2）。
@@ -38,13 +24,15 @@ export const load: PageServerLoad = async ({ cookies }) => {
 	// canUseBackend() 恒 false，所有 cims() 静默降级演示数据）。
 	const account = await getCimsAccount();
 	// 权限位分两条轴解算：
-	//  - 内容轴（levelLabel / canEditContent）走 can()，决定面板里"内容/治理"入口；
-	//  - 设备轴（control/remote/manage）走 canDevice()，与等级正交 ——
-	//    电教委员内容等级只有 L2，但 remote 为真；站长等级最高，设备位仍单独判定。
+	//  - 内容轴（canEditContent）走 can()，决定面板里"内容/治理"入口；
+	//  - 设备轴（control/remote/manage）走 canDevice()，与经验等级正交 ——
+	//    电教委员经验等级低但 remote 为真；站长等级（经验）最高，设备位仍单独判定。
+	//  - levelLabel = 经验等级（xp→Lv，#248 与角色零耦合），仅作展示。
 	// 只读态（readonly）单独下发，让面板能整体切换为"观看模式"（隐藏所有写按钮）。
 	return {
 		role: u.role,
-		levelLabel: roleLevelLabel(u.role),
+		xp: u.xp ?? 0,
+		levelLabel: levelLabelOfXp(u.xp ?? 0),
 		readonly: isConsoleReadOnly(u.role),
 		user: u.displayName || u.username,
 		// 全权接入 website 账号信息：把当前登录用户完整资料下发面板。
@@ -62,7 +50,12 @@ export const load: PageServerLoad = async ({ cookies }) => {
 			issue: userCan(u, "submitIssue"),
 			// 广播位：内容轴 sendBroadcast（称号）或设备轴 control 档任一。
 			// 设备三关铁律（#249）下 teacher 无 control，但仍须能发本班通知 → 广播走内容轴。
-			broadcast: userCan(u, "sendBroadcast") || canDevice(u.role, "control")
+			broadcast: userCan(u, "sendBroadcast") || canDevice(u.role, "control"),
+			// 细档 DeviceAction（**不是**粗档 DeviceTier）：软件管控 / 设备日志的「能不能看」由它们判定，
+			// 供概览页把 apps / logs 入口收敛到真实门槛（页面本身只要求 viewConsole，读设备数据另需这两位）。
+			// ⚠️ 必须用 canDeviceAction —— 写成 canDevice(u.role, "apps_view") 会因粗档表里没有该值而**恒为 false**。
+			appsView: canDeviceAction(u.role, "apps_view"),
+			logsView: canDeviceAction(u.role, "logs_view")
 		},
 		// 广播可达范围（第三维度：能发 ≠ 能发多远）。
 		// 面板据此只列出该账号可选的范围，避免「选了全校却被服务端 403」的挫败感。
@@ -72,6 +65,14 @@ export const load: PageServerLoad = async ({ cookies }) => {
 		// 只下发 id 本身，不含任何凭据；好友关系仍由服务端按会话用户校验。
 		userId: u.id,
 		accountId: account?.id ?? "",
-		lanHost: firstLanIPv4()
+		// CIMS 接入体检（「引导式上手」的依据）：
+		// accountId 为空时面板会 canUseBackend()=false 并**静默降级成演示数据** —— 那等于
+		// 用假数据冒充真实教室设备（红线）。所以这里把「未配置」与「不可达/认证失败」
+		// 分开传给页面，让它给出对症的上手引导，而不是让人对着一屏假数据发懵。
+		// 不下发 CIMS 地址本身（内部服务拓扑，L2 也能进这页，没必要暴露）。
+		cims: {
+			configured: Boolean((env.CIMS_ADMIN_EMAIL ?? "") && (env.CIMS_ADMIN_PASSWORD ?? "")),
+			reachable: Boolean(account)
+		}
 	};
 };

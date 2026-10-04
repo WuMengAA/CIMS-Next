@@ -3,7 +3,7 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, getUser, updateProfile, sanitizeAvatar, verifyLogin } from "$lib/server/auth.js";
 import { recordActivity } from "$lib/server/activity.js";
 import { syncUserUpdateToCims } from "$lib/server/cims-account.js";
-import { fetchClassList, type CimsClass } from "$lib/server/cims-client.js";
+import { listStelarithClasses, type StelarithClass } from "$lib/server/stelarith/classes.js";
 import { classScopeOf, listBindings, replaceBindings } from "$lib/server/class-scope.js";
 import {
 	userCan,
@@ -78,6 +78,12 @@ function identityOf(u: NonNullable<ReturnType<typeof verifyToken>>) {
 			notify: actions.includes("notify"),
 			file: actions.includes("file"),
 			shutdown: actions.includes("shutdown"),
+			// 软件管控（2026-10-01 补）：这两个键此前**只**出现在 deviceActions 数组里、
+			// 不在 can 映射里 —— 而 Flutter 的 Identity.fromJson 只读 can、连 deviceActions
+			// 都没读，导致 App 端拿不到"能不能看/关运行软件"（P2-5 的口径缺口，
+			// 功能级验证已实证）。与上方 shutdown 同源，都从 actions（服务端已按角色算好）取。
+			apps_view: actions.includes("apps_view"),
+			apps_stop: actions.includes("apps_stop"),
 			issue: userCan(u, "submitIssue")
 		},
 		broadcastScopes: allowedBroadcastScopes(role),
@@ -145,8 +151,24 @@ export async function PUT(event: RequestEvent) {
 	if (patchClassName !== undefined && classBindLimit(user.role as never) > 0) {
 		try {
 			if (patchClassName) {
-				const classes = await fetchClassList();
-				if (classes && classes.length) {
+				// 2026-10-04：班级真源切自有表（stelarith_classes）；本地为空回退 CIMS 兜底
+				let classes = listStelarithClasses();
+				if (!classes.length) {
+					try {
+						const { fetchClassList } = await import("$lib/server/cims-client.js");
+						const cims = (await fetchClassList()) ?? [];
+						// CIMS 兜底：形状转成自有 StelarithClass（school_id 补默认）
+						classes = cims.map((c, i) => ({
+							class_id: String(c.class_id ?? ""),
+							name: String(c.name ?? c.class_id ?? ""),
+							code: String(c.code ?? ""),
+							sort_order: i,
+							school_id: "",
+							created_at: new Date().toISOString()
+						}));
+					} catch { /* 本地与 CIMS 都不可达：跳过绑定，保持旧行为 */ }
+				}
+				if (classes.length) {
 					const hit = matchClass(classes, patchClassName);
 					if (hit) {
 						replaceBindings(user.id ?? 0, [{ class_id: hit.class_id, class_name: patchClassName }], user.displayName || user.username);
@@ -218,7 +240,7 @@ export async function PUT(event: RequestEvent) {
  *      避免「1班」误配到「10班/11班…」。
  * 匹配不到返回 null → 调用方保持旧行为，不写 bindings。
  */
-function matchClass(classes: CimsClass[], className: string): CimsClass | null {
+function matchClass(classes: StelarithClass[], className: string): StelarithClass | null {
 	const c = className.trim();
 	if (!c) return null;
 	for (const cls of classes) {

@@ -1,48 +1,45 @@
 <script lang="ts">
 	/**
-	 * 权限总览：两条轴的完整可视化。
+	 * 权限总览：两套模型的完整可视化。
 	 *
-	 * 上半 —— 纵向「等级轴」：五级 × 功能矩阵，逐格打勾；当前账号所在列高亮。
-	 * 下半 —— 横向「设备轴」：四档敏感度，与等级正交（电教委员内容 L2 但有 remote）。
+	 * 上半 —— 纵向「称号 × 功能」矩阵：每个称号授予哪些能力，逐格打勾；
+	 *         当前账号持有的称号所在列高亮。
+	 * 下半 —— 横向「设备轴」：四档敏感度，与称号正交（电教委员无内容强称号但持 remote）。
 	 *
-	 * 所有数据来自 permissions.ts 的纯函数，本页不含任何硬编码权限判断。
+	 * ⚠️ #248：**权限矩阵上不再出现等级**——等级已改为经验值（xp→Lv，纯展示），
+	 * 与权限零耦合。本页所有数据来自 permissions.ts 的纯函数，不含硬编码权限判断。
 	 */
-	import { ShieldCheck, Check, Minus, MonitorSmartphone, Info, Crown } from "@lucide/svelte";
+	import { ShieldCheck, Check, Minus, MonitorSmartphone, Info, Crown, Sparkles } from "@lucide/svelte";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import {
-		LEVEL_LABELS,
-		LEVEL_DESCRIPTIONS,
-		LEVEL_SAMPLE_ROLE,
 		TITLES,
 		TITLE_KEYS,
 		DEVICE_LABELS,
 		DEVICE_DESCRIPTIONS,
 		ACTION_LABELS,
 		ROLE_LABELS,
-		capabilitiesByLevel,
 		hasAction,
-		roleToLevel,
 		roleDeviceTiers,
-		type Level,
 		type DeviceTier,
 		type Role,
-		type TitleKey
+		type TitleKey,
+		type Action
 	} from "$lib/permissions.js";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
 
-	const LEVELS: Level[] = [1, 2, 3, 4, 5];
 	const DEVICES: DeviceTier[] = ["watch", "control", "remote", "manage"];
-	const matrix = capabilitiesByLevel();
+	// 全部功能（行）= 动作清单；列 = 称号目录。
+	const ALL_ACTIONS: Action[] = Object.keys(ACTION_LABELS) as Action[];
 
-	// 当前账号等级（用于高亮所在列）。未登录为 null。
-	const myLevel = $derived(data.role ? roleToLevel(data.role) : null);
+	// 当前账号持有的称号（用于高亮列）。未登录为空。
+	const myTitles = $derived((data.titles ?? []) as TitleKey[]);
 	const myRole = $derived((data.role ?? null) as Role | null);
 
-	/** 某等级在某动作上是否具备权限 —— 用该等级的示例角色去问 can()。 */
-	function levelHas(level: Level, action: string): boolean {
-		return hasAction(LEVEL_SAMPLE_ROLE[level], action as any);
+	/** 某称号是否授予某动作。 */
+	function titleHas(title: TitleKey, action: Action): boolean {
+		return TITLES[title].actions.includes(action);
 	}
 
 	/** 当前账号是否持有某设备档位（高亮用）。 */
@@ -56,8 +53,8 @@
 		<ShieldCheck class="size-6 text-primary" /> 权限总览
 	</h1>
 	<p class="mt-1 text-sm text-muted-foreground">
-		权限由<b class="text-foreground">称号</b>承载，等级只是显示秩位。某人能做什么，取决于他持有哪些称号；
-		设备操作敏感度是与之正交的独立轴。
+		权限由<b class="text-foreground">称号</b>承载；经验等级（Lv）只是「参与度」展示，<b class="text-foreground">与权限完全无关</b>。
+		某人能做什么，取决于他持有哪些称号；设备操作敏感度是与之正交的独立轴。
 	</p>
 </div>
 
@@ -78,7 +75,7 @@
 	</div>
 	<p class="mt-3 text-xs leading-relaxed text-muted-foreground">
 		称号是权限的载体：每个称号授予一组能力（见下方矩阵）。管理员可为你<b class="text-foreground">独立追加或撤回</b>称号，
-		与你的角色/等级无关——这是「权限分配」的最小可操作单元。
+		与你的角色/经验等级无关——这是「权限分配」的最小可操作单元。
 	</p>
 	{#if data.titleDetails?.length}
 		<ul class="mt-3 grid gap-2 sm:grid-cols-2">
@@ -99,7 +96,9 @@
 			<Crown class="size-4 text-primary" />
 			<span class="font-heading font-medium">当前账号</span>
 		</div>
-		<Badge variant="default">{data.levelLabel}</Badge>
+		<Badge variant="default">
+			<Sparkles class="size-3 mr-1" />{data.levelLabel}
+		</Badge>
 		{#if myRole}
 			<span class="text-sm text-muted-foreground">
 				角色 <span class="font-medium text-foreground">{ROLE_LABELS[myRole]}</span>
@@ -111,6 +110,10 @@
 			</span>
 		{/if}
 	</div>
+	<p class="mt-3 text-xs leading-relaxed text-muted-foreground">
+		经验等级（Lv）由经验值推导，<b class="text-foreground">只反映参与程度，不授予任何权限</b>——
+		高等级的游客依然只是游客。
+	</p>
 
 	<!-- 该账号的设备档位条：直观看出「内容等级低但设备权限高」这类正交组合 -->
 	<div class="mt-4 flex flex-wrap items-center gap-2">
@@ -127,12 +130,12 @@
 	</div>
 </div>
 
-<!-- ── 纵向：等级 × 功能矩阵（参考：各等级默认角色所持有的称号并集）─────────────────── -->
+<!-- ── 纵向：称号 × 功能矩阵（#248：矩阵不再按等级分轴，改按权限真实载体=称号）── -->
 <section class="mb-10">
-	<h2 class="mb-1 font-heading text-lg font-semibold">参考 · 各等级默认角色的称号并集</h2>
+	<h2 class="mb-1 font-heading text-lg font-semibold">称号 × 功能矩阵</h2>
 	<p class="mb-4 text-sm text-muted-foreground">
-		等级<b class="text-foreground">本身不授予权限</b>——这里展示的是「该等级默认角色」所持有的称号并集对应的能力，
-		供你对照「我的称号」一节。具体某人能做什么，以他实际持有的称号为准（可被管理员独立追加/撤回）。
+		每个<b class="text-foreground">称号</b>授予一组能力（打勾即授予）。你实际持有的称号集合（含管理员为你
+		独立追加的）决定你的全部权限——<b class="text-foreground">与经验等级无关</b>。列头高亮 = 你当前持有的称号。
 	</p>
 
 	<div class="overflow-x-auto rounded-xl border border-border/60">
@@ -140,14 +143,14 @@
 			<thead>
 				<tr class="border-b border-border/60 bg-muted/30">
 					<th class="px-4 py-3 text-left font-medium">功能</th>
-					{#each LEVELS as lv (lv)}
+					{#each TITLE_KEYS as tk (tk)}
 						<th
-							class="px-3 py-3 text-center font-medium {myLevel === lv ? 'bg-primary/10 text-primary' : ''}"
+							class="px-3 py-3 text-center font-medium {myTitles.includes(tk) ? 'bg-primary/10 text-primary' : ''}"
 						>
 							<div class="flex flex-col items-center gap-0.5">
-								<span>{LEVEL_LABELS[lv]}</span>
-								{#if myLevel === lv}
-									<span class="text-[10px] font-normal">当前</span>
+								<span>{TITLES[tk].label}</span>
+								{#if myTitles.includes(tk)}
+									<span class="text-[10px] font-normal">持有</span>
 								{/if}
 							</div>
 						</th>
@@ -155,41 +158,19 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each matrix as row, i (row.level)}
-					<!-- 等级分隔行：把"这一档新增了什么"讲清楚 -->
-					<tr class="border-b border-border/40 bg-muted/15">
-						<td colspan={6} class="px-4 py-2">
-							<div class="flex flex-wrap items-baseline gap-2">
-								<span class="font-heading text-xs font-semibold">{LEVEL_LABELS[row.level]}</span>
-								<span class="text-xs text-muted-foreground">{LEVEL_DESCRIPTIONS[row.level]}</span>
-							</div>
-						</td>
-					</tr>
-					{#if row.actions.length === 0}
-						<tr class="border-b border-border/30 last:border-0">
-							<td class="px-4 py-2.5 text-muted-foreground">（基础档，无专属功能）</td>
-							{#each LEVELS as lv (lv)}
-								<td class="px-3 py-2.5 text-center {myLevel === lv ? 'bg-primary/5' : ''}">
-									<span class="text-muted-foreground/40">—</span>
-								</td>
-							{/each}
-						</tr>
-					{:else}
-						{#each row.actions as action (action)}
-							<tr class="border-b border-border/30 last:border-0">
-								<td class="px-4 py-2.5">{ACTION_LABELS[action]}</td>
-								{#each LEVELS as lv (lv)}
-									<td class="px-3 py-2.5 text-center {myLevel === lv ? 'bg-primary/5' : ''}">
-										{#if levelHas(lv, action)}
-											<Check class="mx-auto size-4 text-success" strokeWidth={2.5} />
-										{:else}
-											<Minus class="mx-auto size-4 text-muted-foreground/35" />
-										{/if}
-									</td>
-								{/each}
-							</tr>
+				{#each ALL_ACTIONS as action (action)}
+					<tr class="border-b border-border/30 last:border-0">
+						<td class="px-4 py-2.5">{ACTION_LABELS[action]}</td>
+						{#each TITLE_KEYS as tk (tk)}
+							<td class="px-3 py-2.5 text-center {myTitles.includes(tk) ? 'bg-primary/5' : ''}">
+								{#if titleHas(tk, action)}
+									<Check class="mx-auto size-4 text-success" strokeWidth={2.5} />
+								{:else}
+									<Minus class="mx-auto size-4 text-muted-foreground/35" />
+								{/if}
+							</td>
 						{/each}
-					{/if}
+					</tr>
 				{/each}
 			</tbody>
 		</table>
@@ -198,8 +179,8 @@
 	<p class="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
 		<Info class="mt-0.5 size-3.5 shrink-0" />
 		<span>
-			此矩阵为「默认角色 → 称号并集」的参考视图。由于不同等级默认授予的称号有重叠，高等级行会覆盖低等级已勾选的功能；
-			真正决定你权限的是「我的称号」一节。
+			此矩阵展示每个称号<b class="text-foreground">静态授予</b>的能力；角色只是「称号预设」的组合，
+			你实际持有的称号（含管理员独立追加/撤回）以「我的称号」一节为准。
 		</span>
 	</p>
 </section>
@@ -210,8 +191,10 @@
 		<MonitorSmartphone class="size-5 text-primary" /> 横向 · 设备轴（四档）
 	</h2>
 	<p class="mb-4 text-sm text-muted-foreground">
-		与等级完全独立。等级高不代表能远控设备，等级低也不代表不能 —— 例如电教委员内容等级为 L2，却持有远程控制权限。
-		电教委员本质是「注册用户(L2) 的全部能力 + 设备权限」<strong class="text-foreground">叠加</strong>，并非脱离用户的独立角色：它照样能评论、发帖、申请，只是额外持 remote 设备档位。
+		与称号完全独立。有没有设备权限取决于角色预设与设备档位，与经验等级无关 ——
+		例如电教委员无内容强称号（角色秩 3），却持有远程控制权限。
+		电教委员本质是「注册用户全部内容能力 + 设备权限」<strong class="text-foreground">叠加</strong>，并非脱离用户的独立角色：
+		它照样能评论、发帖、申请，只是额外持 remote 设备档位。
 	</p>
 
 	<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

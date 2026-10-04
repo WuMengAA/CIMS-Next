@@ -1191,6 +1191,21 @@
       try { return await cims(`/v1/client/${encodeURIComponent(uid)}/status`, {}, null); }
       catch (_) { return null; }
     },
+    /**
+     * 命令队列**只读**健康度：面板用它把「已下发」推进到真实回执态
+     * （pending 未被取走 / delivered 执行中 / done 完成 / failed 失败）。
+     *
+     * 只读是硬要求：`/v1/client/{uid}/command/queued` 是**取走**语义，读一次就把命令
+     * 标成 delivered；拿它当"看看有没有积压"的探针会**静默吃掉真实命令**
+     * （教室那条广播再也不会播，且两边都不报错）。
+     * 取不到一律返回 null，由调用方保留「已下发」而不乱下结论。
+     */
+    deviceCommandStats: async (uid) => {
+      if (wantDemo()) return { status: "demo" };
+      if (!canUseBackend()) return null;
+      try { return await cims(`/v1/client/${encodeURIComponent(uid)}/command/stats`, {}, null); }
+      catch (_) { return null; }
+    },
     deviceAction: async (id, action) => {
       if (wantDemo()) return { status: "demo", message: "（演示）指令已模拟下发" };
     // 曾经这里无条件返回 status:"success" —— 后端不可达时运维也会看到「下发成功」。

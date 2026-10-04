@@ -68,13 +68,14 @@ export function validateBindingSet(
 	if (limit === 0) return "该角色没有班级绑定资格（无设备/文件能力）";
 	if (limit === -1) return "站长/管理员不需要绑定班级（范围即全校）";
 	const ids = [...new Set(want.map((c) => String(c).trim()).filter(Boolean))];
-	if (ids.length === 0) return "至少绑定一个班级（该角色必须绑定班级后才有班级范围）";
+	if (ids.length === 0) {
+		// 空提交 = 清空绑定（管理员改绑的第一步）—— 允许，返回 null。
+		// 注意：full-replace 语义下「提交空列表」就是「清空」，不算错误；
+		// 调用方若希望禁止清空可在别处把关。
+		return null;
+	}
 	if (ids.length > limit) {
 		return `该角色最多绑定 ${limit} 个班级（当前提交 ${ids.length} 个）`;
-	}
-	if (existingCount + ids.length > limit && existingCount > 0) {
-		// 全量替换语义下 existingCount 不直接相加；这里防御的是增量语义误用。
-		return `该角色最多绑定 ${limit} 个班级`;
 	}
 	const bad = ids.filter((c) => !validClassIds.has(c.toLowerCase()));
 	if (bad.length > 0) {
@@ -96,13 +97,19 @@ export function replaceBindings(
 		 VALUES (?, ?, ?, ?, ?)`
 	);
 	const ts = nowIso();
-	const run = db.transaction(() => {
+	// node:sqlite 的 DatabaseSync 没有 better-sqlite3 的 .transaction()，
+	// 用显式事务保证「清空 + 重插」原子性（与 auth.ts setUserTitles 同款）。
+	db.exec("BEGIN");
+	try {
 		del.run(uid);
 		for (const e of entries) {
 			ins.run(uid, e.class_id, e.class_name ?? "", boundBy, ts);
 		}
-	});
-	run();
+		db.exec("COMMIT");
+	} catch (e) {
+		db.exec("ROLLBACK");
+		throw e;
+	}
 	return listBindings(uid);
 }
 

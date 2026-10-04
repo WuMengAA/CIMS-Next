@@ -4,19 +4,56 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+		<!-- ⚠️ 必须放在 head 内容之前：下面这行内联脚本要在首帧绘制前
+		     就给 html 元素打上 "js" 类，否则隐藏初态来不及生效会闪一帧。
+		     data-cfasync="false" 是刻意加的：Cloudflare Rocket Loader 会异步化
+		     脚本，若它把这个探针也推迟，隐藏初态就等于对"JS 其实跑不起来"的
+		     页面生效 → 整站空白。（Rocket Loader 本身也应在 Cloudflare
+		     Speed → Optimization 里关掉，见重构总纲 W1。）
+		     🚨 这段注释里绝不能出现 SvelteKit 的占位符字面量 —— 模板替换不认
+		     注释边界，会把 head 的实际内容（含标签）插进注释里把注释撑破，
+		     后半段就漏成页面顶部的可见文字（2026-09-29 线上实锤，首屏被顶乱）。 -->
+		<script data-cfasync="false">
+			(function () {
+				var d = document.documentElement;
+				// 「JS 真的在执行」的证据。只有它存在，才允许把内容藏起来做入场动画。
+				d.classList.add("js");
+				// 兜底闸：3 秒内 hydration 没接管（脚本被延迟 / 加载失败 / 执行报错），
+				// 强制放行全部 .reveal —— 宁可丢掉动画，也绝不呈现空白页。
+				// 现有的 noscript / @media (scripting:none) / prefers-reduced-motion
+				// 三重兜底都覆盖不到「脚本加载了但没跑起来」这一种，这里补上。
+				setTimeout(function () {
+					var anyShown = document.querySelector(".reveal.revealed");
+				if (!d.classList.contains("app-ready") || !anyShown) d.classList.add("reveal-late");
+				}, 3000);
+			})();
+		</script>
 		%sveltekit.head%
 		<!-- 首屏防闪现(FOUC)：外部 layout.css 是独立下载的样式表，
 		     在它加载完成前，浏览器若先画出 .reveal 元素会以 opacity:1 闪一帧
 		     （即「刷新时内容短暂闪现在模糊背景之上」）。这里把隐藏初态写进
 		     内联关键 CSS——它随 HTML 同步解析、无需额外下载，首帧即生效，
 		     比外部样式表早，从而把闪现彻底掐掉。外部 .reveal/.revealed 与
-		     下方 noscript 仍以更高优先级正常覆盖。 -->
+		     下方 noscript 仍以更高优先级正常覆盖。
+
+		     ⚠️ 2026-09-29（W1）改成「渐进增强」：隐藏初态从 .reveal 收窄到
+		     html.js .reveal —— 即**先证明 JS 在跑，才藏内容**。原来的写法是
+		     默认藏、等 JS 解锁，一旦 JS 没跑到就整站空白；现在默认是可见的，
+		     最坏情况只是没有入场动画。 -->
 		<style>
-			.reveal { opacity: 0; transform: translateY(24px) scale(0.985); will-change: opacity, transform; }
+			/* 🚨 :not(.revealed) 是刻意的（2026-09-29 线上实锤）：这条规则**非分层**，
+			   而 CSS 里非分层规则永远压过 @layer 分层规则 —— 特异性再高也救不回。
+			   没有它时，layout.css 里 .reveal.revealed{opacity:1} 全部失效，
+			   12 个元素都带上了 revealed 类却永远 opacity:0，首屏真空白。
+			   加上 :not(.revealed) 后，JS 一加类本条即退出匹配，显示权交还
+			   分层规则；首帧防闪（FOUC）的原始诉求不受影响（revealed 是 JS 后来才加的）。 */
+			html:where(.js) .reveal:not(.revealed) { opacity: 0; transform: translateY(30px) scale(0.98); will-change: opacity, transform; }
+			/* 兜底闸放行（与上面 3s 定时器配对）：非分层 + !important，压过一切分层规则 */
+			html.reveal-late .reveal { opacity: 1 !important; transform: none !important; }
 		</style>
-		<!-- 无 JS 兜底：.reveal 首屏是 opacity:0，靠 JS 在 hydration 后解锁。
-		     禁用脚本 / 脚本加载失败时若不放行，整站会呈现为空白页——
-		     这是访客最容易误判成「网站挂了」的场景。 -->
+		<!-- 无 JS 兜底：禁用脚本 / 脚本加载失败时若不放行，整站会呈现为空白页——
+		     这是访客最容易误判成「网站挂了」的场景。
+		     （JS 已启用但没跑起来的情况由上面 html.js / html.reveal-late 处理。） -->
 		<noscript>
 			<style>
 				.reveal { opacity: 1 !important; transform: none !important; }

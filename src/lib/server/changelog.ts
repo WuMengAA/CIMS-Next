@@ -24,6 +24,14 @@ export interface ChangelogEntry {
 	title: string;
 	highlight?: string;
 	items: ChangelogItem[];
+	/**
+	 * 对外可见性。缺省（字段不存在）= 已发布。
+	 *
+	 * ⚠️ 这个「缺省即真」是有意的历史兼容：2026-09 之前的旧数据里根本没有这个字段，
+	 *    它们全都是已经对外展示过的版本。任何按 `published === true` 判定的写法都会让
+	 *    这些老版本在 /changelog 上一夜之间全部消失 —— 判空一路自上而下只能是 `!== false`。
+	 */
+	published?: boolean;
 }
 
 export interface RoadmapItem {
@@ -57,12 +65,38 @@ export function getChangelog(): ChangelogEntry[] {
 			date: String(e.date ?? ""),
 			title: String(e.title ?? ""),
 			highlight: e.highlight ? String(e.highlight) : "",
-			items: Array.isArray(e.items) ? e.items.filter((i) => i && i.text) : []
+			items: Array.isArray(e.items) ? e.items.filter((i) => i && i.text) : [],
+			// 原样透传，不做布尔折叠：缺失与 true 都要能走到下面 getPublicChangelog 的可见侧。
+			published: e.published
 		}))
 		.sort((a, b) => {
 			if (a.date !== b.date) return b.date.localeCompare(a.date);
 			return b.version.localeCompare(a.version);
 		});
+}
+
+/**
+ * 整表落盘。后台「更新日志」页的写路径，原样覆盖 content/changelog.json。
+ *
+ * 这里没有复用 content-store 的 ensureDirs()：它没导出，而 content-store 一旦被 import
+ * 就会连带拉起 SQLite、markdown-it 全套 —— 为一个纯 JSON 写文件把整条工具链拖进
+ * changelog 模块不划算（本模块是前后台共用的读取层）。mkdir CONTENT_DIR 一行就够。
+ *
+ * ⚠️ 本模块刻意不用 cachedJsonFile（读取层说明见文件头），所以写完**没有缓存要清**。
+ */
+export function saveChangelog(list: ChangelogEntry[]): void {
+	fs.mkdirSync(CONTENT_DIR, { recursive: true });
+	fs.writeFileSync(CHANGELOG_FILE, JSON.stringify(list, null, 2), "utf-8");
+}
+
+/**
+ * 前台可用视图：只留对外可见的版本。
+ *
+ * 🔴 判定必须写成 `e.published !== false` —— 见 ChangelogEntry.published 上的注释。
+ *    写成 `e.published === true` 会让所有没有该字段的历史版本在前台直接消失。
+ */
+export function getPublicChangelog(): ChangelogEntry[] {
+	return getChangelog().filter((e) => e.published !== false);
 }
 
 export function getRoadmap(): { updated: string; items: RoadmapItem[] } {

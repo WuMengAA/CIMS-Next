@@ -3,6 +3,7 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { verifyToken, type User } from "$lib/server/auth.js";
 import { can, userCan, canDevice } from "$lib/permissions.js";
 import crypto from "node:crypto";
+import { verifyDeviceReportSecret, getMonitorConfig } from "$lib/server/console-ext.js";
 
 /**
  * 星集控 P2P 信令接缝（方案2 · 接入真实 CIMS 的信令边车）
@@ -54,19 +55,45 @@ async function registerToSidecar(uid: string, secret: string): Promise<{ ok: boo
 }
 
 export async function GET(event: RequestEvent) {
-	const u = authUser(event);
-	if (!u) return json({ error: "无权限" }, { status: 401 });
-	if (!canDevice(u.role, "remote")) return json({ error: "需 device.remote 档位" }, { status: 403 });
 	const uid = String(event.url.searchParams.get("uid") ?? "").trim();
+	// 设备自注册：带 x-stelarith-device-secret 的是教室端 agent（无用户会话），
+	// 密钥正确 + uid 非空即放行（令牌是确定性 HMAC 派生，本就与 uid 绑定）。
+	const devSecret = event.request.headers.get("x-stelarith-device-secret");
+	if (devSecret) {
+		if (!verifyDeviceReportSecret(devSecret)) {
+			return json({ error: "设备密钥无效" }, { status: 403 });
+		}
+		if (!uid) return json({ error: "missing uid" }, { status: 400 });
+	} else {
+		const u = authUser(event);
+		if (!u) return json({ error: "无权限" }, { status: 401 });
+		if (!canDevice(u.role, "remote")) return json({ error: "需 device.remote 档位" }, { status: 403 });
+	}
+	if (!uid) return json({ error: "missing uid" }, { status: 400 });
 	if (!uid) return json({ error: "missing uid" }, { status: 400 });
 	if (!HMAC_KEY) return json({ error: "服务端未配置 HMAC 密钥" }, { status: 500 });
 	const secret = mintSecret(uid);
 	// 顺手把令牌注入边车（幂等；边车没起则忽略，不阻塞面板）
 	await registerToSidecar(uid, secret);
+	// ICE 服务器：优先取监控配置的 p2p_ice_override（管理员可填 TURN/STUN JSON 数组），
+	// 留空回退默认 STUN（仅局域网/打洞可达；配了 TURN 才有 50kb/s 级中转兜底）。
+	const mc = getMonitorConfig();
+	const iceRaw = String(mc.p2p_ice_override ?? "").trim();
+	let iceServers = [
+		{ urls: "stun:stun.miwifi.com:3478" },
+		{ urls: "stun:stun.chat.bilibili.com:3478" },
+	];
+	if (iceRaw) {
+		try {
+			const parsed = JSON.parse(iceRaw);
+			if (Array.isArray(parsed) && parsed.length > 0) iceServers = parsed;
+		} catch { /* 非法 JSON 忽略，回退默认 */ }
+	}
 	return json({
 		signalUrl: PUBLIC_URL || SIGNAL_URL,
 		roomId: `room-${uid}`,
 		secret,
+		iceServers,
 		expiresIn: 0, // 确定性派生，长期有效（教室机重连即用同一令牌）
 	});
 }

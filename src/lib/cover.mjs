@@ -143,6 +143,9 @@ function escapeXml(s) {
  * @param {string} [opts.accent]
  * @param {string} [opts.bg]
  * @param {string} [opts.bg2]
+ * @param {'card'|'art'} [opts.variant] card（默认）=带标题文字的卡片；art=纯头图，不烘字
+ *   —— 文章详情页已改成通栏头图，标题由页面渲染。若封面里再烘一遍标题，两者会重影，
+ *   且烘死的字随图片缩放，窄屏上小到看不清。故详情页用 art，社交卡片用 card。
  */
 export function buildCoverSvg(opts = {}) {
 	const title = opts.title || "Untitled";
@@ -154,6 +157,7 @@ export function buildCoverSvg(opts = {}) {
 	const bg2 = opts.bg2 || "#141413";
 	const ratioKey = typeof opts.ratio === "string" ? opts.ratio : "";
 	const [W, H] = RATIOS[ratioKey] || RATIOS["16:9"];
+	const textless = opts.variant === "art";
 
 	const seed = hashStr(title + "|" + (category || ""));
 	const rng = mulberry32(seed);
@@ -179,14 +183,25 @@ export function buildCoverSvg(opts = {}) {
 		stars += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(2)}" fill="#ffffff" opacity="${op}" />`;
 	}
 
-	// 图标（右上，带柔光底）
+	// 图标：card = 右上角（留白给标题）；art = 居中（宽屏头图会被 object-cover 裁上下，居中最经得住裁）
 	const icon = ICONS[iconKey];
-	const S = Math.round(Math.min(W, H) * 0.22);
+	const S = Math.round(Math.min(W, H) * (textless ? 0.28 : 0.22));
 	const s = S / 24;
 	const ix = W - S - 72;
 	const iy = 64;
-	const ringR = S * 0.82;
-	const iconMarkup = `<g transform="translate(${ix} ${iy}) scale(${s.toFixed(4)})" fill="none" stroke="${accent}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.92">${icon}</g>`;
+	const iconCx = textless ? W / 2 : ix + S / 2;
+	const iconCy = textless ? H / 2 : iy + S / 2;
+	const iconX = iconCx - S / 2;
+	const iconY = iconCy - S / 2;
+	const ringR = S * (textless ? 0.95 : 0.82);
+	const iconMarkup = `<g transform="translate(${iconX.toFixed(1)} ${iconY.toFixed(1)}) scale(${s.toFixed(4)})" fill="none" stroke="${accent}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="${textless ? 0.5 : 0.92}">${icon}</g>`;
+	// art 的外层同心环：构图读起来像“涟漪/信号”，被裁掉一侧也不失衡
+	const artRings = textless
+		? `<circle cx="${iconCx}" cy="${iconCy}" r="${(ringR * 1.5).toFixed(1)}" fill="none" stroke="${accent}" stroke-opacity="0.12" stroke-width="2" />
+  <circle cx="${iconCx}" cy="${iconCy}" r="${(ringR * 2.1).toFixed(1)}" fill="none" stroke="${accent}" stroke-opacity="0.06" stroke-width="2" />`
+		: "";
+	const glowCx = textless ? 0.5 : 0.82;
+	const glowCy = textless ? 0.46 : 0.18;
 
 	// 文字块位置
 	const leftX = 84;
@@ -194,24 +209,30 @@ export function buildCoverSvg(opts = {}) {
 	const titleTop = 168;
 	const subY = titleTop + lines.length * lineH + 28;
 
-	const kicker = category
-		? `<text x="${leftX}" y="${kickerY}" font-family="${FONT}" font-size="30" font-weight="600" letter-spacing="2" fill="${accent}">${escapeXml(category.toUpperCase())}</text>
+	const kicker =
+		category && !textless
+			? `<text x="${leftX}" y="${kickerY}" font-family="${FONT}" font-size="30" font-weight="600" letter-spacing="2" fill="${accent}">${escapeXml(category.toUpperCase())}</text>
 <rect x="${leftX}" y="${kickerY + 14}" width="54" height="4" rx="2" fill="${accent}" />`
-		: "";
+			: "";
 
-	const titleSpans = lines
-		.map(
-			(l, i) =>
-				`<text x="${leftX}" y="${titleTop + i * lineH}" font-family="${FONT}" font-size="${fs}" font-weight="700" fill="#f5f3ef">${escapeXml(l.text)}</text>`
-		)
-		.join("\n");
+	const titleSpans = textless
+		? ""
+		: lines
+				.map(
+					(l, i) =>
+						`<text x="${leftX}" y="${titleTop + i * lineH}" font-family="${FONT}" font-size="${fs}" font-weight="700" fill="#f5f3ef">${escapeXml(l.text)}</text>`
+				)
+				.join("\n");
 
-	const sub = subtitle
-		? `<text x="${leftX}" y="${subY}" font-family="${FONT}" font-size="30" fill="#b8b2a8">${escapeXml(subtitle)}</text>`
-		: "";
+	const sub =
+		subtitle && !textless
+			? `<text x="${leftX}" y="${subY}" font-family="${FONT}" font-size="30" fill="#b8b2a8">${escapeXml(subtitle)}</text>`
+			: "";
 
 	const wordmarkY = H - 54;
-	const footer = `<line x1="${leftX}" y1="${wordmarkY - 22}" x2="${W - leftX}" y2="${wordmarkY - 22}" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1" />
+	const footer = textless
+		? ""
+		: `<line x1="${leftX}" y1="${wordmarkY - 22}" x2="${W - leftX}" y2="${wordmarkY - 22}" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1" />
 <text x="${leftX}" y="${wordmarkY}" font-family="${FONT}" font-size="26" font-weight="700" fill="${accent}">Stelarith</text>
 <text x="${leftX + 118}" y="${wordmarkY}" font-family="${FONT}" font-size="22" fill="#8c857a">· 无限音乐画布</text>`;
 
@@ -221,7 +242,7 @@ export function buildCoverSvg(opts = {}) {
       <stop offset="0" stop-color="${bg}" />
       <stop offset="1" stop-color="${bg2}" />
     </linearGradient>
-    <radialGradient id="glow" cx="0.82" cy="0.18" r="0.7">
+    <radialGradient id="glow" cx="${glowCx}" cy="${glowCy}" r="0.7">
       <stop offset="0" stop-color="hsl(${glowHue} 55% 55%)" stop-opacity="0.30" />
       <stop offset="1" stop-color="hsl(${glowHue} 55% 55%)" stop-opacity="0" />
     </radialGradient>
@@ -229,8 +250,9 @@ export function buildCoverSvg(opts = {}) {
   <rect width="${W}" height="${H}" fill="url(#bg)" />
   <rect width="${W}" height="${H}" fill="url(#glow)" />
   ${stars}
-  <circle cx="${ix + S / 2}" cy="${iy + S / 2}" r="${ringR}" fill="${accent}" fill-opacity="0.10" />
-  <circle cx="${ix + S / 2}" cy="${iy + S / 2}" r="${ringR}" fill="none" stroke="${accent}" stroke-opacity="0.28" stroke-width="2" />
+  ${artRings}
+  <circle cx="${iconCx}" cy="${iconCy}" r="${ringR}" fill="${accent}" fill-opacity="0.10" />
+  <circle cx="${iconCx}" cy="${iconCy}" r="${ringR}" fill="none" stroke="${accent}" stroke-opacity="0.28" stroke-width="2" />
   ${iconMarkup}
   ${kicker}
   ${titleSpans}

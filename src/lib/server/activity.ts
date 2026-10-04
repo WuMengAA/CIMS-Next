@@ -236,6 +236,53 @@ export function prune(): { sessions: number; activities: number } {
 	return { sessions: Number(s.changes ?? 0), activities: Number(a.changes ?? 0) };
 }
 
+export interface DailyCount {
+	date: string; // YYYY-MM-DD
+	count: number;
+}
+
+/**
+ * 按日历日聚合活动数（用于活跃度面板的柱状/热度图）。
+ * 直接用 SQL 的 substr(created_at,1,10) 切日期：activities.created_at 恒为 ISO 字符串，
+ * 不存在时区漂移问题（都按存储 tz 呈现，前端统一加注）。
+ */
+export function dailyActivities(days = 30): DailyCount[] {
+	const db = getDb();
+	const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+	const rows = db
+		.prepare(
+			`SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS n
+			   FROM activities WHERE created_at >= ? GROUP BY d ORDER BY d ASC`
+		)
+		.all(since) as unknown as { d: string; n: number }[];
+	const map = new Map(rows.map((r) => [r.d, r.n]));
+	// 补齐没有活动的日子（否则图上会出现断崖，看着像"网站突然没人用了"）
+	const out: DailyCount[] = [];
+	const start = new Date(Date.now() - (days - 1) * 24 * 60 * 60 * 1000);
+	for (let i = 0; i < days; i++) {
+		const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+		out.push({ date: d, count: map.get(d) ?? 0 });
+	}
+	return out;
+}
+
+/** 近 N 天最活跃账号（有活动的才算）。 */
+export function topActiveUsers(days = 14, limit = 8): { username: string; displayName: string; count: number }[] {
+	const db = getDb();
+	const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+	return db
+		.prepare(
+			`SELECT a.username AS username,
+			        COALESCE(u.display_name, a.username) AS display_name,
+			        COUNT(*) AS count
+			   FROM activities a LEFT JOIN users u ON u.id = a.user_id
+			  WHERE a.created_at >= ? AND a.user_id IS NOT NULL
+			  GROUP BY a.user_id
+			  ORDER BY count DESC LIMIT ?`
+		)
+		.all(since, limit) as unknown as { username: string; displayName: string; count: number }[];
+}
+
 export function activitySummary(): { total: number; today: number; activeUsers24h: number } {
 	const db = getDb();
 	const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();

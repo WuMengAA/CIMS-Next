@@ -31,6 +31,7 @@ export type PrefKey =
 	| "browse:visit"          // 访问轨迹（标题 + 路径 + 时间）
 	| "dismissed:ann"         // 已关闭的公告 id 列表（沿用旧键名见下）
 	| "editor:needRefresh"    // 编辑器保存后提示后台列表刷新
+	| "nav:groups"            // 自定义导航组（镜像站等）的展开态 { [key]: boolean }
 	| "ui:lastTab"            // 各页上次停留的标签页
 	| "page:devicePreview";   // 页面编辑器上次选的预览设备
 

@@ -1,0 +1,246 @@
+<script lang="ts">
+	import { onMount } from "svelte";
+	import { toast } from "svelte-sonner";
+	import { Button } from "$lib/components/ui/button/index.js";
+	import { Badge } from "$lib/components/ui/badge/index.js";
+	import { Label } from "$lib/components/ui/label/index.js";
+	import { Input } from "$lib/components/ui/input/index.js";
+	import { CalendarDays, Save, RefreshCw, Loader2, Plus, Trash2, Info } from "@lucide/svelte";
+
+	// 课表（Svelte 版 · 从原生面板 static/console 的 views.schedule 迁移）。
+	// 数据来源（照旧代码，不发明端点）：
+	//   · 班级   GET /api/class/list       → { classes:[{class_id,name,class_plan}] }（自有真源，2026-10-04 收口）
+	//   · 课表   GET /api/console/cims/v1/client/ClassPlan?name={planId}   → 官方 Profile 信封
+	//   · 学科   GET /api/console/cims/v1/client/Subjects?name=sub_school  → {Subjects:{guid:{Name}}}
+	//   · 写回   POST /api/console/cims/account/{acct}/ClassPlan/write?name={planId} → body=官方信封
+	//   · acct   GET /api/console/cims/account/list → [{id:acctId}]（取首个）
+	//
+	// 诚实 UI：读不到真实班级/课表 → 明示原因，绝不显示演示数据。保存的回写把面板形态
+	// 转回官方信封（Classes[].SubjectId GUID），否则教室端读到的是一张空课表。
+
+	type ClassOpt = { class_id: string; name: string; class_plan: string };
+	type DayRow = { day: number; name: string; items: string[] };
+
+	let classes = $state<ClassOpt[]>([]);
+	let classErr = $state("");
+	let selClass = $state("");
+	let acctId = $state("");
+	let planName = $state("default_classplan");
+	let days = $state<DayRow[]>([]);
+	let subjectIds = $state<Record<string, string>>({});
+	let rawEnvelope: any = $state(null);
+	let loading = $state(false);
+	let loadErr = $state("");
+	let saving = $state(false);
+	const WD = "日一二三四五六";
+
+	async function cimsCall(path: string, init?: RequestInit) {
+		const res = await fetch(`/api/console/cims${path}`, {
+			headers: { "Content-Type": "application/json" },
+			...init
+		});
+		const d = await res.json().catch(() => ({}));
+		if (!res.ok) throw new Error(d?.error || d?.message || `HTTP ${res.status}`);
+		return d;
+	}
+
+	async function loadClasses() {
+		try {
+			const res = await fetch("/api/class/list");
+			const d = await res.json();
+			if (!res.ok) throw new Error(d?.error || `HTTP ${res.status}`);
+			classes = (Array.isArray(d?.classes) ? d.classes : [])
+				.map((c: any) => ({ class_id: String(c.class_id ?? ""), name: String(c.name ?? c.class_id ?? ""), class_plan: String(c.class_plan ?? "") }))
+				.filter((c: ClassOpt) => Boolean(c.class_id));
+			classErr = "";
+			// 首个有课表资源名的班级设为默认选中
+			if (!selClass && classes.length) selClass = classes.find((c) => c.class_plan)?.class_id || classes[0].class_id;
+		} catch (e) { classes = []; classErr = (e as Error).message || "班级列表加载失败"; }
+	}
+
+	async function loadAcct() {
+		try {
+			const list = await cimsCall("/account/list");
+			if (Array.isArray(list) && list.length) acctId = String(list[0].id ?? "");
+		} catch { /* 写操作用不到时无所谓；保存时会再校验 */ }
+	}
+
+	// 官方信封 → 面板形态（days[]）。
+	// 科目 SubjectId → 中文名用 Subjects 资源映射；映射缺失显示短 GUID。
+	async function loadSchedule() {
+		if (!selClass) return;
+		const cls = classes.find((c) => c.class_id === selClass);
+		const name = cls?.class_plan || "default_classplan";
+		planName = name;
+		loading = true; loadErr = "";
+		try {
+			const env = await cimsCall(`/v1/client/ClassPlan?name=${encodeURIComponent(name)}`);
+			rawEnvelope = env;
+			// 已经是面板形态（含 days）→ 直接用
+			if (env && Array.isArray(env.days)) { days = env.days; subjectIds = env.__subjectIds || {}; return; }
+			// 否则解析官方信封
+			const plans = (env && env.ClassPlans) || {};
+			const entries = Object.entries(plans);
+			const nameMap: Record<string, string> = {};
+			try {
+				const subEnv = await cimsCall(`/v1/client/Subjects?name=sub_school`);
+				const subs = subEnv && subEnv.Subjects;
+				if (subs && typeof subs === "object") for (const [g, v] of Object.entries(subs)) {
+					const nm = (v as any)?.Name || (v as any)?.name;
+					if (g && nm) nameMap[g] = String(nm);
+				}
+			} catch { /* 科目表缺失：显示短 GUID，不阻断 */ }
+			const inv: Record<string, string> = {};
+			for (const [g, nm] of Object.entries(nameMap)) inv[nm] = g;
+			subjectIds = inv;
+			const out: DayRow[] = entries.map(([guid, cp]: [string, any]) => {
+				const rule = (cp && cp.TimeRule) || {};
+				const wd = Number.isFinite(rule.WeekDay) ? rule.WeekDay : 0;
+				const items = ((cp && cp.Classes) || [])
+					.filter((c: any) => c && c.IsEnabled !== false)
+					.map((c: any) => { const sid = c.SubjectId || c.subjectId || ""; return nameMap[sid] || (sid ? String(sid).slice(0, 8) : ""); })
+					.filter((x: string) => x);
+				return { day: wd, name: (cp && cp.Name) || WD[wd] || `第${wd}天`, items };
+			});
+			out.sort((a, b) => a.day - b.day);
+			days = out;
+		} catch (e) { days = []; loadErr = (e as Error).message || "课表加载失败"; }
+		finally { loading = false; }
+	}
+
+	function setCell(di: number, ii: number, val: string) {
+		days[di].items[ii] = val;
+		days = days.map((d, i) => (i === di ? { ...d, items: d.items.map((it, j) => (j === ii ? val : it)) } : d));
+	}
+	function addPeriod(di: number) { days[di].items = [...days[di].items, ""]; days = [...days]; }
+	function delPeriod(di: number, ii: number) { days[di].items = days[di].items.filter((_, j) => j !== ii); days = [...days]; }
+
+	// 面板形态 → 官方信封（回写方向归一化）。
+	// 以原始信封为骨架保留 TimeRule/TimeLayoutId 等未编辑字段，只按顺序把科目名换回 SubjectId GUID。
+	function buildEnvelope(): { envelope: any; dropped: string[] } {
+		const dropped: string[] = [];
+		const skeleton = rawEnvelope && rawEnvelope.ClassPlans ? JSON.parse(JSON.stringify(rawEnvelope)) : { Name: planName, ClassPlans: {}, ClassPlanGroups: {} };
+		// 演示/空信封：从 days 重建最小 ClassPlans
+		if (!skeleton.ClassPlans || !Object.keys(skeleton.ClassPlans).length) {
+			const plans: Record<string, any> = {};
+			days.forEach((d, i) => {
+				if (!d.items.length) return;
+				plans["day" + d.day] = {
+					Name: d.name,
+					TimeRule: { WeekDay: d.day },
+					Classes: d.items.map((it) => ({ IsEnabled: true, SubjectId: subjectIds[it] || "" }))
+				};
+			});
+			skeleton.ClassPlans = plans;
+			return { envelope: skeleton, dropped: [] };
+		}
+		// 有骨架：按 day 顺序覆盖每个 Classes[i].SubjectId
+		for (const [guid, cp] of Object.entries(skeleton.ClassPlans)) {
+			const wd = Number.isFinite((cp as any)?.TimeRule?.WeekDay) ? (cp as any).TimeRule.WeekDay : 0;
+			const row = days.find((d) => d.day === wd);
+			if (!row) continue;
+			const classesArr = (cp as any).Classes || [];
+			for (let i = 0; i < classesArr.length; i++) {
+				const txt = row.items[i];
+				if (txt === undefined) break;
+				const gid = subjectIds[txt];
+				if (!gid && txt.trim()) dropped.push(`${row.name} 第${i + 1}节「${txt}」`);
+				classesArr[i].SubjectId = gid || "";
+			}
+		}
+		return { envelope: skeleton, dropped };
+	}
+
+	async function save() {
+		if (!acctId) { toast.error("未取得集控账户，无法保存课表"); return; }
+		saving = true;
+		try {
+			const { envelope, dropped } = buildEnvelope();
+			await cimsCall(`/account/${encodeURIComponent(acctId)}/ClassPlan/write?name=${encodeURIComponent(planName)}`, { method: "POST", body: JSON.stringify(envelope) });
+			if (dropped.length) toast.warning("已保存，但有科目未识别：\n" + dropped.join("；"));
+			else toast.success("课表已保存");
+		} catch (e) { toast.error("保存失败：" + ((e as Error).message || String(e))); }
+		finally { saving = false; }
+	}
+
+	onMount(() => { loadClasses(); loadAcct(); });
+$effect(() => { if (selClass) loadSchedule(); });
+</script>
+
+<svelte:head><title>课表 · 集控面板 | Stelarith</title><meta name="robots" content="noindex" /></svelte:head>
+
+<div class="mx-auto max-w-5xl p-4 md:p-6">
+	<div class="mb-5 flex items-center gap-3">
+		<div class="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary"><CalendarDays class="size-5" /></div>
+		<div>
+			<h1 class="font-heading text-lg font-semibold">课表</h1>
+			<p class="text-xs text-muted-foreground">每周课表编辑 · 保存后教室大屏 / ClassIsland 即读到新课表。</p>
+		</div>
+	</div>
+
+	{#if classErr}
+		<div class="rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400">{classErr}</div>
+	{:else if !classes.length}
+		<div class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">加载班级列表…</div>
+	{:else}
+	<div class="mb-4 flex flex-wrap items-center gap-3">
+		<div class="grid gap-1.5">
+			<Label for="sel-class">班级</Label>
+			<select id="sel-class" bind:value={selClass} onchange={() => loadSchedule()} class="h-9 w-56 rounded-md border border-input bg-transparent px-2 text-sm outline-none">
+				{#each classes as c (c.class_id)}
+					<option value={c.class_id}>{c.name}{c.class_plan ? "" : "（无课表资源）"}</option>
+				{/each}
+			</select>
+		</div>
+		{#if acctId}
+			<Button onclick={save} disabled={saving || loading}><Save class="mr-1.5 size-3.5" />{saving ? "保存中…" : "保存课表"}</Button>
+		{/if}
+		{#if loading}<span class="inline-flex items-center gap-1 text-xs text-muted-foreground"><Loader2 class="size-3.5 animate-spin" />加载中…</span>{/if}
+	</div>
+
+	{#if loadErr}
+		<div class="mb-4 rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-600 dark:text-red-400">
+			<p class="font-medium">课表加载失败</p>
+			<p class="mt-1 text-xs">{loadErr}</p>
+		</div>
+	{:else if !loading && !days.length}
+		<div class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+			该班还没有课表数据。{acctId ? "可直接在下方添加节次后保存。" : ""}
+		</div>
+	{:else if !loading}
+	<div class="grid gap-4 md:grid-cols-2">
+		{#each days as d, di (d.day)}
+			<section class="rounded-xl border border-border/60 bg-card p-4">
+				<div class="mb-2 flex items-center justify-between">
+					<h2 class="text-sm font-semibold">{d.name}</h2>
+					<span class="text-[10px] text-muted-foreground">{d.items.length} 节</span>
+				</div>
+				<ol class="space-y-1.5">
+					{#each d.items as it, ii (ii)}
+						<li class="flex items-center gap-2">
+							<span class="w-6 shrink-0 text-center text-[11px] font-medium text-muted-foreground">{String(ii + 1).padStart(2, "0")}</span>
+							<Input
+								class="h-8 flex-1 text-sm"
+								value={it}
+								placeholder="科目（留空=无课）"
+								oninput={(e) => setCell(di, ii, e.currentTarget.value)}
+							/>
+							<button class="rounded p-1 text-muted-foreground hover:bg-muted" onclick={() => delPeriod(di, ii)} aria-label="删除这一节" title="删除这一节"><Trash2 class="size-3.5" /></button>
+						</li>
+					{/each}
+				</ol>
+				<div class="mt-2 flex items-center gap-2">
+					{#if !d.items.length}<span class="text-[11px] text-muted-foreground">这一天暂无课</span>{/if}
+					<Button size="sm" variant="outline" class="h-7 text-xs" onclick={() => addPeriod(di)}><Plus class="mr-1 size-3" />新增一节</Button>
+				</div>
+			</section>
+		{/each}
+	</div>
+	{/if}
+
+	<div class="mt-4 flex items-start gap-2 rounded-lg border border-border/60 bg-muted/40 p-3 text-xs text-muted-foreground">
+		<Info class="mt-0.5 size-3.5 shrink-0" />
+		<span>保存时把「科目名」换算回科目 ID（SubjectId GUID）写回 CIMS，教室端才读得到课。无法识别的科目会提示但不阻断保存。</span>
+	</div>
+	{/if}
+</div>

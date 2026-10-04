@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
 	import { onMount } from "svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Input } from "$lib/components/ui/input/index.js";
@@ -21,7 +21,7 @@
 	const DOC_EXTS = ["pdf", "txt", "md", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "json"];
 	const AUDIO_EXTS = ["mp3", "wav", "ogg", "flac", "m4a"];
 	const VIDEO_EXTS = ["mp4", "webm", "mov", "avi", "mkv"];
-	const ARCHIVE_EXTS = ["zip", "rar", "7z", "tar", "gz", "apk"];
+	const ARCHIVE_EXTS = ["zip", "rar", "7z", "tar", "gz", "apk", "exe"];
 
 	function kindOf(k: string): string {
 		if (IMAGE_EXTS.includes(k)) return "image";

@@ -6,6 +6,7 @@
 	import ReadingTracker from "$lib/components/reading-tracker.svelte";
 	import { LAYOUT_PRESETS } from "$lib/page-templates.js";
 	import { onMount } from "svelte";
+	import { reveal } from "$lib/actions/reveal.js";
 
 	let { data }: { data: { page: any; html: string; words: number; canEdit?: boolean; user?: { username: string; role: string } | null; toc?: { id: string; text: string; level: number }[] } } = $props();
 
@@ -64,7 +65,7 @@
 <div style={accentStyle}>
 	<!-- 页头横幅：仅在 hero=banner 且有封面时铺一条背景带 -->
 	{#if data.page.hero === "banner" && data.page.cover}
-		<div class="relative h-40 w-full overflow-hidden bg-muted sm:h-56 md:h-64">
+		<div use:reveal class="reveal-rise relative h-40 w-full overflow-hidden bg-muted sm:h-56 md:h-64">
 			<img src={data.page.cover} alt="" class="size-full object-cover" />
 			<div class="absolute inset-0 bg-gradient-to-t from-background via-background/40 to-transparent"></div>
 		</div>
@@ -87,13 +88,13 @@
 			<div class="min-w-0">
 				{#if data.page.hero !== "none" && !data.page.hideTitle}
 					<header class="mb-6 flex flex-col gap-3">
-						<div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+						<div use:reveal class="reveal flex flex-wrap items-center gap-2 text-xs text-muted-foreground" style="--reveal-delay:0">
 							{#if data.page.category}<Badge variant="outline">{data.page.category}</Badge>{/if}
 							<span>{data.page.date} · {data.words.toLocaleString()} 字</span>
 						</div>
-						<h1 class="font-heading text-3xl font-semibold tracking-tight md:text-4xl">{data.page.title}</h1>
+						<h1 use:reveal class="reveal reveal-mask font-heading text-3xl font-semibold tracking-tight md:text-4xl" style="--reveal-delay:1">{data.page.title}</h1>
 						{#if data.page.excerpt}
-							<p class="text-sm leading-relaxed text-muted-foreground">{data.page.excerpt}</p>
+							<p use:reveal class="reveal text-sm leading-relaxed text-muted-foreground" style="--reveal-delay:2">{data.page.excerpt}</p>
 						{/if}
 					</header>
 				{/if}
@@ -118,7 +119,7 @@
 				{/if}
 
 				<!-- 双主题下不能再写 prose-invert（那会让亮色模式的正文变成浅字浅底） -->
-				<div class="prose max-w-none">
+				<div class="prose ef-drop-cap max-w-none">
 					{@html data.html}
 				</div>
 

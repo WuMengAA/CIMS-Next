@@ -115,7 +115,7 @@
 <ReadingTracker target={"docs:" + data.doc.slug} title={data.doc.title} section="docs" />
 
 <div class="rhine-docs min-h-screen bg-background text-foreground" onclick={onAnchorClick}>
-	<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 py-8 md:flex-row md:px-8">
+	<div class="mx-auto flex w-full max-w-[1100px] flex-col gap-6 px-4 py-8 md:flex-row md:px-8">
 		<!-- ══ 左栏：档案索引（终端目录树） ══════════════════════════════ -->
 		<nav class="shrink-0 md:w-56">
 			<div class="mb-4 flex items-center justify-between border-b border-border/70 pb-2">
@@ -208,7 +208,7 @@
 			</header>
 
 			<!-- 正文：rhine-reveal 提供莱茵招牌的「磨砂盖板自上而下揭开」解密入场 -->
-			<div class="prose rhine-reveal max-w-none border-t border-border/70 px-5 py-6 md:px-7">
+			<div class="prose rhine-reveal ef-drop-cap max-w-none border-t border-border/70 px-5 py-6 md:px-7">
 				{@html data.html}
 			</div>
 

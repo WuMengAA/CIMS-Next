@@ -21,12 +21,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { env } from "$env/dynamic/private";
+import { CONTENT_DIR } from "./paths.js";
 import { getDb, nowIso } from "./db.js";
 import { getCimsAccount } from "./cims-account.js";
 import { cimsToken } from "./cims-client.js";
 
 const MGMT_URL = (env.CIMS_MANAGEMENT_URL ?? "http://127.0.0.1:8097").replace(/\/$/, "");
-const FILES_DIR = path.join(path.resolve("content"), "files");
+const FILES_DIR = path.join(CONTENT_DIR, "files");
 /** 单文件上限：课堂教学文件（PPT/视频切片）绝大多数 < 100MB。 */
 export const MAX_FILE_BYTES = 100 * 1024 * 1024;
 

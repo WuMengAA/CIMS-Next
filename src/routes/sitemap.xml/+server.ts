@@ -4,7 +4,8 @@ import type { RequestHandler } from "./$types";
 /** 有公开可索引内容的静态路由（不含 /admin、/account、/search、占位页等）。 */
 const STATIC_PATHS = [
 	"/",
-	"/posts",
+	"/changelog",
+	"/pulse",
 	"/projects",
 	"/docs",
 	"/pages",
@@ -21,7 +22,6 @@ const STATIC_PATHS = [
 ];
 
 const DETAIL_SECTIONS = [
-	{ section: "posts" as const, prefix: "/posts/" },
 	{ section: "projects" as const, prefix: "/projects/" },
 	{ section: "docs" as const, prefix: "/docs/" },
 	{ section: "pages" as const, prefix: "/pages/" }

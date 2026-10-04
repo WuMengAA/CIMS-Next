@@ -90,7 +90,7 @@
         "url": "/uploads/xingjikong-setup.exe",
         "size": 15870972,
         "createdAt": "2026-09-27T08:00:00+08:00",
-        "downloads": 0,
+        "downloads": 2,
         "prerelease": false,
         "source": "local"
       }
@@ -98,6 +98,6 @@
     "sync": null,
     "contrib": {},
     "tagline": "教室数字运维平台：设备管控、远控、通知广播。控制端/被控端双形态，云端静默非覆盖升级，存储中心。",
-    "updatedAt": "2026-09-27T04:57:20.397Z"
+    "updatedAt": "2026-09-28T07:47:06.020Z"
   }
 ]

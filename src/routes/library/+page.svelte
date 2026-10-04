@@ -295,7 +295,7 @@
 
 <svelte:head><title>我的附件库 · {data.me.displayName}</title></svelte:head>
 
-<div class="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-8">
+<div class="ef-shell ef-shell--wide flex flex-col gap-6 py-8">
 	<!-- 顶部：配额 + 存储状态 -->
 	<div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-5">
 		<div class="flex flex-wrap items-center gap-3">

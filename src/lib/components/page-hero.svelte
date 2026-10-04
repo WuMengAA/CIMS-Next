@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { ArrowLeft, Hammer } from "@lucide/svelte";
+	import { reveal } from "$lib/actions/reveal.js";
 
 	interface Props {
 		icon?: typeof ArrowLeft;
 		title: string;
 		desc: string;
 		backHref?: string;
-		/** 未上线功能的占位提示，例如「功能建设中」。传入后附带 noindex，避免搜索引擎收录空页。 */
+		/** 未上线功能的占位提示。传入后附带 noindex，避免搜索引擎收录空页。 */
 		note?: string;
 	}
 
@@ -18,20 +19,21 @@
 	{#if note}<meta name="robots" content="noindex, follow" />{/if}
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-4xl flex-col items-center gap-8 px-4 py-16 text-center md:px-8">
-	<div class="flex size-16 items-center justify-center rounded-2xl bg-primary/15 text-primary">
-		<Icon class="size-8" />
-	</div>
-	<h1 class="text-shimmer font-heading text-3xl font-semibold tracking-tight">{title}</h1>
-	<p class="max-w-lg text-muted-foreground">{desc}</p>
+<!-- 编辑流体内页 Hero：窄列左对齐、信号线标签、Fraunces 超大标题、pill 返回 -->
+<div class="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-16 md:px-8 md:py-24">
+	<div use:reveal class="reveal ef-label" style="--reveal-delay:0"><Icon class="size-3.5 text-primary" /></div>
+	<h1 use:reveal class="reveal reveal-mask ef-hero-title font-heading" style="--reveal-delay:1">{title}</h1>
+	<p use:reveal class="reveal max-w-xl text-base leading-relaxed text-muted-foreground md:text-lg" style="--reveal-delay:2">{desc}</p>
 	{#if note}
-		<div class="inline-flex items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+		<div class="inline-flex items-center gap-2 self-start rounded-full border border-border/60 bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
 			<Hammer class="size-3.5" />
 			{note}
 		</div>
 	{/if}
-	<Button href={backHref} variant="secondary">
-		<ArrowLeft class="size-4 mr-2" />
-		返回首页
-	</Button>
+	<div>
+		<Button href={backHref} variant="secondary" class="ef-cta">
+			<ArrowLeft class="size-4 mr-2" />
+			返回首页
+		</Button>
+	</div>
 </div>

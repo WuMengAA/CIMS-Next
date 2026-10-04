@@ -62,7 +62,10 @@ export const actions = {
 			path: "/",
 			httpOnly: true,
 			sameSite: "strict",
-			secure: false,
+			// 2026-10-04 安全修复：此处曾硬编码 secure:false —— 生产 HTTPS
+			// （COOKIE_SECURE=true，见 run-prod.bat）下页面登录的会话 cookie 不带
+			// Secure 标记，会被中间人窃取。与 /api/auth 登录分支保持同源判定。
+			secure: process.env.COOKIE_SECURE === "true",
 			maxAge: 30 * 24 * 60 * 60
 		});
 		markLogin(user.username, ip);

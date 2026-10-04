@@ -15,7 +15,7 @@
 		createdAt: string;
 		reviewedAt: string | null;
 	};
-	type Target = { role: string; label: string; level: number | null; levelLabel: string };
+	type Target = { role: string; label: string; rank: number };
 	type ProofType = { key: string; label: string; hint: string };
 
 	const { data }: {
@@ -23,7 +23,7 @@
 			loggedIn: boolean;
 			me: {
 				username: string; role: string; roleLabel: string;
-				level: number | null; levelLabel: string; levelDescription: string;
+				rank: number;
 				className: string; gradeName: string;
 			} | null;
 			targets: Target[];
@@ -121,8 +121,8 @@
 	<div class="mx-auto max-w-3xl">
 		<h1 class="font-heading text-2xl font-semibold tracking-tight">申请权限晋升</h1>
 		<p class="mt-2 text-sm text-muted-foreground">
-			等级只能<strong>逐级晋升</strong>：一次只能申请上一级，并需提供能力证明。由更高等级的管理员审核，
-			通过后立即生效。
+			角色只能<strong>逐级晋升</strong>：一次只能申请上一档角色（按角色秩，与经验等级无关），并需提供能力证明。
+			由更高档位的管理员审核，通过后立即生效。
 		</p>
 
 		{#if !data.loggedIn}
@@ -134,15 +134,15 @@
 			<div class="mt-6 rounded-xl border border-border/60 bg-card p-5">
 				<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
 					<span class="font-medium">{data.me?.username}</span>
-					<span class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">{data.me?.levelLabel}</span>
+					<span class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">角色秩 {data.me?.rank}</span>
 					<span class="text-xs text-muted-foreground">当前角色：{data.me?.roleLabel}</span>
 				</div>
-				<p class="mt-2 text-xs text-muted-foreground">{data.me?.levelDescription}</p>
+				<p class="mt-2 text-xs text-muted-foreground">晋升按角色秩逐级进行；你的经验等级（Lv）不影响可申请的角色。</p>
 			</div>
 
 			{#if data.targets.length === 0}
 				<div class="mt-4 rounded-xl border border-dashed border-border/60 p-5 text-sm text-muted-foreground">
-					当前等级没有可申请的晋升目标（已是最高等级，或该等级不开放自助申请）。
+					当前角色没有可申请的晋升目标（已是最高档位，或该档位不开放自助申请）。
 					如需调整，请联系站长在「用户管理」中指派。
 				</div>
 			{:else}
@@ -162,7 +162,7 @@
 										: 'border-border/60 hover:border-primary/40'}"
 								>
 									<div class="font-medium">{t.label}</div>
-									<div class="text-xs text-muted-foreground">{t.levelLabel}</div>
+									<div class="text-xs text-muted-foreground">角色秩 {t.rank}</div>
 								</button>
 							{/each}
 						</div>
@@ -215,7 +215,7 @@
 					<div>
 						<label class="mb-1 block text-sm font-medium">申请理由 * <span class="text-xs font-normal text-muted-foreground">（至少 10 字）</span></label>
 						<textarea bind:value={reason} rows={3} maxlength="2000"
-							placeholder="说明你为什么需要这个等级、准备用它做什么"
+							placeholder="说明你为什么需要这个角色、准备用它做什么"
 							class="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary/60"></textarea>
 					</div>
 
@@ -230,7 +230,7 @@
 					{#if msg}<p class="text-xs text-primary">{msg}</p>{/if}
 
 					<div class="flex items-center justify-between">
-						<p class="text-xs text-muted-foreground">提交后由更高等级管理员审核；同时只能有一张待审申请。</p>
+						<p class="text-xs text-muted-foreground">提交后由更高档位的管理员审核；同时只能有一张待审申请。</p>
 						<Button onclick={submit} disabled={submitting}>
 							{submitting ? "提交中…" : `申请 ${targetLabel}`}
 						</Button>
@@ -248,7 +248,7 @@
 						{@const st = STATUS_MAP[r.status] ?? { label: r.status, cls: "bg-muted text-muted-foreground" }}
 						<div class="rounded-lg border border-border/60 bg-card p-4">
 							<div class="flex flex-wrap items-center gap-2">
-								<span class="text-sm font-medium">→ L{r.targetLevel} {r.targetRole}</span>
+								<span class="text-sm font-medium">→ 第{r.targetLevel}档 {r.targetRole}</span>
 								<span class="rounded-full px-2 py-0.5 text-xs font-medium {st.cls}">{st.label}</span>
 								<span class="text-xs text-muted-foreground">提交 {fmt(r.createdAt)}</span>
 								{#if r.status === "pending"}

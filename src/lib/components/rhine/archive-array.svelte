@@ -270,7 +270,7 @@
 
 	function openCurrent() {
 		if (!currentDoc) return;
-		const href = `/docs/${currentDoc.slug}`;
+		const href = currentDoc.href ?? `/docs/${currentDoc.slug}`;
 		if (onOpen) onOpen(href);
 		else if (typeof window !== "undefined") window.location.href = href;
 	}
@@ -607,7 +607,7 @@
 						<strong>{g.label}</strong>
 						<ul>
 							{#each g.docs as d (d.slug)}
-								<li><a href={`/docs/${d.slug}`}>{d.title}</a></li>
+								<li><a href={d.href ?? `/docs/${d.slug}`}>{d.title}</a></li>
 							{/each}
 						</ul>
 					</li>

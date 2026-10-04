@@ -14,6 +14,7 @@
 	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
 	import ThemeToggle from "$lib/components/theme-toggle.svelte";
+	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import SearchButton from "$lib/components/search-button.svelte";
 	import SearchPalette from "$lib/components/search-palette.svelte";
 	import SidebarMemory from "$lib/components/sidebar-memory.svelte";
@@ -34,6 +35,7 @@
 	import PresenceHeartbeat from "$lib/components/presence-heartbeat.svelte";
 	import SidebarAutoClose from "$lib/components/sidebar-auto-close.svelte";
 	import { getSidebarWidthPx } from "$lib/sidebar-width.svelte.js";
+	import { adminEntryHref, rememberLastSitePath } from "$lib/view-switch-nav.js";
 	import type { LayoutProps } from "./$types";
 
 	// 用 SvelteKit 生成的 LayoutProps（含 data.user / data.canEdit），
@@ -47,9 +49,21 @@
 	// 否则 /admin 会同时渲染前台侧栏与后台侧栏，两列导航并列。
 	const isAdmin = $derived(page.url.pathname.startsWith("/admin"));
 
+	// 前台顶栏的「后台」入口落点。判定复用 $lib/view-switch-nav 的**唯一**实现
+	// （侧栏滑块、侧栏菜单项调用的是同一份，别再在这里写第二套条件）。
+	// 未登录 / 无任何后台权限 → null → 顶栏该入口完全不渲染（访客看不到任何后台入口）。
+	const adminHref = $derived(adminEntryHref(data.user));
+
 	// 沉浸式全屏区：档案库引擎要在无任何站点外壳（无侧边栏/顶栏/盒框）下
 	// 铺满整个视口，像原版 RhineLabUI 那样全屏沉浸。此路由脱离 Sidebar 外壳直接渲染。
-	const isImmersive = $derived(page.url.pathname === "/docs/archives");
+	// /editor 是可视化界面编辑器，同样需要整屏裸渲染（三栏工具界面），纳入此分支。
+	// /campus/classes 是三维班级档案库，同样要脱离站点外壳铺满视口。
+	const isImmersive = $derived(
+		page.url.pathname === "/docs/archives" ||
+			page.url.pathname.startsWith("/editor") ||
+		page.url.pathname === "/campus/classes" ||
+		page.url.pathname.startsWith("/campus/2028/class8")
+	);
 
 	// 路由切换：仅重放内容区 reveal 分段动画。
 	// 必须在 afterNavigate（新页面 DOM 挂载完成后）重放，而非 onNavigate——
@@ -63,6 +77,9 @@
 
 	afterNavigate(() => {
 		try { replayReveals(); } catch { /* noop */ }
+		// 记下「不是 /admin 开头的最后访问路径」：后台的「前台」按钮要靠它回到
+		// 你来修改之前看的那一页，而不是永远回首页。函数内部已跳过 /admin 前缀。
+		rememberLastSitePath(page.url.pathname, page.url.search);
 		// 读屏播报：客户端导航是「无刷新换页」，读屏不会自动感知。
 		// 用 live region 在其后播报新页面标题；视觉用户完全无感。
 		setTimeout(() => { announced = document.title; }, 60);
@@ -73,7 +90,12 @@
 	// 导致首屏内容卡在隐藏态，需用户点一次导航触发 replayReveals 才显形。
 	// 这里在 hydration 完成后立即重放一次，确保首屏无需点击即自动浮现。
 	onMount(() => {
+		// 「hydration 已接管」的凭据 —— 给 app.html 里那道 3s 兜底闸看。
+		// 拿不到它，兜底闸就会强制放行 .reveal（宁可丢动画，也不留空白页）。
+		document.documentElement.classList.add("app-ready");
 		try { replayReveals(); } catch { /* noop */ }
+		// 直访（不进过 afterNavigate）时也要记一次来路，否则「刷新一次再进后台」会丢掉来路。
+		rememberLastSitePath(page.url.pathname, page.url.search);
 	});
 
 	// 客户端导航骨架屏：navigating 为真时启动 200ms 阈值定时器，
@@ -107,7 +129,22 @@
 		update();
 		return () => { window.removeEventListener("scroll", update); window.removeEventListener("resize", update); };
 	});
-</script>
+
+
+	// 灵动光晕跟随鼠标（桌面端）
+	let glowEl: HTMLElement | null = null;
+	function glowMove(e: MouseEvent) {
+		if (!glowEl) glowEl = document.querySelector(".cursor-glow");
+		if (!glowEl) return;
+		glowEl.classList.add("on");
+		glowEl.style.transform = "translate(" + (e.clientX) + "px, " + (e.clientY) + "px) translate(-50%, -50%)";
+	}
+	function glowHide() { if (glowEl) glowEl.classList.remove("on"); }
+	onMount(() => {
+		window.addEventListener("mousemove", glowMove, { passive: true });
+		document.addEventListener("mouseleave", glowHide);
+	});
+	</script>
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
@@ -205,6 +242,12 @@
 					<Separator orientation="vertical" class="h-4" />
 					<span class="min-w-0 truncate text-sm text-muted-foreground">{data.settings.title}</span>
 					<div class="ml-auto flex shrink-0 items-center gap-2 pl-2">
+						<!-- 前台 / 后台切换：窄屏不拉抽屉也能一键进后台。
+						     只对「进得了后台」的人渲染（adminHref 为 null 时整块不出现），
+						     访客在前台看不到任何后台入口。 -->
+						{#if adminHref}
+							<ViewSwitch current="site" {adminHref} />
+						{/if}
 						<!-- 右上角搜索：点开即搜，不离开当前页 -->
 						<SearchButton bind:open={searchOpen} />
 						<ThemeToggle />
@@ -232,3 +275,5 @@
 		</Sidebar.Inset>
 	</Sidebar.Provider>
 {/if}
+
+<div class="cursor-glow"></div>

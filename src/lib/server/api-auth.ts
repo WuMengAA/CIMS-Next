@@ -9,8 +9,7 @@ export function getApiUser(request: Request): { username: string; role: Role } |
 	return { username: user.username, role: user.role };
 }
 
-export function canManage(user: { username: string; role: string } | null, owner?: string): boolean {
-	if (!user) return false;
-	if (user.role === "admin") return true;
-	return !owner || owner === user.username;
-}
+// canManage 已抽到 can-manage.ts（纯函数、可脱离 SvelteKit 单测），这里 re-export 保持调用点不变。
+// 2026-10-03 修复：原实现在 `owner` 为空时默认放行（fail-open），任意登录用户可管理无主条目；
+// 详见 can-manage.ts 的注释与行为对照表。
+export { canManage, canManageOrPublic } from "$lib/server/can-manage.js";

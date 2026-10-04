@@ -90,6 +90,42 @@ export async function cimsGet<T>(path: string): Promise<T | null> {
 	}
 }
 
+/** 带 Bearer 的 CIMS POST；401 自动换令牌重试一次。失败返回 null（fail-soft）。
+ *  [extraHeaders] 用于补 Host 头（CIMS 租户识别靠 Host: <slug>.<BaseDomain>）。
+ */
+export async function cimsPost<T>(
+	path: string,
+	body: unknown,
+	extraHeaders?: Record<string, string>
+): Promise<T | null> {
+	const t = await cimsToken();
+	if (!t) return null;
+	const doFetch = async (tk: string) =>
+		fetch(`${MGMT}${path}`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${tk}`,
+				"content-type": "application/json",
+				...(extraHeaders ?? {})
+			},
+			body: JSON.stringify(body ?? {}),
+			signal: AbortSignal.timeout(5000)
+		});
+	let r = await doFetch(t);
+	if (r.status === 401) {
+		invalidateCimsToken();
+		const t2 = await cimsToken();
+		if (!t2) return null;
+		r = await doFetch(t2);
+	}
+	if (!r.ok) return null;
+	try {
+		return (await r.json()) as T;
+	} catch {
+		return null;
+	}
+}
+
 // ── 真实班级列表（45s 缓存）──────────────────────────────────────────────────
 
 let classCache: { at: number; classes: CimsClass[] } | null = null;
@@ -118,27 +154,43 @@ export async function fetchClassList(): Promise<CimsClass[] | null> {
 
 // ── 设备 ↔ 班级映射（45s 缓存；范围判定用）───────────────────────────────────
 
-let mapCache: { at: number; uidToClass: Map<string, string>; classes: { class_id: string; name: string }[] } | null =
-	null;
+let mapCache: {
+	at: number;
+	uidToClass: Map<string, string>;
+	/** 全部已登记设备（**保留 CIMS 原始大小写**）—— 下发指令必须按它取 uid。 */
+	devices: { uid: string; class_id: string }[];
+	classes: { class_id: string; name: string }[];
+} | null = null;
 
 /**
- * uid → class_id 映射（键小写归一；CIMS 的 client_id 与 agent host 大小写不一，
+ * uid → class_id 映射（**匹配**键小写归一；CIMS 的 client_id 与 agent host 大小写不一，
  * 与 captures 双 key 的教训一致 —— 查询侧统一 toLowerCase）。
+ *
+ * ⚠️ 但**下发指令**（send-notification 等写操作）绝不能吃小写归一后的串：
+ * CIMS 是把 uid 当**区分大小写的键**存的，同一台机器常常并存两条记录 ——
+ * 桌面端按主机名注册 `N7-20091211`（在线），旧的 ClassIsland 插件按小写注册
+ * `n7-20091211`（早已离线）。若一律小写下发，指令会落进那条**没人轮询的离线记录**：
+ * CIMS 照样回 200「通知已递送」，设备却永远收不到，回执永远停在 pending。
+ * 故本函数一并返回 [devices]（原始大小写），调用方按它解析出真实 uid 再下发。
+ * （2026-09-30 实测：大写 uid 6 秒送达并落盘，小写 150 秒毫无动静。）
  */
 export async function fetchDeviceClassMap(): Promise<{
 	uidToClass: Map<string, string>;
+	devices: { uid: string; class_id: string }[];
 	classes: { class_id: string; name: string }[];
 } | null> {
 	if (mapCache && Date.now() - mapCache.at < CACHE_MS) return mapCache;
 	const data = await cimsGet<{ devices?: Record<string, unknown>; classes?: unknown }>("/class/device-map");
 	if (!data || typeof data !== "object") return null;
 	const uidToClass = new Map<string, string>();
-	const devices = data.devices && typeof data.devices === "object" ? data.devices : {};
-	for (const [uid, info] of Object.entries(devices)) {
+	const devices: { uid: string; class_id: string }[] = [];
+	const raw = data.devices && typeof data.devices === "object" ? data.devices : {};
+	for (const [uid, info] of Object.entries(raw)) {
 		const cid =
 			typeof info === "string"
 				? info
 				: ((info as DeviceClassEntry)?.class_id as string | undefined) ?? "";
+		devices.push({ uid, class_id: cid });
 		if (cid) uidToClass.set(uid.toLowerCase(), cid);
 	}
 	const classes = Array.isArray(data.classes)
@@ -146,8 +198,27 @@ export async function fetchDeviceClassMap(): Promise<{
 				.filter((c) => c && c.class_id)
 				.map((c) => ({ class_id: String(c.class_id), name: String(c.name ?? c.class_id) }))
 		: [];
-	mapCache = { at: Date.now(), uidToClass, classes };
+	mapCache = { at: Date.now(), uidToClass, devices, classes };
 	return mapCache;
+}
+
+/**
+ * 把任意大小写写法的 uid 解析成 CIMS 里真实登记的那一个（下发指令前必须过一手）。
+ *
+ * 规则：**精确命中优先** —— 传进来的串若本身就是一条真实记录（如 `N7-20091211`），
+ * 原样返回；否则按小写去匹配（如传 `n7-20091211` 而库里只有大写）。两者都没有就原样返回，
+ * 让 CIMS 自己去报错，不在这里凭空造 uid。
+ */
+export function canonicalUid(
+	map: { devices: { uid: string }[] } | null | undefined,
+	uid: string
+): string {
+	const want = String(uid ?? "").trim();
+	if (!want) return want;
+	const list = map?.devices ?? [];
+	if (list.some((d) => d.uid === want)) return want;
+	const low = want.toLowerCase();
+	return list.find((d) => d.uid.toLowerCase() === low)?.uid ?? want;
 }
 
 /** 单台设备的班级 id（查不到返回 null —— 调用方按「确定不了就不放行」处理）。 */

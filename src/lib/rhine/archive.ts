@@ -74,7 +74,7 @@ export function buildArchive(raw: any[]): ArchiveGroup[] {
 				groupIndex: gi,
 				row,
 				serial,
-				href: `/docs/${doc.slug}`
+				href: doc.href ?? `/docs/${doc.slug}`
 			});
 		});
 		groups.push(group);

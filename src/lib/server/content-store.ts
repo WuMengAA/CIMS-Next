@@ -56,8 +56,8 @@ export interface ContentItem {
 	[key: string]: unknown;
 }
 
-const CONTENT_DIR = path.resolve("content");
-const UPLOADS_DIR = path.resolve("uploads");
+// 数据根与顶层目录收口到 paths.ts；子目录在此 join（CONTENT_DIR 唯一，故它们自动跟着环境走）
+import { CONTENT_DIR, UPLOADS_DIR } from "./paths.js";
 const ARCHIVE_DIR = path.join(CONTENT_DIR, "archive");
 
 const sections: Record<string, string> = {
@@ -488,7 +488,7 @@ export function uploadFile(filename: string, data: Buffer): { url: string; error
 		// 音视频
 		".mp4", ".webm", ".mov", ".avi", ".mkv", ".mp3", ".wav", ".ogg", ".flac", ".m4a",
 		// 压缩包 / 安装包 / 其它
-		".zip", ".rar", ".7z", ".tar", ".gz", ".apk", ".vtt", ".srt", ".sub"
+		".zip", ".rar", ".7z", ".tar", ".gz", ".apk", ".exe", ".vtt", ".srt", ".sub"
 	]);
 	const MAX_FILE_SIZE = 100 * 1024 * 1024;
 	const ext = path.extname(filename).toLowerCase();
@@ -558,16 +558,16 @@ export interface SiteSettings {
 function getDefaultSettings(): SiteSettings {
 	return {
 		title: "Stelarith",
-		description: "一个收纳创作、记录与兴趣的个人互联网空间。",
-		siteName: "Stelarith 工作台",
+		description: "记录开发实践、开源项目与校园集控落地的个人技术博客。",
+		siteName: "Stelarith",
 		slogan: "Protect What You Love. 守护珍爱之物。",
-		heroTitle: "这一次，从出发。",
-		heroSubtitle: "您的浏览体验永远是第一位的。一个好的网站应当有统一的主题、良好的交互和极高的性能。",
-		heroBadge: "小而清晰，先把每一次打开做好",
+		heroTitle: "代码、校园与热爱，都留在这里。",
+		heroSubtitle: "这里收录我的开发笔记、开源项目，以及把 ClassIsland 集控真正落地到教室的实践。",
+		heroBadge: "个人技术博客",
 		features: [
-			{ title: "静态导出", description: "全站 HTML 直出，人类可读，搜索引擎易读，AI 能读。", icon: "file-code" },
-			{ title: "统一设计", description: "采用 Shadcn 设计语言，我能专注开发，您能专注浏览。", icon: "palette" },
-			{ title: "严格把关", description: "每一次提交，每一次发版，都经过严谨的冒烟测试。", icon: "shield-check" }
+			{ title: "技术笔记", description: "把踩过的坑、调通的方案写成可复用的长文，少空话。", icon: "book-open" },
+			{ title: "开源项目", description: "从本地音乐到校园集控，代码公开、文档齐全，能跑起来。", icon: "rocket" },
+			{ title: "校园集控", description: "ClassIsland 集控从部署到排障的真实经验，持续更新。", icon: "wrench" }
 		],
 		socialTitle: "社交链接",
 		footer: "Designed by Claude · Logo by WalkerKiller",
@@ -580,7 +580,7 @@ function getDefaultSettings(): SiteSettings {
 			{ name: "Telegram", url: "https://t.me/+_07DERp7k1ljYTc1" }
 		],
 		outboundWhitelist: ["stelarith.com", "localhost"],
-		background: { style: "aurora", color1: "#cc785c", color2: "#8b5cf6", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true }
+		background: { style: "aurora", color1: "#cc785c", color2: "#cc785c", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true }
 	};
 }
 
@@ -714,7 +714,28 @@ export function setLinkApplicationStatus(id: string, status: "approved" | "rejec
 }
 
 export interface NavItem { title: string; url: string; icon?: string; external?: boolean; }
-export interface NavConfig { workspace: NavItem[]; more: NavItem[]; bottom: NavItem[]; }
+/**
+ * 自定义导航组（「镜像站」「我的其他站点」这类，由后台自行增删）。
+ *
+ * 为什么不是固定三组：固定三组（工作区/更多/底部）表达的是「位置」，
+ * 而镜像站这类要表达的是「归属」——把同一批站点放在一个可折叠的组里，
+ * 且组内条目适合网格排列（名字短、条目多），塞进单列列表会很浪费纵向空间。
+ */
+export interface NavGroup {
+	/** 唯一标识（小写字母/数字/连字符），用于折叠态记忆与后台锚点。 */
+	key: string;
+	label: string;
+	/** 组图标：折叠头的图标，同时作为 icon 折叠态下的代表图标。 */
+	icon?: string;
+	/** 排列方式：list=单列（默认）；grid=两列格子；inline=一行图标按钮。 */
+	layout?: "list" | "grid" | "inline";
+	/** 是否默认折叠（undefined 视为展开）。 */
+	collapsed?: boolean;
+	/** 出现范围：前台 / 后台 / 两者（默认 both）。 */
+	showIn?: "site" | "admin" | "both";
+	items: NavItem[];
+}
+export interface NavConfig { workspace: NavItem[]; more: NavItem[]; bottom: NavItem[]; groups?: NavGroup[]; }
 
 // ───────────────────────────────────────────────────────────────────────────
 // 通用：把“一个 JSON 数组文件”当作一张小表读写（UGC 类实体共用此模式）
@@ -873,23 +894,71 @@ export function getNav(): NavConfig {
 	ensureDirs();
 	const defaults: NavConfig = {
 		workspace: [
-			{ title: "首页", url: "/" }, { title: "博客", url: "/posts" }, { title: "项目", url: "/projects" }, { title: "教程", url: "/docs" }, { title: "页面", url: "/pages" }
+			{ title: "首页", url: "/" }, { title: "更新日志", url: "/changelog" }, { title: "站点动态", url: "/pulse" }, { title: "项目", url: "/projects" }, { title: "教程", url: "/docs" }, { title: "页面", url: "/pages" }
 		],
 		more: [],
-		bottom: [{ title: "管理后台", url: "/admin" }]
+		bottom: [{ title: "管理后台", url: "/admin" }],
+		groups: []
 	};
 	if (!fs.existsSync(NAV_FILE)) return defaults;
 	const data = cachedJsonFile<Partial<NavConfig>>(NAV_FILE, {} as Partial<NavConfig>);
 	return {
 		workspace: data.workspace || defaults.workspace,
 		more: data.more || defaults.more,
-		bottom: data.bottom || defaults.bottom
+		bottom: data.bottom || defaults.bottom,
+		// 自定义组：老 nav.json 没有这个键，缺失时给空数组（而不是 undefined），
+		// 免得前后台渲染各自写一遍 `?? []`。
+		groups: Array.isArray(data.groups) ? data.groups : []
 	};
+}
+
+/**
+ * 清洗自定义分组。导航是**渲染进每个页面**的数据，脏值（重复 key、空 label、
+ * 非白名单布局）会在前端各处放大成难查的显示问题，所以在落盘前统一收敛：
+ * key 去重、label 必填、布局/范围走白名单、条目滤掉空项。
+ */
+function normalizeNavGroups(input: unknown): NavGroup[] {
+	if (!Array.isArray(input)) return [];
+	const seen = new Set<string>();
+	const out: NavGroup[] = [];
+	for (const raw of input) {
+		const g = (raw || {}) as Partial<NavGroup>;
+		const key = String(g.key || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").slice(0, 40);
+		const label = String(g.label || "").trim().slice(0, 30);
+		if (!key || !label || seen.has(key)) continue;
+		seen.add(key);
+		const layout = (["list", "grid", "inline"] as const).includes(g.layout as any) ? (g.layout as NavGroup["layout"]) : "list";
+		const showIn = (["site", "admin", "both"] as const).includes(g.showIn as any) ? (g.showIn as NavGroup["showIn"]) : "both";
+		const items: NavItem[] = [];
+		for (const it of Array.isArray(g.items) ? g.items : []) {
+			const title = String((it as NavItem)?.title || "").trim().slice(0, 30);
+			const url = String((it as NavItem)?.url || "").trim().slice(0, 500);
+			if (!title || !url) continue;
+			const icon = String((it as NavItem)?.icon || "").trim().slice(0, 40);
+			items.push({ title, url, ...(icon ? { icon } : {}), ...((it as NavItem)?.external ? { external: true } : {}) });
+		}
+		out.push({
+			key,
+			label,
+			...(g.icon ? { icon: String(g.icon).trim().slice(0, 40) } : {}),
+			layout,
+			...(g.collapsed ? { collapsed: true } : {}),
+			showIn,
+			items
+		});
+	}
+	return out;
 }
 
 export function saveNav(nav: NavConfig): void {
 	ensureDirs();
-	fs.writeFileSync(NAV_FILE, JSON.stringify(nav, null, 2), "utf-8");
+	const clean: NavConfig = {
+		workspace: (nav.workspace || []).filter((i) => i && i.title && i.url),
+		more: (nav.more || []).filter((i) => i && i.title && i.url),
+		bottom: (nav.bottom || []).filter((i) => i && i.title && i.url),
+		groups: normalizeNavGroups(nav.groups)
+	};
+	fs.writeFileSync(NAV_FILE, JSON.stringify(clean, null, 2), "utf-8");
 	jsonCache.delete(NAV_FILE);
 }
 

@@ -259,29 +259,32 @@ export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number
 /**
  * 设备回报（设备密钥鉴权由路由层把关）：received → read / replied / rejected / dismissed。
  * action_result 只用于 replied（预设短语原文）；其余状态置空。
+ * [detail] 2026-10-04 新增：failed 时可带原因（如"设备离线未送达"），其余状态不存（防脏数据）。
  * 返回是否命中（找不到行 = 通知不存在或不是发往这台设备的，拒绝）。
  */
 export function markNoticeDelivery(
 	noticeId: number,
 	uid: string,
 	state: string,
-	actionResult: string
+	actionResult: string,
+	detail?: string
 ): boolean {
 	const nid = Number(noticeId ?? 0);
 	const u = String(uid ?? "").trim().toLowerCase();
 	if (!nid || !u) return false;
-	const st = ["received", "read", "replied", "rejected", "dismissed", "failed"].includes(state)
+	const st = ["received", "read", "replied", "rejected", "dismissed", "failed", "delivered"].includes(state)
 		? state
 		: "read";
-	// replied 允许带预设短语原文；其余状态一律不存（防脏数据）
+	// replied 允许带预设短语原文；failed 允许带原因；其余状态一律不存（防脏数据）
 	const ar = st === "replied" ? String(actionResult ?? "").slice(0, 120) : "";
+	const det = st === "failed" ? String(detail ?? "").slice(0, 200) : "";
 	const r = getDb()
 		.prepare(
 			`UPDATE notice_deliveries
-			 SET state = ?, action_result = ?, updated_at = ?
+			 SET state = ?, action_result = ?, detail = ?, updated_at = ?
 			 WHERE notice_id = ? AND LOWER(uid) = ? AND state NOT IN ('replied', 'acked')`
 		)
-		.run(st, ar, nowIso(), nid, u);
+		.run(st, ar, det, nowIso(), nid, u);
 	return Number(r.changes) > 0;
 }
 
@@ -748,6 +751,28 @@ export function consumeActivationCode(code: string, deviceUid: string): Activati
 	item.usedBy = deviceUid;
 	list[idx] = item;
 	saveActivationCodes(list);
+	return item;
+}
+
+/**
+ * 只校验**不消费**的接入码检查（2026-10-01 `/api/device/config` 门控新增）。
+ *
+ * 为什么不能直接复用 `consumeActivationCode`：那是**消费型**的（置 used 后即废），
+ * 而配置拉取与绑班是**同一个码的两步**——设备首启先 `GET /api/device/config?code=`
+ * 换部署配置（此刻还没有 uid，也没到绑班的点），随后才 `POST /api/device/activate`
+ * 绑班消费。若拉配置就把码烧掉，第二步必失败。所以本函数刻意**只读不改库**：
+ * 存在、未用、未过期（撤销 = 从清单移除，自然查不到）→ 返回码对象，否则 null。
+ * 消费语义仍完全归 `consumeActivationCode` 所有。
+ *
+ * ⚠️ 旧路径 `GET /api/console/ext/device-config` 仍免鉴权，那是双轨期既有行为；
+ *    待旧路径退役后，"明文可取 deviceSecret" 的隐患才真正消除。
+ */
+export function validateActivationCode(code: string): ActivationCode | null {
+	const c = String(code ?? "").trim().toUpperCase();
+	if (!c) return null;
+	const item = listActivationCodes().find((x) => x.code === c && !x.used);
+	if (!item) return null;
+	if (new Date(item.expiresAt) < new Date()) return null; // 过期
 	return item;
 }
 
@@ -1556,7 +1581,10 @@ export function putTaskResult(
 	let extraRaw = "";
 	if (extra && typeof extra === "object") {
 		try {
-			extraRaw = JSON.stringify(extra).slice(0, 1000);
+			// 65536 而非 1000：软件清单（process_list 的 extra.items）是这条链路上
+			// 唯一的「大载荷」，200 条进程约 20–40 KB，1000 字符会把它截断到残缺，
+			// 面板就解析不出清单。其余回执 extra 都很小，这个上限对它无副作用。
+			extraRaw = JSON.stringify(extra).slice(0, 65536);
 		} catch {
 			extraRaw = "";
 		}

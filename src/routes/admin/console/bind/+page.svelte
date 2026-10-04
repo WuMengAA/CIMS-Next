@@ -33,11 +33,12 @@
 		loading = true;
 		loadError = "";
 		try {
-			const res = await fetch("/api/console/cims/class/list");
+			// 2026-10-04：切自有班级真源（彻底去 CIMS），响应 {classes, source}
+			const res = await fetch("/api/class/list");
 			const d = await res.json();
 			if (!res.ok) { throw new Error(d.error || `HTTP ${res.status}`); }
-			classes = (Array.isArray(d) ? d : []).map((c: Record<string, unknown>) => ({
-				id: String(c.class_plan ?? c.id ?? ""),
+			classes = (Array.isArray(d.classes) ? d.classes : []).map((c: Record<string, unknown>) => ({
+				id: String(c.class_plan ?? c.id ?? c.class_id ?? ""),
 				name: String(c.name ?? c.class_id ?? ""),
 				code: String(c.code ?? c.display_code ?? c.name ?? ""),
 				classId: String(c.class_id ?? ""),

@@ -2,8 +2,19 @@ import { json } from "@sveltejs/kit";
 import { env } from "$env/dynamic/private";
 import type { RequestEvent } from "@sveltejs/kit";
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { CONTENT_DIR } from "$lib/server/paths.js";
 import { verifyToken } from "$lib/server/auth.js";
-import { can, userCan, canDevice, roleManagementTier, type DeviceTier, type Role } from "$lib/permissions.js";
+import {
+	can,
+	userCan,
+	canDevice,
+	canDeviceAction,
+	roleManagementTier,
+	type DeviceTier,
+	type Role
+} from "$lib/permissions.js";
 import { classScopeOf, scopeCovers, listBindings } from "$lib/server/class-scope.js";
 import { fetchDeviceClassMap } from "$lib/server/cims-client.js";
 
@@ -35,10 +46,21 @@ function applyScopeFilter(
 	rel: string,
 	payload: unknown
 ): unknown {
-	// ⚠️ 设备三关铁律（#249 → v2 2026-09-25 收紧）：能看设备（watch 档）的只剩
-	// 站长/班主任（电教委员 v2 只剩传文件，watch 也收回）。非 watch 档的设备列表
-	// 接口**直接返回空数组** —— 不是前端藏，是接口就没有（本机截图=敏感内容）。
-	if (!canDevice((u.role ?? null) as never, "watch")) {
+	// ⚠️ 设备三关铁律（#249 → v2 2026-09-25 收紧）：能看设备列表的原有档位是 watch
+	// （站长/班主任；电教委员 v2 只剩传文件，watch 也收回）。
+	// 2026-09-27 放宽：`apps_view` 也算「可读设备列表」——软件页的设备下拉要用它选设备，
+	// 而任课老师/电教委员只有 apps_view 没有 watch，不放宽则下拉恒为空、老师无从选设备。
+	// 同日再放宽 `logs_view`（设备日志页）——同一个理由：日志页也要设备下拉，
+	// 而能看日志的角色与能看软件的角色同集（teacher/techrep 依旧没有 watch）。
+	// **只放宽读**：任何写操作（control/remote/manage）仍在 forward 里各自把关，这里不动。
+	// ⚠️ `as never`：applyScopeFilter 的入参把 role 手工标成了 string（历史遗留），与
+	// canDeviceAction 的 Role 类型对不上；沿用上一行既有的写法，运行期行为不变
+	// （canDeviceAction 对 null/undefined 一律返回 false）。
+	if (
+		!canDevice((u.role ?? null) as never, "watch") &&
+		!canDeviceAction(u.role, "apps_view") &&
+		!canDeviceAction((u.role ?? null) as never, "logs_view")
+	) {
 		if (rel === "/class/device-status") return { devices: [], fresh_seconds: 90 };
 		if (rel === "/class/device-map") return { devices: {}, classes: [] };
 		// 其余 /class/ 下的非设备数据（如 /class/list 班级目录）原样放行，
@@ -123,7 +145,7 @@ const BASE_DOMAIN = env.CIMS_BASE_DOMAIN ?? "localhost";
 const TARGET_SLUG = (env.CONSOLE_TARGET_SLUG ?? "").trim().toLowerCase();
 // 允许的路径：账户/指令/资源（management）、登录、班级（设备归属与切班）、
 // 以及客户端配置拉取（含带 /api 前缀的写法）。
-const ALLOW = [
+const DEFAULT_ALLOW: RegExp[] = [
 	/^\/account\//,
 	/^\/user\/auth/,
 	/^\/class\//,
@@ -131,6 +153,48 @@ const ALLOW = [
 	/^\/v1\/client\//,
 	/^\/api\/v1\/client\//
 ];
+
+/**
+ * 路径白名单（2026-10-02 A11：外置到 `content/console-allow.json`）。
+ *
+ * 为什么外置：原先这 6 条正则硬编码在这里，加一个 CIMS 路径就得改代码 + 重新发版。
+ * 现在运维改 JSON 即可，且**免重启**（30 秒 TTL 内生效，与 nav.json 的惯例一致）。
+ *
+ * ⚠️ **配置不许判死**：文件缺失 / 非 JSON / patterns 为空 / 全部正则非法 →
+ * 一律回落 `DEFAULT_ALLOW`。删掉这个文件不会让面板失联，最多是白名单回到初始版本。
+ * 这是刻意的取舍：一个"配置文件写坏了 → 整个 cims 代理不可用"的设计，
+ * 比"白名单没放宽"危险得多。
+ */
+let allowCache: { at: number; list: RegExp[] } | null = null;
+const ALLOW_TTL_MS = 30_000;
+
+function loadAllow(): RegExp[] {
+	const now = Date.now();
+	if (allowCache && now - allowCache.at < ALLOW_TTL_MS) return allowCache.list;
+
+	let list: RegExp[] = [];
+	try {
+		const raw = fs.readFileSync(path.join(CONTENT_DIR, "console-allow.json"), "utf8");
+		const parsed = JSON.parse(raw) as { patterns?: unknown };
+		const pats = Array.isArray(parsed?.patterns) ? parsed.patterns : [];
+		for (const p of pats) {
+			const src = String(p ?? "").trim();
+			if (!src) continue;
+			try {
+				list.push(new RegExp(src));
+			} catch {
+				// 单条非法只跳过它 —— 不让一条写错的正则废掉整份白名单
+				console.warn(`[console/cims] console-allow.json 有非法正则，已跳过：${src}`);
+			}
+		}
+	} catch {
+		/* 文件缺失 / 读失败 → 走下面的回落 */
+	}
+
+	if (list.length === 0) list = DEFAULT_ALLOW;
+	allowCache = { at: now, list };
+	return list;
+}
 
 /**
  * 按「方法 + 路径 + 载荷」判定所需**设备权限档位**，力求最小必要：
@@ -142,7 +206,88 @@ const ALLOW = [
  *
  * 返回 null 表示这是纯读请求，只校验 viewConsole（等级轴）。
  */
-function requiredTier(rel: string, method: string, body: string | undefined): DeviceTier | null {
+/**
+ * 从**原始请求体**里判定「这条请求要下发的设备动作名」（取不到返回 ""）。
+ *
+ * ── 为什么需要它：一次「闸门从未通电」的事故（2026-09-27 复盘）──────────────
+ * 面板与服务端代推下发指令，全站只有一种信封形态 —— **双层序列化**：
+ *     body = JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: {...} }) })
+ * （见 src/routes/admin/console/{apps,devices,logs}/+page.svelte 的 sendCommand、
+ *   src/lib/server/file-transfer.ts、src/lib/server/broadcast.ts。）
+ * 于是到达本代理的原始 body 里，内层引号是**反斜杠转义**的：
+ *     {"MessageContent":"{\"stelarith_task\":{\"action\":\"log_tail\",...}}"}
+ * 文本里是 `\"action\"`，不是 `"action"`。**任何 `/"action"\s*:\s*"xxx"/` 这种未转义
+ * 写法都永远匹配不上** —— 此前 `process_list` / `process_stop` 的细闸门与
+ * `shutdown|reboot` 的收权规则都写成了那样，等于三条规则全部空转：
+ * 任课老师点「刷新软件列表」实际是被上面的 `stelarith_task → remote` 粗档 403，
+ * 根本没走到这里；「关机只归学校管理员」那条也从未生效。
+ *
+ * ── 为什么「按 JSON 结构取」而不是「把转义展平再正则」────────────────────────
+ * 展平再正则有一个真实的反例：通知正文里若恰好写了 `"action":"shutdown"` 这几个字，
+ * 展平后就会被误判成关机指令，无辜请求被 403；反过来也可能因为正文里凑出别的
+ * 字样而误判动作。按结构取则只认**真正的 `stelarith_task.action` 字段**，
+ * 正文里出现同样的字样不会命中。
+ * 另外，按结构取天然同时兼容双层序列化（内层是字符串，再解一层）与单层序列化，
+ * 不必每加一个动作就写两种引号形态。
+ *
+ * ── 与桌面端同源（一条重要的安全性质）──────────────────────────────────────
+ * 取法与教室端 Flutter `DeviceAgent.extract` / `_findTask`（device_agent.dart）
+ * 保持一致：同样递归下钻 `MessageContent` / `content` / `body` / `data` 等字符串字段，
+ * 深度上限 4。因此**我认不出的动作，桌面端也认不出** —— 漏判不会变成
+ * 「该拦的没拦」，最坏只是退回粗档（更严那一边）。
+ *
+ * ⚠️ 改这里必须同时跑 `_probe` 里的样例：正例要覆盖
+ * log_tail / process_list / process_stop / shutdown / reboot × 转义与未转义两种形态；
+ * 反例要证明「正文里含 action 字样」「裸文本」「非 JSON」等不会被误判。
+ */
+/** 尽力把一段文本解析成 JSON（不是 JSON 就返回 null，绝不抛）。 */
+function parseJsonMaybe(raw: string): unknown {
+	const t = raw.trim();
+	if (!t || (t[0] !== "{" && t[0] !== "[")) return null;
+	try {
+		return JSON.parse(t);
+	} catch {
+		return null;
+	}
+}
+
+/** 在（可能多层嵌套的）已解析结构里找 `stelarith_task` 信封对象；找不到返回 null。 */
+function findTaskEnvelope(node: unknown, depth = 0): Record<string, unknown> | null {
+	if (depth > 4 || node === null || node === undefined) return null;
+	// 字符串字段可能是「再包一层的 JSON」（双层序列化），解一层继续找。
+	if (typeof node === "string") return findTaskEnvelope(parseJsonMaybe(node), depth + 1);
+	if (Array.isArray(node)) {
+		for (const e of node) {
+			const hit = findTaskEnvelope(e, depth + 1);
+			if (hit) return hit;
+		}
+		return null;
+	}
+	if (typeof node !== "object") return null;
+	const o = node as Record<string, unknown>;
+	const raw = o["stelarith_task"];
+	if (typeof raw === "string") {
+		const hit = findTaskEnvelope(raw, depth + 1);
+		if (hit) return hit;
+	}
+	if (raw && typeof raw === "object" && !Array.isArray(raw)) return raw as Record<string, unknown>;
+	// 与桌面端同一组下钻键（顺序也保持一致）。
+	for (const k of ["MessageContent", "message_content", "content", "body", "data", "payload"]) {
+		const hit = findTaskEnvelope(o[k], depth + 1);
+		if (hit) return hit;
+	}
+	return null;
+}
+
+/** 原始请求体 → 设备动作名（如 "log_tail" / "shutdown"）；取不到返回 ""。 */
+function deviceActionOfBody(body: string | undefined): string {
+	if (!body) return "";
+	const env = findTaskEnvelope(parseJsonMaybe(body));
+	const action = env ? env["action"] : null;
+	return typeof action === "string" ? action.trim() : "";
+}
+
+function requiredTier(rel: string, method: string, body: string | undefined, action: string): DeviceTier | null {
 	// ---- 审核队列：是「读」，但读的是全校待审班级（含他人提交的班号与属主）----
 	// 比普通只读敏感，因此**刻意放在下面的 GET→watch 放宽之前**，显式要求 manage。
 	// （后端 list_pending_classes 另有 403 兜底；这里是第二道门。）
@@ -176,6 +321,12 @@ function requiredTier(rel: string, method: string, body: string | undefined): De
 		if (/\/approve$/.test(rel) || /\/reject$/.test(rel)) return "manage";
 		return "control";
 	}
+
+	// ── 软件管控 / 设备日志：跳过粗档，交由 forward 逐动作裁决 ──
+	// （process_list / process_stop → apps_view / apps_stop；log_tail → logs_view）
+	// 必须排在下面 `stelarith_task → remote` 之前，否则老师在这里就被 remote 档拦死。
+	// 详见 deviceActionOfBody 的说明（含「为什么正则匹配不上双层序列化的 body」）。
+	if (action === "process_list" || action === "process_stop" || action === "log_tail") return null;
 
 	if (method === "GET" || rel === "/user/auth") return null;
 	if (body && body.includes("stelarith_task")) return "remote";
@@ -340,6 +491,10 @@ async function forward(event: RequestEvent) {
 	const method = event.request.method;
 	// 先读一次体：既用于权限判定（是否远程控制任务），也用于转发。
 	const body = method === "GET" || method === "DELETE" ? undefined : await event.request.text();
+	// 动作名只算一次：粗档判定（requiredTier）与下面的动作级裁决都要用。
+	// ⚠️ 必须走 deviceActionOfBody（按 JSON 结构取字段），**不能**用正则扫原文 ——
+	// 真实 body 是双层序列化的，内层引号带反斜杠转义，正则写法会静默失效。详见其注释。
+	const action = deviceActionOfBody(body);
 
 	// ---- 鉴权（必须在放行路径检查之前，避免匿名用户探测可用路径）----
 	// 优先用 admin_token Cookie（网页面板），其次接受 Bearer 头（桌面端 OAuth 网站令牌）。
@@ -356,7 +511,7 @@ async function forward(event: RequestEvent) {
 	if (!userCan(u, "viewConsole")) {
 		return json({ error: "无权限" }, { status: 403 });
 	}
-	const tier = requiredTier(rel, method, body);
+	const tier = requiredTier(rel, method, body, action);
 	if (tier && !canDevice(u.role, tier)) {
 		return json({ error: "无权限" }, { status: 403 });
 	}
@@ -366,9 +521,34 @@ async function forward(event: RequestEvent) {
 	// 旧实现里班级账号可以把 shutdown 发给全校任何一台设备，这是范围维度的洞。
 	const scope = classScopeOf((u.role ?? null) as Role, u.id ?? null);
 
-	// ① 危险动作收权：shutdown 只归学校管理员（v2 矩阵：关机一格只有站长有勾）。
-	if (scope !== "*" && body && /"action"\s*:\s*"(shutdown|reboot)"/.test(body)) {
+	// ① 危险动作收权：shutdown/reboot 只归学校管理员（v2 矩阵：关机一格只有站长有勾）。
+	//    ⚠️ 2026-09-27 修复：这一条原先是未转义正则（`/"action"\s*:\s*"(shutdown|reboot)"/`），
+	//    对双层序列化的真实 body 永远不命中 = **从未生效**（详见 deviceActionOfBody 的注释）。
+	//    现在按 JSON 结构取 action，本规则才真正通电 —— 后果见下一条「谁的行为会变」。
+	if (scope !== "*" && (action === "shutdown" || action === "reboot")) {
 		return json({ error: "关机/重启只允许学校管理员操作" }, { status: 403 });
+	}
+
+	// ② 软件管控（process_list / process_stop）—— 照 ① 的既有范式做动作级裁决。
+	//    老板 2026-09-27 定案：站长/管理员/班主任 可看可关；任课老师与电教委员**只能看**。
+	//    关键逻辑必须落在服务端：客户端（面板/桌面端）不得自判能否关闭。
+	//    注：这里的拒绝文案会原样显示在面板按钮的「失败」态上，故写成人话。
+	//    ⚠️ 2026-09-27 修复：`process_list` 判定原先走 softwareActionOfBody 的未转义正则，
+	//    同样永不命中 —— 任课老师点「刷新软件列表」实际被上面的 remote 粗档拦成 403，
+	//    与「老师能看软件」的定案冲突。现统一走 deviceActionOfBody。
+	if (action === "process_list" && !canDeviceAction(u.role, "apps_view")) {
+		return json({ error: "当前角色没有「查看运行软件」能力" }, { status: 403 });
+	}
+	if (action === "process_stop" && !canDeviceAction(u.role, "apps_stop")) {
+		return json({ error: "当前角色没有「关闭运行软件」能力" }, { status: 403 });
+	}
+
+	// ②′ 设备日志（log_tail）—— 同一范式的第三档，老板 2026-09-27 定案：与「能进面板
+	//     看设备」同集（站长/管理员/班主任/任课老师/电教委员都能看），user 不能。
+	//     只新增这一档、**不整体放宽**：其余动作的门槛一字未动（teacher 仍签不出 shutdown）。
+	//     同样写人话：文案会原样显示在日志页的「失败」态上。
+	if (action === "log_tail" && !canDeviceAction(u.role, "logs_view")) {
+		return json({ error: "当前角色没有「查看设备日志」能力" }, { status: 403 });
 	}
 
 	// ② 指令目标范围：给某台设备发指令前，先解析它属于哪个班。
@@ -392,7 +572,7 @@ async function forward(event: RequestEvent) {
 		return json({ error: "目标班级不在你的绑定范围内" }, { status: 403 });
 	}
 
-	if (!ALLOW.some((re) => re.test(rel))) {
+	if (!loadAllow().some((re) => re.test(rel))) {
 		return json({ error: "forbidden path" }, { status: 403 });
 	}
 

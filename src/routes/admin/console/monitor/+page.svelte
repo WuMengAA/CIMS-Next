@@ -22,7 +22,7 @@
 
 	onMount(async () => {
 		try {
-			const r = await fetch("/api/console/ext/monitor-config");
+			const r = await fetch("/api/console/control/monitor-config");
 			const j = await r.json();
 			const c = j.config ?? {};
 			screenshot_webp_quality = Number(c.screenshot_webp_quality ?? 75);
@@ -50,7 +50,7 @@
 	async function save() {
 		saving = true;
 		try {
-			const r = await fetch("/api/console/ext/monitor-config", {
+			const r = await fetch("/api/console/control/monitor-config", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(collect())
@@ -67,7 +67,7 @@
 
 	async function reset() {
 		try {
-			const r = await fetch("/api/console/ext/monitor-config");
+			const r = await fetch("/api/console/control/monitor-config");
 			const j = await r.json();
 			const c = j.config ?? {};
 			screenshot_webp_quality = Number(c.screenshot_webp_quality ?? 75);

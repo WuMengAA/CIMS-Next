@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Megaphone, Info, CheckCircle2, AlertTriangle, AlertOctagon, Pin } from "@lucide/svelte";
+	import PageHeader from "$lib/components/page-header.svelte";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -18,13 +19,8 @@
 	<meta name="robots" content="noindex" />
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-8 px-4 py-10 md:px-8">
-	<header class="flex flex-col gap-2">
-		<h1 class="flex items-center gap-2 font-heading text-3xl font-semibold tracking-tight">
-			<Megaphone class="size-7 text-primary" /> 公告
-		</h1>
-		<p class="text-sm text-muted-foreground">站点动态、维护通知与重要提醒</p>
-	</header>
+<div class="ef-shell flex flex-col gap-8 py-10">
+	<PageHeader eyebrow="Announcements" title="公告" description="站点动态、维护通知与重要提醒" />
 
 	{#if data.announcements.length === 0}
 		<div class="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">暂无公告</div>

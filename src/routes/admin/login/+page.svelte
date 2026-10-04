@@ -6,12 +6,21 @@
 	import { superForm } from "sveltekit-superforms";
 	import { zod4Client, type ClientValidationAdapter } from "sveltekit-superforms/adapters";
 	import { toast } from "svelte-sonner";
+	import { goto } from "$app/navigation";
+	import { page } from "$app/state";
+	import { safeReturnTo } from "$lib/view-switch-nav.js";
 	import type { PageProps } from "./$types";
 	import { loginSchema, type LoginForm } from "$lib/schemas/login.js";
 
 	let { data }: PageProps = $props();
 
 	let showPwd = $state(false);
+
+	// 登录后该回哪儿：被 hooks 拦下时带过来的 returnTo。
+	// 必须经 safeReturnTo 校验（只认站内路径）——直接信任查询串就是开放重定向漏洞，
+	// 一条 /admin/login?returnTo=https://陷阱站 的链接就能把刚登录的老师带走。不合规退回 null。
+	// 落点是 null 时保持原行为（服务端按权限分流到 /admin 或 /admin/console）。
+	const returnTo = safeReturnTo(page.url.searchParams.get("returnTo"));
 
 	// 不使用 formsnap：其 Field 组件在 SSR 期依赖 form.current.errors 内部 store，
 	// 而当前 sveltekit-superforms 版本 form.current 返回表单数据对象，导致 500。
@@ -45,6 +54,19 @@
 
 	const { form, errors, message, enhance, submitting } = superForm(data.form, {
 		validators: clientValidators,
+		// 登录成功后直接回到「被拦下之前想去的页面」（returnTo），而不是一律去 /admin。
+		//
+		// 服务端 action 里的 redirect(302, homeFor(user)) 是「没带来路」时的兜底；有来路时
+		// 在这里把 redirect 结果截住改跳 returnTo —— 这是在**不碰** login/+page.server.ts
+		// 的前提下唯一能改跳点的地方。cancel() 会阻止 superforms 继续 applyAction
+		// （否则它先跳 homeFor）；goto 必须带 invalidateAll: true，强制根布局 load 重跑，
+		// 否则沿用的是登录前的缓存数据，data.user 还是 null，侧栏会显示成未登录。
+		onResult: ({ result, cancel }) => {
+			if (result.type === "redirect" && returnTo) {
+				cancel();
+				return goto(returnTo, { invalidateAll: true });
+			}
+		},
 		// 注意：这里必须是 onUpdate，不能用 onUpdated。
 		//   onUpdate  —— 用于接收「表单动作的返回值」（success / failure），事件形参是 { form, result }
 		//   onUpdated —— 用于页面数据刷新后的回调，事件形参只有 { form }，没有 result

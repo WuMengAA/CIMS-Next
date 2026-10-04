@@ -120,3 +120,14 @@ _probe_*.cjs
 # æ ¹ç›®å½•æ•£è½çš„æ•°æ®åº“/Cookie æ®‹ç•™ï¼ˆè·¯å¾„è¢«æ‹¼é”™äº§ç”Ÿçš„ç©ºå£³ï¼‰
 /*.db
 /.*_cookies.txt
+
+# ÁÙÊ±/À¬»ø(²»½ø°æ±¾¿â)
+/_sc*.txt
+/design-lab/
+/build-backup-*/
+/scripts/_probe-*.mjs
+/scripts/functional-two-axis.mjs
+/scripts/probe-device-domain.mjs
+/scripts/smoke-two-axis.mjs
+/main.cpp.bak
+/_archive/

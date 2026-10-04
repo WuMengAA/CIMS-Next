@@ -1,17 +1,15 @@
-<script lang="ts">
+		<script lang="ts">
 	import { Button } from "$lib/components/ui/button/index.js";
-	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Heart, Send, MessageCircle, Rocket, Globe } from "@lucide/svelte";
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import CountUp from "$lib/components/count-up.svelte";
 	import ContinueReading from "$lib/components/continue-reading.svelte";
 	import { resolveFeatureIcon } from "$lib/feature-icons.js";
 	import { reveal } from "$lib/actions/reveal.js";
+import { splitReveal } from "$lib/actions/split-reveal.js";
 	import { page } from "$app/state";
 	import type { PageProps } from "./$types";
 
-	// 用生成的 PageProps：手写内联结构体会与服务端 load 漂移，
-	// 且构建不做类型检查时会静默失效（曾漏掉 features[].icon）。
 	let { data }: PageProps = $props();
 
 	const iconMap: Record<string, any> = {
@@ -23,127 +21,141 @@
 	const socials = $derived(
 		(data.settings.socials || []).map((s) => ({ ...s, icon: iconMap[s.name.toLowerCase()] || iconMap[s.name] || Globe }))
 	);
-
-		const features = $derived(data.settings.features || []);
+	const features = $derived(data.settings.features || []);
 </script>
 
 <svelte:head>
 	<title>首页 | Stelarith</title>
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-[1400px] flex-1 flex-col gap-16 px-4 py-12 md:px-8 md:py-16">
-	<!-- Hero -->
-	<section use:reveal class="reveal parallax-hero flex flex-col items-center gap-8 text-center" style="--reveal-delay:0">
-		<Badge variant="secondary" class="gap-1.5 rounded-full px-3 py-1">
-			<Rocket class="size-3.5 text-primary" />
-			{data.settings.heroBadge}
-		</Badge>
-		<h1 class="text-shimmer font-heading text-5xl font-semibold tracking-tight md:text-6xl">
-			Stelarith
-			<span class="block text-2xl font-normal text-muted-foreground md:text-3xl">
-				{data.settings.heroTitle}
-			</span>
+<div class="ef-shell flex flex-col py-12 md:py-20">
+	<!-- Hero：杂志编辑式（左对齐、Fraunces 超大标题、pill CTA） -->
+	<section class="parallax-hero flex flex-col items-start gap-6">
+		<div use:reveal class="reveal ef-label" style="--reveal-delay:0"><Rocket class="size-3.5 text-primary" />{data.settings.heroBadge}</div>
+		<h1 use:reveal class="reveal ef-hero-title font-heading" style="--reveal-delay:1">
+			<span use:splitReveal step={46} start={260}>Stelarith</span>
+			<span class="mt-3 block text-xl font-normal text-muted-foreground md:text-2xl">{data.settings.heroTitle}</span>
 		</h1>
-		<p class="max-w-xl text-base leading-relaxed text-muted-foreground md:text-lg">
-			{data.settings.heroSubtitle}
-		</p>
-		<div class="flex items-center gap-3">
-			<Button href="#social" class="btn-glow btn-shine">关注我</Button>
-			<Button href="/posts" variant="secondary" class="btn-shine">开始阅读</Button>
+		<p use:reveal class="reveal max-w-xl text-base leading-relaxed text-muted-foreground md:text-lg" style="--reveal-delay:2">{data.settings.heroSubtitle}</p>
+		<div use:reveal class="reveal mt-2 flex flex-wrap items-center gap-3" style="--reveal-delay:3">
+			<Button href="#social" class="ef-cta btn-glow btn-shine">关注我</Button>
+			<Button href="/changelog" variant="secondary" class="ef-cta btn-shine">看看最近更新</Button>
 		</div>
 	</section>
 
-	<!-- Brand statement -->
-	<!-- 继续阅读 / 最近浏览：兑现本地阅读记忆。
-	     放在 Hero 之后：首访用户（无历史）这块整体不渲染，位置自然让给下面的介绍；
-	     回访用户一进站就能直接续读上次内容，不必再翻列表。 -->
+	<!-- 跑马灯：品牌关键词流动（编辑流体特征） -->
+	<div use:reveal class="reveal ef-marquee mt-14" style="--reveal-delay:0">
+		<div class="ef-marquee-track font-heading text-[11px] uppercase tracking-[0.24em] text-muted-foreground/70">
+			{#each [0, 1] as _}
+				<span>
+					<span>代码</span><span class="text-primary">✦</span>
+					<span>校园</span><span class="text-primary">✦</span>
+					<span>热爱</span><span class="text-primary">✦</span>
+					<span>Stelarith</span><span class="text-primary">✦</span>
+					<span>编辑流体</span><span class="text-primary">✦</span>
+				</span>
+			{/each}
+		</div>
+	</div>
+
+	<!-- 继续阅读 / 最近浏览（首访不渲染，回访直接续读） -->
 	<ContinueReading />
 
-	<section use:reveal class="reveal flex flex-col items-center gap-4 text-center" style="--reveal-delay:1">
-		<div
-			class="flex size-16 items-center justify-center rounded-2xl bg-primary font-heading text-2xl font-semibold text-primary-foreground"
-		>
-			S
-		</div>
-		<p class="font-heading text-xl md:text-2xl">{data.settings.slogan}</p>
+	<!-- 品牌声明：杂志引用式（双向夹击遮罩 + 描绘线） -->
+	<section class="flex flex-col items-start gap-3 pt-20">
+		<div use:reveal class="reveal ef-label" style="--reveal-delay:0">关于本站</div>
+		<p use:reveal class="reveal-clamp font-heading text-2xl leading-snug md:text-3xl" style="--reveal-delay:1">{data.settings.slogan}</p>
+		<span use:reveal class="reveal ef-draw mt-2" style="--reveal-delay:2"></span>
 	</section>
 
-	<!-- Features -->
-	<section use:reveal class="reveal parallax-slow grid gap-4 md:grid-cols-3" style="--reveal-delay:2">
-		{#each features as f (f.title)}
-			{@const FeatureIcon = resolveFeatureIcon(f.icon)}
-			<div
-				class="card-hover group flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6"
-			>
-				<div
-					class="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary"
-				>
-					<FeatureIcon class="size-5" />
+	<!-- 统计栏：杂志大数字（保留 CountUp 滚动） -->
+	<section use:reveal class="reveal mt-16 grid gap-4 md:grid-cols-3" style="--reveal-delay:2">
+		<div class="ef-stat-card">
+			<span class="ef-stat-line"></span>
+			<div class="ef-big-num text-primary"><CountUp value={(data.posts || []).length} duration={1000} /></div>
+			<div class="ef-label">篇文章</div>
+			<span class="ef-stat-sub">文字的重量</span>
+		</div>
+		<div class="ef-stat-card">
+			<span class="ef-stat-line"></span>
+			<div class="ef-big-num text-primary"><CountUp value={(data.projects || []).length} duration={1100} /></div>
+			<div class="ef-label">个项目</div>
+			<span class="ef-stat-sub">想法的落地</span>
+		</div>
+		<div class="ef-stat-card">
+			<span class="ef-stat-line"></span>
+			<div class="ef-big-num text-primary"><CountUp value={(data.docs || []).length} duration={1200} /></div>
+			<div class="ef-label">篇教程</div>
+			<span class="ef-stat-sub">知识的传递</span>
+		</div>
+	</section>
+
+	<!-- 特性：编号排版（01/02/03，无框 hairline 行 · 逐行横向揭开） -->
+	<section class="parallax-slow mt-20">
+		<div use:reveal class="reveal ef-label" style="--reveal-delay:0">本站特性</div>
+		<span use:reveal class="reveal ef-draw mt-3" style="--reveal-delay:1"></span>
+		<div class="mt-6 flex flex-col divide-y divide-border/40">
+			{#each features as f, i (f.title)}
+				{@const FeatureIcon = resolveFeatureIcon(f.icon)}
+				<div use:reveal class="reveal-wipe ef-feature group grid gap-2 py-6 md:grid-cols-[2.75rem_1fr] md:items-baseline" style:--reveal-delay={i + 2}>
+					<span class="ef-num">{String(i + 1).padStart(2, "0")}</span>
+					<div>
+						<h2 class="font-heading text-xl transition-colors group-hover:text-primary md:text-2xl">
+							<FeatureIcon class="mr-2 inline size-4 text-primary" />
+							{f.title}
+						</h2>
+						<p class="mt-1 text-sm leading-relaxed text-muted-foreground">{f.description}</p>
+					</div>
 				</div>
-				<h2 class="font-heading text-lg font-medium">{f.title}</h2>
-				<p class="text-sm leading-relaxed text-muted-foreground">{f.description}</p>
-			</div>
-		{/each}
-	</section>
-
-
-	<!-- 统计栏：滚动计数动画（React Bits 风格） -->
-	<section use:reveal class="reveal flex flex-wrap items-stretch justify-center gap-4" style="--reveal-delay:3">
-		<div class="min-w-28 flex-1 rounded-xl border border-border/60 bg-card/60 p-5 text-center">
-			<div class="font-heading text-3xl font-semibold text-primary"><CountUp value={(data.posts || []).length} duration={1000} /></div>
-			<div class="mt-1 text-xs text-muted-foreground">篇文章</div>
-		</div>
-		<div class="min-w-28 flex-1 rounded-xl border border-border/60 bg-card/60 p-5 text-center">
-			<div class="font-heading text-3xl font-semibold text-primary"><CountUp value={(data.projects || []).length} duration={1100} /></div>
-			<div class="mt-1 text-xs text-muted-foreground">个项目</div>
-		</div>
-		<div class="min-w-28 flex-1 rounded-xl border border-border/60 bg-card/60 p-5 text-center">
-			<div class="font-heading text-3xl font-semibold text-primary"><CountUp value={(data.docs || []).length} duration={1200} /></div>
-			<div class="mt-1 text-xs text-muted-foreground">篇教程</div>
+			{/each}
 		</div>
 	</section>
-	<!-- Recent content -->
-	<section use:reveal class="reveal parallax-mid flex flex-col gap-8" style="--reveal-delay:4">
-		<div class="flex items-center justify-between">
-			<h2 class="font-heading text-xl">最新内容</h2>
-			<a href="/posts" class="text-sm text-muted-foreground hover:text-primary">查看全部 →</a>
+
+	<!-- 最新内容：杂志列表（日期编号 + 衬线标题 + hairline） -->
+	<section use:reveal class="reveal parallax-mid mt-16" style="--reveal-delay:0">
+		<div class="flex items-baseline justify-between">
+			<h2 class="ef-label">最新内容</h2>
+			<a href="/changelog" class="text-sm text-muted-foreground transition-colors hover:text-primary">查看全部 →</a>
 		</div>
 
 		{#if data.posts.length > 0}
-			<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
+			<div class="mt-4 flex flex-col">
 				{#each data.posts as post (post.slug)}
-					<a href="/posts/{post.slug}" class="group flex items-center gap-3 p-4 transition-colors hover:bg-accent/40">
+					<a href="/posts/{post.slug}" class="ef-list-row group">
+						<span class="ef-num shrink-0">{post.date}</span>
 						<div class="min-w-0 flex-1">
-							<h3 class="truncate font-medium group-hover:text-primary">{post.title}</h3>
+							<h3 class="truncate font-heading text-lg transition-colors group-hover:text-primary">{post.title}</h3>
 							<p class="line-clamp-1 text-xs text-muted-foreground">{post.excerpt}</p>
 						</div>
-						<span class="shrink-0 text-xs text-muted-foreground">{post.date}</span>
+						<span class="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-300 group-hover:opacity-100">→</span>
 					</a>
 				{/each}
 			</div>
 		{/if}
 
 		{#if data.projects.length > 0 || data.docs.length > 0}
-			<div class="grid gap-4 sm:grid-cols-2">
+			<div class="mt-10 grid gap-x-10 md:grid-cols-2">
 				{#if data.projects.length > 0}
-					<div class="rounded-xl border border-border/60 bg-card p-5">
-						<h3 class="mb-3 font-heading font-medium">项目</h3>
-						<div class="flex flex-col gap-2">
+					<div>
+						<h3 class="ef-label">项目</h3>
+						<div class="mt-2 flex flex-col">
 							{#each data.projects as project (project.slug)}
-								<a href="/projects/{project.slug}" class="group block min-w-0 text-sm">
-									<span class="block truncate group-hover:text-primary">{project.title}</span>
+								<a href="/projects/{project.slug}" class="ef-list-row group">
+									<span class="min-w-0 flex-1 truncate font-heading text-sm transition-colors group-hover:text-primary">{project.title}</span>
+									<span class="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-300 group-hover:opacity-100">→</span>
 								</a>
 							{/each}
 						</div>
 					</div>
 				{/if}
 				{#if data.docs.length > 0}
-					<div class="rounded-xl border border-border/60 bg-card p-5">
-						<h3 class="mb-3 font-heading font-medium">教程</h3>
-						<div class="flex flex-col gap-2">
+					<div>
+						<h3 class="ef-label">教程</h3>
+						<div class="mt-2 flex flex-col">
 							{#each data.docs as doc (doc.slug)}
-								<a href="/docs/{doc.slug}" class="group block min-w-0 text-sm">
-									<span class="block truncate group-hover:text-primary">{doc.title}</span>
+								<a href="/docs/{doc.slug}" class="ef-list-row group">
+									<span class="min-w-0 flex-1 truncate font-heading text-sm transition-colors group-hover:text-primary">{doc.title}</span>
+									<span class="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-300 group-hover:opacity-100">→</span>
 								</a>
 							{/each}
 						</div>
@@ -152,16 +164,17 @@
 			</div>
 		{/if}
 	</section>
-	<!-- Social -->
-	<section id="social" use:reveal class="reveal flex flex-col items-center gap-4 text-center" style="--reveal-delay:5">
-		<h2 class="font-heading text-xl">{data.settings.socialTitle}</h2>
-		<div class="flex flex-wrap items-center justify-center gap-2">
+
+	<!-- 社交：pill 行 -->
+	<section id="social" use:reveal class="reveal mt-16 flex flex-col items-start gap-4" style="--reveal-delay:0">
+		<h2 class="ef-label">{data.settings.socialTitle}</h2>
+		<div class="flex flex-wrap items-center gap-2">
 			{#each socials as s (s.name)}
 				<a
 					href={s.url}
 					target="_blank"
 					rel="noopener noreferrer"
-					class="flex h-10 items-center gap-2 rounded-lg border border-border/60 bg-card px-4 text-sm text-foreground transition-colors hover:border-primary/40 hover:text-primary"
+					class="ef-cta flex h-10 items-center gap-2 border border-border/60 bg-card px-4 text-sm text-foreground transition-colors hover:border-primary/40 hover:text-primary"
 				>
 					<s.icon class="size-4" />
 					{s.name}
@@ -169,4 +182,10 @@
 			{/each}
 		</div>
 	</section>
+	<div class="mt-16 border-t border-border/40 pt-6">
+		<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+			<span>© {new Date().getFullYear()} Stelarith</span>
+			<span class="ef-label">代码 · 校园 · 热爱</span>
+		</div>
+	</div>
 </div>

@@ -20,17 +20,22 @@
 	let {
 		current = "site",
 		adminHref = "/admin",
+		siteHref = "/",
 		class: className
 	}: {
 		current?: "site" | "admin";
 		adminHref?: string;
+		/** 「前台」的落点。默认首页；后台里传入「我来前台之前那一页」，改完内容点一下就回去看效果。 */
+		siteHref?: string;
 		class?: string;
 	} = $props();
 
-	const options = [
-		{ id: "site" as const, label: "前台", href: "/", icon: Globe },
+	// 必须是 $derived 而不是普通常量：siteHref 是客户端从 sessionStorage 读出来的，
+	// 首帧（SSR）只能是 "/"，挂载后才变成真实来路。写死成常量的话 href 这辈子都不会更新。
+	const options = $derived([
+		{ id: "site" as const, label: "前台", href: siteHref, icon: Globe },
 		{ id: "admin" as const, label: "后台", href: adminHref, icon: LayoutDashboard }
-	];
+	]);
 
 	const index = $derived(current === "admin" ? 1 : 0);
 </script>

@@ -16,7 +16,7 @@
 	<meta name="description" content="校园点歌，由 voicehub 校园点歌站提供，内嵌实时点歌页" />
 </svelte:head>
 
-<div class="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 py-10 md:px-8">
+<div class="ef-shell ef-shell--wide flex flex-col gap-6 py-10">
 	<header class="flex flex-col gap-2">
 		<h1 class="flex items-center gap-2 font-heading text-3xl font-semibold tracking-tight">
 			<Music2 class="size-7 text-primary" /> 校园点歌

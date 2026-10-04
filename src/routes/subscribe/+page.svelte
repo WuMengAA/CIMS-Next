@@ -38,7 +38,7 @@
 
 <PageHero icon={Rss} title="订阅" desc={`关注 {siteName} 的最新内容，RSS 一劳永逸。`} />
 
-<div class="mx-auto max-w-3xl space-y-6 px-4 py-8">
+<div class="ef-shell ef-shell--narrow space-y-6 py-8">
 	<!-- 订阅源卡片 -->
 	<div class="grid gap-3 sm:grid-cols-2">
 		{#each feeds as f (f.key)}

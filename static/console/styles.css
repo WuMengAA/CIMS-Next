@@ -375,6 +375,16 @@ tbody tr:hover { background: var(--panel2); }
 .tag.ok { background: rgba(120,140,93,.16); color: var(--ok); border-color: rgba(120,140,93,.35); }
 .tag.warn { background: rgba(216,178,92,.15); color: var(--warn); border-color: rgba(216,178,92,.3); }
 .tag.err { background: rgba(247,93,89,.14); color: var(--err); border-color: rgba(247,93,89,.3); }
+/* 设备指令四态状态位（行内）：空文本时完全不占位，避免设备行被撑高、按钮位移 */
+.devstate { margin-left: 6px; white-space: nowrap; }
+.devstate:empty { display: none; }
+/* 文件投递的逐台回执明细（在传输历史里展开的那一块）：
+   每台一行「状态 + 设备号 + 说明」，靠左侧细线成组，不抢主表格的视觉权重。 */
+.nowrap { white-space: nowrap; }
+.ftd > td { padding: 0 8px 8px; background: var(--panel2); }
+.ftd-box { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-left: 2px solid var(--line); }
+.ftd-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.ftd-row > b { font-weight: 600; }
 
 /* ===== 班级管理：文件夹式分组 + 快捷选择（#182）=====
    分组不是一个真正可折叠的文件树，而是「按届归拢的一段」——

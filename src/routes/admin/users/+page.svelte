@@ -55,6 +55,10 @@
 	let bindTarget = $state<UserInfo | null>(null);
 	let bindOptions = $state<{ class_id: string; name?: string }[]>([]);
 	let bindPicked = $state<string[]>([]);
+	// 当前已绑班级（用来算「本次改了什么」与初始勾选）。
+	// ⚠️ 2026-09-29：此前只赋值未声明 → 点「换绑」必然 ReferenceError（严格模式下
+	// 给未声明标识符赋值直接抛错）。绑定功能因此一直点不动。
+	let bindCurrent = $state<string[]>([]);
 	let bindBusy = $state(false);
 	let bindErr = $state("");
 
@@ -65,12 +69,12 @@
 		bindOptions = [];
 		try {
 			const [cls, cur] = await Promise.all([
-				fetch("/api/classes").then(async (r) => {
+				fetch("/api/class/list").then(async (r) => {
 					const d = await r.json();
 					if (!r.ok) throw new Error(d.error || "班级列表不可用");
 					return (d.classes || []) as { class_id: string; name?: string }[];
 				}),
-				fetch(`/api/admin/users/classes?username=${encodeURIComponent(u.username)}`).then(async (r) => {
+				fetch(`/api/class/users?username=${encodeURIComponent(u.username)}`).then(async (r) => {
 					const d = await r.json();
 					if (!r.ok) throw new Error(d.error || "绑定读取失败");
 					return d as { bindings?: { class_id: string }[] };
@@ -90,7 +94,7 @@
 		bindBusy = true;
 		bindErr = "";
 		try {
-			const r = await fetch(`/api/admin/users/classes?username=${encodeURIComponent(bindTarget.username)}`, {
+			const r = await fetch(`/api/class/users?username=${encodeURIComponent(bindTarget.username)}`, {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ class_ids: bindPicked })
@@ -190,13 +194,16 @@
 
 	async function saveEdit() {
 		if (!editTarget) return;
-		if (!editTarget) return;		const sensitive = editRole !== editTarget.role || editStatus !== editTarget.status || (editEmail && editEmail !== editTarget.email);		let adminPwd = "";		if (sensitive) { adminPwd = prompt("敏感修改（角色/状态/邮箱），请输入你的管理员密码确认"); if (!adminPwd) return; }
+		const sensitive = editRole !== editTarget.role || editStatus !== editTarget.status || (editEmail && editEmail !== editTarget.email);
+		let adminPwd = "";
+		if (sensitive) { adminPwd = prompt("敏感修改（角色/状态/邮箱），请输入你的管理员密码确认"); if (!adminPwd) return; }
+		const res = await fetch("/api/auth", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				action: "update_user", username: editTarget.username,
-				displayName: editDisplay, email: editEmail, bio: editBio, role: editRole, status: editStatus
 				displayName: editDisplay, email: editEmail, bio: editBio, role: editRole, status: editStatus, currentPassword: adminPwd
+			})
 		});
 		const d = await res.json();
 		if (d.ok) { toast.success("已保存"); editTarget = null; load(); }

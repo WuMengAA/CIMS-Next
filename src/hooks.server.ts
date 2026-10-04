@@ -92,10 +92,56 @@ export async function handle({ event, resolve }) {
 	response.headers.set("X-Frame-Options", "DENY");
 	response.headers.set("X-Content-Type-Options", "nosniff");
 	response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+
+	// ── B 路 WebRTC 远控的信令源（2026-10-02）───────────────────────────
+	// 集控远控页（/admin/console/remote）需要两件事，而原策略两件都拦：
+	//   ① 从信令源加载 socket.io 客户端 → 需要 script-src 放行该 origin；
+	//   ② 向信令源开 WebSocket            → 需要 connect-src 放行（**原策略没有 connect-src**，
+	//      会回落到 default-src 'self'，于是 WS 被整个拦死 —— 这是远控在浏览器里跑不起来的根因）。
+	//
+	// 为什么可以放宽：信令源是**我们自己的基础设施**（公网入口经 CIMS 8096 的 `/socket.io`
+	// 透传到本机边车），不是第三方 CDN。
+	//
+	// ⚠️ **两个 env 都没配 → 一个指令都不加**（CSP 逐字保持原样）。
+	//    绝不把一个具体域名写死进安全策略 —— 换部署环境就漏。
+	const p2pOrigin = (() => {
+		const raw = (process.env.STELARITH_P2P_PUBLIC_URL || process.env.STELARITH_P2P_URL || "").trim();
+		if (!raw) return "";
+		try {
+			return new URL(raw).origin; // 只取 scheme://host[:port]，丢掉路径
+		} catch {
+			return ""; // 非法 URL 当作"未配置"
+		}
+	})();
+	// WebSocket 的 scheme 是 ws/wss，**不是** http(s) —— 只加 http 形态照样连不上。
+	const p2pWsOrigin = p2pOrigin
+		? p2pOrigin.replace(/^https:/, "wss:").replace(/^http:/, "ws:")
+		: "";
+
 	response.headers.set(
 		"Content-Security-Policy",
-		"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'"
+		[
+			"default-src 'self'",
+			`script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net${p2pOrigin ? ` ${p2pOrigin}` : ""}`,
+			"style-src 'self' 'unsafe-inline'",
+			"img-src 'self' data: blob:",
+			"font-src 'self' data:",
+			`connect-src 'self'${p2pOrigin ? ` ${p2pOrigin} ${p2pWsOrigin}` : ""}`,
+			"frame-ancestors 'none'",
+			"base-uri 'self'"
+		].join("; ")
 	);
+
+	// ── G1 切流量 · 第一步：旧 catch-all 打弃用标记（2026-10-02）─────────
+	// 新两轴（`/api/console/control/**` 控制轴 + `/api/device/**` 被控轴）已承接全部功能，
+	// 网页面板 24 处调用已全部切到新轴；**教室机仍打旧路径** —— 所以此刻**只标记、不删除**。
+	// 依 RFC 9745：`Deprecation` + `Link rel="successor-version"` 指向替代轴；
+	// `Sunset` 等确定删除日期再加（那一步要等教室端也切完，属 G1 收尾）。
+	// 放在 hook 里而不是改 1400 行的 catch-all 文件：一处集中、加法、不与并行改动打架。
+	if (event.url.pathname.startsWith("/api/console/ext/")) {
+		response.headers.set("Deprecation", "true");
+		response.headers.set("Link", '</api/console/control>; rel="successor-version"');
+	}
 
 	// HSTS：生产 HTTPS 强制（本地 HTTP 开发不设，否则浏览器永久记忆导致 8080 dev 无法访问）
 	if (process.env.COOKIE_SECURE === "true") {
