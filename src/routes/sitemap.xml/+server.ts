@@ -5,6 +5,7 @@ import type { RequestHandler } from "./$types";
 const STATIC_PATHS = [
 	"/",
 	"/changelog",
+	"/download",
 	"/pulse",
 	"/projects",
 	"/docs",
