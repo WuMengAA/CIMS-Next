@@ -3,6 +3,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { LogIn, Eye, EyeOff, User as UserIcon } from "@lucide/svelte";
+	import StelarithMascot from "$lib/components/stelarith-mascot.svelte";
 	import { superForm } from "sveltekit-superforms";
 	import { zod4Client, type ClientValidationAdapter } from "sveltekit-superforms/adapters";
 	import { toast } from "svelte-sonner";
@@ -95,7 +96,8 @@
 <div class="flex min-h-screen items-center justify-center bg-background px-4">
 	<div class="w-full max-w-sm space-y-6">
 		<div class="flex flex-col items-center gap-2 text-center">
-			<div class="flex size-12 items-center justify-center rounded-xl bg-primary font-heading text-lg font-semibold text-primary-foreground">S</div>
+			<!-- 2026-10-05：星集控吉祥物（状态机+弹簧动效） -->
+			<StelarithMascot size={88} />
 			<h1 class="font-heading text-2xl font-semibold">Stelarith CMS</h1>
 			<p class="text-sm text-muted-foreground">登录管理后台</p>
 		</div>
