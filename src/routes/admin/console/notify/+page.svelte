@@ -30,10 +30,8 @@
 	let scope = $state<string>(maxLabel || "本班");
 	let duration = $state<number | undefined>(undefined);
 	let ntType = $state("");
-	let ntSeverity = $state("remind"); // 全屏严重度：remind/inform/urgent
-	let presetsText = $state("");
-	let emergency = $state(false);
-	let adsText = $state("");
+	let ntSeverity = $state("remind"); // 全屏严重度：remind/inform/urgent（仅存档标记）
+	let tts = $state(false); // 语音播报（服务端白名单 → flags.speech，被控端 SAPI 朗读）
 	let classes = $state<{ class_id: string; name: string; device_count: number }[]>([]);
 	let picked = $state<string[]>([]);
 	let notices = $state<Notice[]>([]);
@@ -66,9 +64,7 @@
 		};
 	}
 
-	function presets(): string[] {
-		return presetsText.split(/[,，、]/).map((s) => s.trim()).filter(Boolean).slice(0, 6);
-	}
+	// 预设回复由接收端内置通用行动句，老师不需要输入（presets() 已移除，无输入框绑定）。
 
 	async function doSend() {
 		if (!title.trim()) { toast.error("请填写通知标题"); return; }
@@ -78,11 +74,14 @@
 		submitting = true;
 		try {
 			const flags: Record<string, unknown> = {};
-			// 预设回复由接收端内置通用行动句，老师不需要调整；时长自动适配（弹幕按文字长短+朗读）。
+			// 契约对齐（2026-10-05 修）：被控端（stelarith-control-qt · notifyFromParams）读的是
+			//   params.kind / title / content / seconds / notice_id
+			//   flags = { speech, severity, effect, sound, topmost }
+			// 旧实现两处假绿：① 时长塞 flags.auto_dismiss_seconds（Qt 不读）；
+			//   ② TTS 用 flags.tts（Qt 只认 speech）。界面照报「已下发」，设备侧不生效。
+			// 时长改由 body.duration_seconds → params.seconds 承载（Qt 认），这里不再重复发。
+			if (tts) flags.tts = true; // 服务端白名单映射为 flags.speech 下发
 			if (ntType === "fullscreen" && ntSeverity) flags.severity = ntSeverity;
-			if (ntType === "fullscreen" && ntSeverity === "urgent") flags.emergency_confirm = true;
-			const ads = Number(adsText);
-			if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
 			const body: Record<string, unknown> = { title: title.trim(), content: content.trim(), scope, broadcast: true };
 			if (scope === "本班" && picked.length) body.classes = picked;
 			if (ntType) body.type = ntType;
@@ -98,7 +97,7 @@
 			else if (b && (b.delivered ?? 0) > 0) toast.success(`已下发到 ${b.delivered} 台设备（是否收到看「指令回执」）`);
 			else if (b?.error) toast.warning(`已留痕，但未下发成功：${b.error}`);
 			else toast.success("已发布");
-			title = ""; content = ""; presetsText = ""; adsText = ""; emergency = false; ntType = "";
+			title = ""; content = ""; tts = false; ntType = "";
 			const nRes = await fetch("/api/console/control/notices");
 			notices = Array.isArray(await nRes.json()) ? (await (await fetch("/api/console/control/notices")).json()).map(norm) : [];
 		} catch (e) {
@@ -159,20 +158,20 @@
 			</div>
 			{#if ntType === "fullscreen"}
 				<div class="grid gap-1.5">
-					<Label for="nt-sev">严重度（决定屏幕配色）</Label>
+					<Label for="nt-sev">严重度（存档标记，被控端未读此字段）</Label>
 					<select id="nt-sev" bind:value={ntSeverity} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
-						<option value="remind">提醒（绿）</option>
-						<option value="inform">通知（黄）</option>
-						<option value="urgent">紧急（红）· 关闭需确认已读</option>
+						<option value="remind">提醒（remind）</option>
+						<option value="inform">通知（inform）</option>
+						<option value="urgent">紧急（urgent）</option>
 					</select>
 				</div>
-				<div class="flex items-center gap-4">
-					<div class="flex items-center gap-2">
-						<Label for="nt-ads" class="shrink-0">自动关屏（秒）</Label>
-						<input id="nt-ads" type="number" min="1" max="300" bind:value={adsText} placeholder="留空=不自动关" class="h-8 w-32 rounded-lg border border-input bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/50" />
-					</div>
-				</div>
 			{/if}
+			<div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+				<label class="flex cursor-pointer items-center gap-2 text-sm">
+					<input type="checkbox" class="accent-primary" bind:checked={tts} />
+					<span>语音播报（教室大屏会念出来，慎用）</span>
+				</label>
+			</div>
 			<div class="grid gap-1.5">
 				<Label>目标班级（选填，默认范围决定）</Label>
 				{#if classErr}

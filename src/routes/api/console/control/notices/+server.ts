@@ -159,10 +159,11 @@ export async function POST(event: RequestEvent) {
 		if (pick("emergency_confirm") === true) flags.emergency_confirm = true;
 	}
 	if (typed === "popup" || typed === "fullscreen") {
-		const ads = Number(pick("auto_dismiss_seconds"));
-		if (Number.isFinite(ads) && ads > 0 && ads <= 300) flags.auto_dismiss_seconds = Math.round(ads);
 		// 语音播报：会出声的能力，同样只走白名单、严格判定 true。
-		if (pick("tts") === true) flags.tts = true;
+		// ⚠️ 2026-10-05 修：字段名对齐被控端 —— Qt 只读 flags.speech，不读 tts。
+		//    旧名 tts 会让老师勾了也不出声（界面照回 201「已下发」，属假绿）。
+		if (pick("tts") === true) flags.speech = true;
+		// 时长由 params.seconds 承载（见下），flags 里不再放 auto_dismiss_seconds —— Qt 不读。
 	}
 	// 全屏严重度（决定大屏配色 + 是否要求「确认已读」）。
 	// 非白名单值一律**忽略**（绝不把一个任意串塞进下发给教室端的指令里）。
