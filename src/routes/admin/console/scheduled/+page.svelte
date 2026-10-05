@@ -94,10 +94,29 @@
 	const WD_OPTS = [0, 1, 2, 3, 4, 5, 6];
 	const hasClasses = $derived(classes.length > 0);
 
-	async function cimsCall(path: string, init?: RequestInit) {
-		const res = await fetch(`/api/console/cims${path}`, {
+	// 2026-10-05：定时广播切自有（取代 CIMS scheduled-broadcast）。
+	// path 形如 "/scheduled-broadcast/list|create|{id}|{id}/toggle|{id}/fire-now"。
+	// 建/改都在 POST（body.id 区分）；端点不支持 PUT，方法统一降成 POST。
+	async function sbCall(path: string, init?: RequestInit) {
+		let url = "/api/console/scheduled-broadcast";
+		if (path === "/scheduled-broadcast/list") {
+			// GET list
+		} else if (path === "/scheduled-broadcast/create") {
+			// POST create（body 已在 init）
+		} else {
+			// /scheduled-broadcast/{id} / {id}/toggle / {id}/fire-now
+			const m = path.match(/^\/scheduled-broadcast\/(\d+)(?:\/(toggle|fire-now))?$/);
+			if (m) {
+				const id = m[1];
+				const act = m[2];
+				url += `?id=${id}${act ? `&action=${act}` : ""}`;
+			}
+		}
+		const method = (init?.method ?? "GET") === "PUT" ? "POST" : (init?.method ?? "GET");
+		const res = await fetch(url, {
 			headers: { "Content-Type": "application/json" },
-			...init
+			...init,
+			method
 		});
 		const d = await res.json().catch(() => ({}));
 		if (!res.ok) throw new Error(d?.error || d?.message || `HTTP ${res.status}`);
@@ -126,7 +145,7 @@
 		loading = true;
 		listErr = "";
 		try {
-			const d = await cimsCall("/scheduled-broadcast/list");
+			const d = await sbCall("/scheduled-broadcast/list");
 			items = Array.isArray(d?.items) ? d.items : [];
 		} catch (e) {
 			items = [];
@@ -168,6 +187,7 @@
 			return;
 		}
 		const body = {
+			id: editId != null ? editId : undefined,
 			name: fName.trim(),
 			schedule_type: fType,
 			run_at: new Date(fRunAt).toISOString(),
@@ -180,13 +200,13 @@
 		saving = true;
 		try {
 			if (editId != null) {
-				await cimsCall(`/scheduled-broadcast/${editId}`, {
+				await sbCall(`/scheduled-broadcast/${editId}`, {
 					method: "PUT",
 					body: JSON.stringify(body)
 				});
 				toast.success("已保存修改");
 			} else {
-				await cimsCall("/scheduled-broadcast/create", {
+				await sbCall("/scheduled-broadcast/create", {
 					method: "POST",
 					body: JSON.stringify(body)
 				});
@@ -204,7 +224,7 @@
 	async function toggle(it: ScheduledItem) {
 		busyId = it.id;
 		try {
-			await cimsCall(`/scheduled-broadcast/${it.id}/toggle`, {
+			await sbCall(`/scheduled-broadcast/${it.id}/toggle`, {
 				method: "POST",
 				body: JSON.stringify({ enabled: !it.enabled })
 			});
@@ -220,7 +240,7 @@
 	async function fire(it: ScheduledItem) {
 		busyId = it.id;
 		try {
-			const r = await cimsCall(`/scheduled-broadcast/${it.id}/fire-now`, {
+			const r = await sbCall(`/scheduled-broadcast/${it.id}/fire-now`, {
 				method: "POST",
 				body: "{}"
 			});
@@ -235,7 +255,7 @@
 	async function remove(id: number) {
 		busyId = id;
 		try {
-			await cimsCall(`/scheduled-broadcast/${id}`, { method: "DELETE" });
+			await sbCall(`/scheduled-broadcast/${id}`, { method: "DELETE" });
 			toast.success("已删除");
 			confirmId = null;
 			await loadList();

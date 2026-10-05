@@ -529,6 +529,24 @@ CREATE TABLE IF NOT EXISTS schedule_swaps (
   updated_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_swaps_class ON schedule_swaps(school_id, class_id, status);
+
+-- 定时广播（2026-10-05 · 取代 CIMS scheduled-broadcast：站点自持调度，到点走自有 notify 通道）
+CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL DEFAULT '',
+  schedule_type  TEXT NOT NULL DEFAULT 'once',   -- once | daily | weekly
+  weekday        INTEGER,                         -- weekly 用 1-7
+  run_at         TEXT NOT NULL DEFAULT '',        -- "HH:MM" 或 "YYYY-MM-DD HH:MM"
+  target_class_id TEXT NOT NULL DEFAULT '',
+  title          TEXT NOT NULL DEFAULT '',
+  content        TEXT NOT NULL DEFAULT '',
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  next_run_at    TEXT NOT NULL DEFAULT '',
+  last_run_at    TEXT NOT NULL DEFAULT '',
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sched_bc ON scheduled_broadcasts(enabled, next_run_at);
 `;
 
 export function nowIso(): string {

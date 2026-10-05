@@ -143,11 +143,16 @@
 <svelte:head><title>自助切班 · 集控面板 | Stelarith</title><meta name="robots" content="noindex" /></svelte:head>
 
 <div class="mx-auto max-w-5xl p-4 md:p-6">
+	<!-- 2026-10-05：自助切班已停用（用户判定无价值）。页面保留仅作历史兜底，请改用「课表与调课」页。 -->
+	<div class="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+		<Info class="mr-1 inline size-4 align-[-2px]" />
+		<b>自助切班已停用</b>——该功能（两班课表方案互换）价值低。换课/调课请到「课表与调课」页（申请→审批→自动对调）。
+	</div>
 	<div class="mb-5 flex items-center justify-between">
 		<div class="flex items-center gap-3">
 			<div class="flex size-10 items-center justify-center rounded-lg bg-primary/15 text-primary"><CalendarClock class="size-5" /></div>
 			<div>
-				<h1 class="font-heading text-lg font-semibold">自助切班</h1>
+				<h1 class="font-heading text-lg font-semibold">自助切班（已停用）</h1>
 				<p class="text-xs text-muted-foreground">互换 / 单切课表方案：申请 → {cfg.requires_approval ? "审批" : "直接执行"} → {cfg.auto_rollback ? "到期自动回退" : "手动回退"}。</p>
 			</div>
 		</div>

@@ -6,8 +6,8 @@
  * 而那个端点从来没被实现 —— 设备端自然永远收不到文件，更别提提示。
  * 本模块补齐缺失的三环：
  *   ① 文件实体上传落盘（content/files/，gitignore 运行时数据）+ file_objects 登记；
- *   ② file_push 指令代推（服务端持 CIMS 特权令牌，走 send-notification 通道，
- *      与 broadcast.ts 同款信封：MessageContent = {"stelarith_task": {...}}）；
+ *   ② file_push 指令代推（2026-10-05：服务端持云端 Bearer，走 /api/instructions 指令通道，
+ *      取代 CIMS send-notification 特权令牌链路）；
  *   ③ 送达回执（file_deliveries：pending → acked/failed，设备下载后回报）。
  *
  * 安全边界：
@@ -20,13 +20,10 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { env } from "$env/dynamic/private";
 import { CONTENT_DIR } from "./paths.js";
 import { getDb, nowIso } from "./db.js";
-import { getCimsAccount } from "./cims-account.js";
-import { cimsToken } from "./cims-client.js";
+import { cloudHttpBase, cloudViewerToken } from "./broadcast.js";
 
-const MGMT_URL = (env.CIMS_MANAGEMENT_URL ?? "http://127.0.0.1:8097").replace(/\/$/, "");
 const FILES_DIR = path.join(CONTENT_DIR, "files");
 /** 单文件上限：课堂教学文件（PPT/视频切片）绝大多数 < 100MB。 */
 export const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -131,7 +128,7 @@ export function updateDelivery(fileId: string, uid: string, state: string, detai
 }
 
 /**
- * 把 file_push 任务推给一批设备（服务端代推，走 CIMS send-notification 通道）。
+ * 把 file_push 任务推给一批设备（2026-10-05：服务端代推走**云端指令通道**，取代 CIMS send-notification）。
  * 每台设备落一行 pending 回执；单台失败不影响其余（失败行直接标 failed）。
  *
  * ⚠️ 任务令牌为占位（见文件头安全边界）——与 Flutter 端 sendTask 未配密钥时的
@@ -143,28 +140,14 @@ export async function pushFileToDevices(
 	/** uid → class_id（用于回执留档；解析不到留空串） */
 	classOf: (uid: string) => string
 ): Promise<{ uid: string; ok: boolean; detail: string }[]> {
-	const acct = await getCimsAccount();
-	const token = await cimsToken();
-	if (!acct || !token) {
+	const base = cloudHttpBase();
+	const token = cloudViewerToken();
+	if (!base || !token) {
 		return uids.map((uid) => {
-			markDelivery(file.id, uid, classOf(uid), "failed", "CIMS 未配置/不可达，指令未下发");
-			return { uid, ok: false, detail: "CIMS 不可达" };
+			markDelivery(file.id, uid, classOf(uid), "failed", "云端未配置/不可达，指令未下发");
+			return { uid, ok: false, detail: "云端不可达" };
 		});
 	}
-	const ts = Math.floor(Date.now() / 1000);
-	const task = {
-		action: "file_push",
-		token: ts.toString(36),
-		scope: "device",
-		ts,
-		payload: {
-			file_id: file.id,
-			name: file.name,
-			sha256: file.sha256,
-			kind: file.kind,
-			size: file.size
-		}
-	};
 	const out: { uid: string; ok: boolean; detail: string }[] = new Array(uids.length);
 
 	// 并发代推：串行的话 20 台 × 5s 超时 = 100s，调用方（Flutter/面板）早超时了。
@@ -175,11 +158,23 @@ export async function pushFileToDevices(
 			if (!uid) return;
 			try {
 				const r = await fetch(
-					`${MGMT_URL}/account/${acct.id}/client/${encodeURIComponent(uid)}/command/send-notification`,
+					`${base}/api/instructions`,
 					{
 						method: "POST",
 						headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
-						body: JSON.stringify({ MessageContent: JSON.stringify({ stelarith_task: task }) }),
+						body: JSON.stringify({
+							uid,
+							action: "file_push",
+							params: {
+								payload: {
+									file_id: file.id,
+									name: file.name,
+									sha256: file.sha256,
+									kind: file.kind,
+									size: file.size
+								}
+							}
+						}),
 						signal: AbortSignal.timeout(5000)
 					}
 				);

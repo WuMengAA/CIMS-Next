@@ -2,6 +2,12 @@ import { error, redirect } from "@sveltejs/kit";
 import { verifyToken } from "$lib/server/auth.js";
 import { can, userCan } from "$lib/permissions.js";
 import { recordActivity } from "$lib/server/activity.js";
+import { startScheduledBroadcastScheduler } from "$lib/server/scheduled-broadcast-scheduler.js";
+
+/** 启动时挂载：定时广播调度器（每 30s 扫描到点任务 → 云端 notify 通道）。 */
+export const init = () => {
+	startScheduledBroadcastScheduler();
+};
 
 /** 这些前缀不参与「页面浏览」活动记录（API / 静态资源 / 文件）。 */
 const SKIP_PREFIX = ["/api", "/_app", "/uploads", "/favicon", "/rss.xml", "/.well-known", "/robots.txt"];
