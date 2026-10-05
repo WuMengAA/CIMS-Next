@@ -120,11 +120,12 @@ for k, cp in ref["ClassPlans"].items():
           f"{'✅' if n0 == nc else '❌'}")
 
 print("\n=== 9. Subject GUID 引用完整性 ===")
+ZERO = "00000000-0000-0000-0000-000000000000"  # 36 字符：ClassIsland 的"无科目"占位
 bad = 0
 for k, cp in gen["ClassPlans"].items():
     for i, c in enumerate(cp["Classes"]):
-        sid = c.get("SubjectId") or "0" * 32
-        if sid != "0" * 32 and sid not in gen["Subjects"]:
+        sid = c.get("SubjectId") or ZERO
+        if sid != ZERO and sid not in gen["Subjects"]:
             print(f"  ❌ {cp['Name']} Classes[{i}] SubjectId 悬空: {sid}")
             bad += 1
 print(f"  悬空引用: {bad} 个  {'✅' if bad == 0 else '❌'}")
