@@ -35,7 +35,6 @@
 	import { Github, Twitter } from "$lib/components/icons/index.js";
 	import { MorphIcon } from "morphicons/svelte";
 	import { ChevronDown, ChevronUp } from "lucide";
-	import ViewSwitch from "$lib/components/view-switch.svelte";
 	// 只借 Role 类型：侧栏收到的 data.user.role 就是数据库里的角色值（根布局 load 下发），
 	// 之前这里手写成 string，害得判定函数只能靠 `as any` 硬塞，类型帮不上忙。
 	import type { Role } from "$lib/permissions.js";
@@ -493,13 +492,6 @@
 		</Sidebar.GroupContent>
 	</Sidebar.Group>
 	{/if}
-		{#if adminHref}
-			<ViewSwitch
-				current="site"
-				{adminHref}
-				class="mx-2 group-data-[collapsible=icon]:hidden"
-			/>
-		{/if}
 		<div class="flex flex-wrap items-center gap-1 px-2 pb-2">
 			{#each socials as s (s.name)}
 				<a
