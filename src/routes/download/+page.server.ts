@@ -1,13 +1,17 @@
 /**
- * /download —— 官网下载中心：教室机的被控端 + 老师机的管理端。
+ * /download —— 官网下载中心：统一资源整合面板。
  *
- * 版本信息**实时取云端公开端点**（`/api/public/ota`），页面自己不存版本号 ——
- * 发版时只改云端 ota.json 一处，这里自动跟着变（理由见 $lib/server/downloads.ts 顶部注释）。
+ * 数据源：`/api/download`（服务端聚合项目发行包 + 上传资源），页面只负责
+ * 搜索框 + 分类标签 + 结果列表 + 复制 sha256。
+ *
+ * 保留原先的「被控端 / 管理端」装机入口卡片（CATALOG 纯展示文案写死在这里，
+ * 版本号仍实时取云端 ota —— 见 $lib/server/downloads.ts）。
  */
+
 import { fetchPublished, humanSize } from "$lib/server/downloads.js";
 import type { PageServerLoad } from "./$types";
 
-/** 两个产品的"人话介绍"放在这里（这部分是纯展示文案，不是版本数据，所以写死在站点里）。 */
+/** 两个产品的"人话介绍"（纯展示文案，写死）。 */
 const CATALOG = [
 	{
 		id: "agent" as const,
@@ -37,9 +41,35 @@ const CATALOG = [
 	}
 ];
 
-export const load: PageServerLoad = async () => {
-	const products = await Promise.all(
-		CATALOG.map(async (c) => {
+/** 资源分类（与 /api/download 的 types 对齐）。 */
+const TYPES: { key: string; label: string }[] = [
+	{ key: "project", label: "项目发行" },
+	{ key: "image", label: "图片" },
+	{ key: "video", label: "视频" },
+	{ key: "doc", label: "文档" },
+	{ key: "app", label: "应用" }
+];
+
+/** 从公开下载端点拉全量（服务端聚合，避免浏览器直连云端）。 */
+async function fetchAll(): Promise<{ id: string; type: string; title: string; desc: string; url: string; size: number; date: string; sizeText: string }[]> {
+	const base = process.env.SITE_ORIGIN || "http://127.0.0.1:8090";
+	try {
+		const res = await fetch(`${base}/api/download`, { signal: AbortSignal.timeout(5000) });
+		if (!res.ok) return [];
+		const j = (await res.json()) as { ok?: boolean; items?: unknown[] };
+		return Array.isArray(j.items) ? (j.items as never[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+export const load: PageServerLoad = async ({ url }) => {
+	const q = (url.searchParams.get("q") || "").slice(0, 60);
+	const rawType = url.searchParams.get("type") || "";
+	const type = TYPES.some((t) => t.key === rawType) ? rawType : "";
+
+	const [products, allItems] = await Promise.all([
+		Promise.all(CATALOG.map(async (c) => {
 			const state = await fetchPublished(c.id);
 			return {
 				id: c.id,
@@ -55,7 +85,16 @@ export const load: PageServerLoad = async () => {
 				sizeText: state.published ? humanSize(state.latest.size) : "-",
 				error: state.published ? "" : state.error || ""
 			};
-		})
-	);
-	return { products };
+		})),
+		fetchAll()
+	]);
+
+	// 客户端继续过滤（q / type 变化不重新拉全量；数据量小，一次拉齐更顺滑）
+	return {
+		products,
+		allItems,
+		types: TYPES,
+		initialQ: q,
+		initialType: type
+	};
 };

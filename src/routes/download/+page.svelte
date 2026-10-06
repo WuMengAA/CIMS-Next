@@ -26,6 +26,17 @@
 	// 复制 sha256：让老师/管理员能自己校验包没被改过（下载页给了值就必须可复制，否则等于没给）
 	let copiedId = $state("");
 
+	// ── 全部资源面板：搜索 / 分类过滤 ──
+	let query = $state(data.initialQ || "");
+	let activeType = $state(data.initialType || "");
+	let visible = $derived.by(() => {
+		const q = query.trim().toLowerCase();
+		let list = data.allItems;
+		if (q) list = list.filter((i) => i.title.toLowerCase().includes(q) || (i.desc || "").toLowerCase().includes(q));
+		if (activeType) list = list.filter((i) => i.type === activeType);
+		return list;
+	});
+
 	async function copyText(text: string, id: string) {
 		try {
 			await navigator.clipboard.writeText(text);
@@ -156,10 +167,79 @@
 		</section>
 	{/each}
 
+	<!-- ══ 全部资源整合面板（2026-10-06）：搜索 + 分类 + 跳转下载 ══ -->
+	<section
+		use:reveal
+		class="reveal mt-2 flex flex-col gap-4 rounded-xl border border-border/60 bg-card p-6"
+		style="--reveal-delay:{data.products.length + 1}"
+	>
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<h2 class="font-heading text-xl font-semibold">全部资源</h2>
+			<span class="text-xs text-muted-foreground">{visible.length} 项</span>
+		</div>
+
+		<!-- 搜索框 -->
+		<div class="flex flex-wrap items-center gap-2">
+			<div class="relative min-w-52 flex-1">
+				<input
+					bind:value={query}
+					type="search"
+					placeholder="搜索项目、图片、视频、文档、应用…"
+					class="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus:border-primary/60"
+				/>
+			</div>
+			{#each data.types as t}
+				<button
+					type="button"
+					class:active={activeType === t.key}
+					class="rounded-full border px-3 py-1.5 text-xs transition-colors hover:border-primary/50
+						{activeType === t.key ? 'border-primary/60 bg-primary/10 font-medium text-primary' : 'border-border/60 text-muted-foreground'}"
+					onclick={() => { activeType = activeType === t.key ? "" : t.key }}
+				>
+					{t.label}
+				</button>
+			{/each}
+		</div>
+
+		<!-- 结果列表 -->
+		{#if visible.length === 0}
+			<p class="py-8 text-center text-sm text-muted-foreground">
+				{query ? `没有找到与「${query}」相关的资源` : "还没有可下载的资源"}
+			</p>
+		{:else}
+			<ul class="flex flex-col divide-y divide-border/40">
+				{#each visible as it (it.id)}
+					<li class="flex flex-wrap items-center gap-3 py-3">
+						<span class="rounded border border-border px-1.5 py-px font-mono text-[10px] text-muted-foreground">{it.type}</span>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-sm font-medium">{it.title}</p>
+							{#if it.desc}
+								<p class="truncate text-xs text-muted-foreground">{it.desc}</p>
+							{/if}
+						</div>
+						<span class="text-xs text-muted-foreground">{it.date}</span>
+						{#if it.url}
+							<a
+								href={it.url.startsWith("http") ? it.url : it.url}
+								target={it.url.startsWith("http") ? "_blank" : "_self"}
+								rel="noopener"
+								class="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2.5 py-1 text-xs transition-colors hover:border-primary/50 hover:text-primary"
+							>
+								<Download class="size-3.5" />
+								下载
+								<span class="text-muted-foreground">({it.sizeText})</span>
+							</a>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
+
 	<section
 		use:reveal
 		class="reveal flex flex-col gap-3 rounded-xl border border-border/60 bg-muted/30 p-6 text-sm"
-		style="--reveal-delay:{data.products.length + 1}"
+		style="--reveal-delay:{data.products.length + 2}"
 	>
 		<p class="font-medium">装完之后的配套服务</p>
 		<ul class="flex flex-col gap-1 text-muted-foreground">

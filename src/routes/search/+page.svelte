@@ -89,6 +89,14 @@
 					>{s.label}{data.result.bySection[s.key] ? ` · ${data.result.bySection[s.key]}` : ""}</a
 				>
 			{/each}
+			<!-- 资源分类：跳下载中心（项目发行/图片/视频/文档/应用），复用同一查询词 -->
+			<a
+				href={data.q ? `/download?q=${encodeURIComponent(data.q)}` : "/download"}
+				class="rounded-full border px-3 py-1 text-xs transition-colors {data.section === 'resources'
+					? 'border-primary/60 bg-primary/15 text-primary'
+					: 'border-border/60 text-muted-foreground hover:border-primary/40 hover:text-foreground'}"
+				>资源</a
+			>
 		</div>
 	</form>
 
