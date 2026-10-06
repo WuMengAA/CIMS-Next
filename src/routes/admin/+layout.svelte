@@ -51,16 +51,10 @@
 		// 个人附件库 / 图床的跨账号总览：占用、配额赠送、强制清理。
 		{ title: "存储空间", url: "/admin/library", icon: HardDrive, need: "manageStorage" },
 
-		// 审核：L3 审核员及以上
-		{ title: "评论审核", url: "/admin/comments", icon: MessageSquare, need: "moderate" },
-		{ title: "反馈管理", url: "/admin/feedback", icon: Flag, need: "moderate" },
-		{ title: "论坛管理", url: "/admin/forum", icon: MessagesSquare, need: "moderate" },
-		{ title: "友链申请", url: "/admin/link-applications", icon: Inbox, need: "manageContent" },
-		{ title: "项目专页申请", url: "/admin/project-applications", icon: GitPullRequestArrow, need: "moderate" },
-		{ title: "文档纠错", url: "/admin/doc-corrections", icon: FileCheck2, need: "moderate" },
-		// 权限申请：门槛用 reviewPermission（L5），与「能否真的批准」同源 ——
-		// 用 moderate 会让「能审 UGC 但不能审权限」的角色看到点了必失败的入口。
-		{ title: "权限申请", url: "/admin/role-requests", icon: ShieldPlus, need: "reviewPermission" },
+		// 审核中心（2026-10-06 合并）：8 个审核入口收敛为单个 tab 界面（/admin/moderation），
+		// 空间利用率优先 —— 评论/反馈/论坛/友链/项目/文档纠错/权限 全在一个页面里切换。
+		// 原路由保留（兼容旧链接），侧栏只留这一个入口。
+		{ title: "审核中心", url: "/admin/moderation", icon: ShieldCheck, need: "moderate" },
 
 		// 运营：L4 编辑及以上
 		{ title: "公告管理", url: "/admin/announcements", icon: Megaphone, need: "manageContent" },

@@ -14,6 +14,34 @@
   let msg = $state("");
   const api = "/api/campus/class8";
 
+  // ── 班级设备归班面板（2026-10-06 改造：班级管理 = 班级 CMS + 设备归班）──
+  // 数据源 /api/console/device-bindings：{ devices: uid→classId, classes: [{id,name}], bindings }
+  let devMap = $state<Record<string, string>>({});
+  let devClasses = $state<any[]>([]);
+  let devBindings = $state<any[]>([]);
+  let devLoaded = $state(false);
+  async function loadDevices() {
+    try {
+      const r = await fetch("/api/console/device-bindings");
+      const j = await r.json();
+      devMap = j.devices ?? {};
+      devClasses = Array.isArray(j.classes) ? j.classes : [];
+      devBindings = Array.isArray(j.bindings) ? j.bindings : [];
+      devLoaded = true;
+    } catch { devLoaded = true; }
+  }
+  const classNameOf = (cid: string) => (devClasses.find((c) => String(c.id ?? c.class_id ?? "") === String(cid))?.name) || cid || "未归班";
+  const devicesByClass = $derived.by(() => {
+    const out: Record<string, string[]> = {};
+    for (const uid of Object.keys(devMap)) {
+      const cid = devMap[uid] || "";
+      (out[cid] = out[cid] || []).push(uid);
+    }
+    return out;
+  });
+  const classIds = $derived([...Object.keys(devicesByClass)].sort());
+  const totalDevices = $derived(Object.keys(devMap).length);
+
   async function load() {
     const r = await fetch(api);
     const j = await r.json();
@@ -31,7 +59,7 @@
     } catch (e: any) { msg = "网络错误: " + String(e); } finally { busy = false; }
   }
   const del = (kind: string, id: number, label = "") => post({ op: "delete", kind, id }, label);
-  onMount(load);
+  onMount(() => { load(); loadDevices(); });
 
   // 新增行局部状态
   let nLeader = $state({ subject: "", name: "", icon: "" });
@@ -265,6 +293,30 @@
       <Button variant="outline" size="sm" onclick={load} disabled={busy}><RefreshCw class="mr-1 size-3.5 {busy ? 'animate-spin' : ''}" />刷新</Button>
     </div>
   </div>
+
+  <!-- ══ 班级设备归班（2026-10-06 改造）══ -->
+  <section class="rounded-xl border border-border/60 bg-card p-5">
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h2 class="font-heading text-lg font-semibold">班级设备归班</h2>
+      <span class="text-xs text-muted-foreground">共 {totalDevices} 台设备 · {classIds.length} 个班</span>
+    </div>
+    {#if !devLoaded}
+      <p class="text-sm text-muted-foreground">加载中…</p>
+    {:else if totalDevices === 0}
+      <p class="py-4 text-center text-sm text-muted-foreground">还没有设备归班。设备在集控控制台里归到班级后，这里会显示每班设备明细。</p>
+    {:else}
+      <div class="flex flex-col divide-y divide-border/40">
+        {#each classIds as cid (cid)}
+          <div class="flex flex-wrap items-center gap-2 py-3">
+            <Badge variant="secondary">{classNameOf(cid) || "未归班"}</Badge>
+            <span class="text-xs text-muted-foreground">{devicesByClass[cid].length} 台</span>
+            <code class="ml-auto font-mono text-[10px] text-muted-foreground">{devicesByClass[cid].join(" · ")}</code>
+          </div>
+        {/each}
+      </div>
+      <p class="mt-2 text-[11px] text-muted-foreground">归班/改班在集控控制台操作，这里只读展示。</p>
+    {/if}
+  </section>
 
   {#if !snap}
     <p class="text-sm text-muted-foreground">加载中…</p>

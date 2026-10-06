@@ -31,6 +31,8 @@ export interface OAuthClientRecord {
 	description?: string;
 	/** 密钥所在的环境变量名（仅用于播种阶段读值；之后以库里的 secret 为准） */
 	secretEnv?: string;
+	/** 直接指定的密钥；公开客户端写 PUBLIC_CLIENT_SECRET 哨兵（无密钥，靠授权码+本机回拨） */
+	secret?: string;
 	/** 精确匹配的 Web 回拨地址（比较时忽略结尾斜杠） */
 	redirectUris?: string[];
 	/** 是否允许原生应用回拨：http://127.0.0.1:<任意端口>/oauth-callback */
@@ -125,7 +127,7 @@ function readConfig(): OAuthClientRecord[] {
 }
 
 /** 播种期取密钥：环境变量优先，其次历史默认，再没有就是空串（= 未配置）。 */
-function seedSecretOf(rec: OAuthClientRecord): string {
+function seedSecretOf(rec: Pick<OAuthClientRecord, "id" | "secretEnv">): string {
 	const envName = (rec.secretEnv ?? "").trim();
 	const fromEnv = envName ? (process.env[envName] ?? "").trim() : "";
 	if (fromEnv) return fromEnv;
@@ -244,7 +246,7 @@ function allClients(): OAuthClientRecord[] {
 	seedFromConfig(db);
 	ensureBuiltinSecrets(db);
 	invalidate(); // 上一步可能改了库，缓存必须失效，否则读到的还是旧（空）密钥
-	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as ClientRow[];
+	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as unknown as ClientRow[];
 	const list = rows.map(rowToRecord);
 	cache = { stamp, list };
 	return list;
@@ -430,7 +432,7 @@ export interface OAuthClientView extends OAuthClientRecord {
 export function listClientsForAdmin(): OAuthClientView[] {
 	const db = getDb();
 	seedFromConfig(db);
-	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as ClientRow[];
+	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as unknown as ClientRow[];
 	return rows.map((r) => ({
 		...rowToRecord(r),
 		// 库里的值就是真值；留空才回落到 .env / 历史默认
