@@ -18,6 +18,8 @@
 			project: any;
 			html: string;
 			board: any | null;
+			/** 装机卡片（仅星集控项目）：被控端/管理端版本实时取云端 ota */
+			downloads?: any[] | null;
 			issues: any[];
 			stats: { open: number; closed: number; total: number };
 			hasGithubToken: boolean;
@@ -176,6 +178,35 @@
 				<p class="rounded-xl border border-dashed border-border/60 px-4 py-3 text-sm text-muted-foreground">
 					该项目尚未绑定仓库，暂无活跃度数据。
 				</p>
+			{/if}
+
+			{#if data.downloads?.length}
+				<div class="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-5">
+					<div class="flex items-center gap-2">
+						<Download class="size-4 text-primary" />
+						<h3 class="font-heading text-sm font-medium">装机包下载</h3>
+						<span class="ml-auto text-xs text-muted-foreground">版本实时取云端</span>
+					</div>
+					{#each data.downloads as d (d.key)}
+						<div class="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 pt-3">
+							<div class="min-w-0 flex-1">
+								<div class="flex items-center gap-2">
+									<span class="text-sm font-medium">{d.name}</span>
+									{#if d.published}<Badge variant="secondary">v{d.version}</Badge>
+									{:else}<Badge variant="outline">未发布</Badge>{/if}
+								</div>
+								<p class="mt-0.5 text-xs text-muted-foreground">{d.desc}</p>
+							</div>
+							{#if d.published}
+								<Button href={d.url} target="_blank" rel="noopener">
+									<Download class="size-4" />下载（{d.sizeText}）
+								</Button>
+							{:else}
+								<span class="text-xs text-amber-500">{d.error || "暂时取不到版本信息"}</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
 			{/if}
 
 			<article class="prose prose-invert max-w-none">
