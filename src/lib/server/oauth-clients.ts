@@ -47,26 +47,60 @@ export interface OAuthClientRecord {
  * 内置兜底：content/oauth-clients.json 缺失或被写坏时，至少保证桌面端仍能登录
  * （它是已发布在外的客户端，不能因为一个配置文件而整体失效）。
  */
+/**
+ * 公开客户端（public client）哨兵密钥（2026-10-06 · 被控端绑定专用）。
+ *
+ * 为什么需要它：被控端点「用星璃账号绑定」的流程是一个循环依赖——
+ * 换 token 要 `client_secret`，而这个 secret 只能靠 `/api/device/bind`（用户会话）
+ * 签发，可用户会话本身又来自 `/oauth/token` … 卡死在起点。
+ *
+ * 解法按 RFC 8252（OAuth 2.0 for Native Apps）：**桌面 loopback 客户端可以不做密钥**。
+ * 它的防护不靠 secret，而靠三件事叠加：
+ *   1. code 只在用户浏览器登录+点同意后才发（人得在场）；
+ *   2. `rec.redirectUri` 必须与授权时完全一致（code 绑定回拨地址，拿去别处用不了）；
+ *   3. 回拨只收 127.0.0.1 的 /oauth-callback（本机临时端口，别人够不着）。
+ *
+ * ⚠️ 安全边界说清楚：能拿这个 client 换 token 的人，必须**先拿到某次已授权的 code**，
+ * 而 code 上面三条都卡着。它不像 `xingjikong_native` 那样持有"自己一份密钥"，
+ * 所以也不存在"从安装包里抠出密钥就能冒充设备"的路子。
+ *
+ * 只有把 `secret` 显式写成这个哨兵的那台客户端才是公开客户端；
+ * 其它客户端（`clientSecret()` 返回正常随机/环境变量值）一律照旧严格校验，不受影响。
+ */
+export const PUBLIC_CLIENT_SECRET = "PUBLIC";
+
 const BUILTIN: OAuthClientRecord[] = [
 	{
 		id: "xingjikong_native",
 		name: "星集控桌面端",
 		description: "桌面集控端（xingjikong）请求使用你的 Stelarith 账号登录",
-		secretEnv: "OAUTH_DESKTOP_SECRET",
+		// 2026-10-06 安全修复：桌面端是 loopback 原生应用（回拨 127.0.0.1:任意端口），
+		// 密钥本是摆设（此前 fallback 到 dev-xingjikong-secret-change-me，人人可冒充）。
+		// 改公开客户端：无密钥，靠授权码 + 本机回拨 + 用户同意页保证安全（同 xjk_device_public）。
+		secret: PUBLIC_CLIENT_SECRET,
 		loopback: true,
 		scopes: ["cims", "profile"],
-		defaultScope: "cims"
+		defaultScope: "cims",
+		enabled: true
+	},
+	{
+		id: "xjk_device_public",
+		name: "星集控被控端（账号绑定）",
+		description: "被控端用星璃账号绑定时的公开客户端：不设密钥，靠授权码+本机回拨保证安全",
+		secret: PUBLIC_CLIENT_SECRET,
+		loopback: true,
+		scopes: ["cims", "profile"],
+		defaultScope: "cims",
+		enabled: true
 	}
 ];
 const BUILTIN_IDS = new Set(BUILTIN.map((c) => c.id));
 
 /**
- * 历史默认密钥：OAUTH_DESKTOP_SECRET 未配置时沿用旧值，
- * 避免已经发出去的桌面端在站长没配 env 的情况下突然登不上。
+ * 历史默认密钥：xingjikong_native 已改公开客户端（2026-10-06），不再需要 legacy 默认。
+ * 保留空映射结构，防止未来新增客户端时误回退到明文摆设。
  */
-const LEGACY_SECRET_DEFAULTS: Record<string, string> = {
-	xingjikong_native: "dev-xingjikong-secret-change-me"
-};
+const LEGACY_SECRET_DEFAULTS: Record<string, string> = {};
 
 import { CONTENT_DIR } from "./paths.js";
 
@@ -129,7 +163,10 @@ function seedFromConfig(db: ReturnType<typeof getDb>): void {
 			c.id,
 			c.name,
 			c.description ?? "",
-			seedSecretOf(c),
+			// 用 clientSecret() 而不是 seedSecretOf()：后者只看环境变量，**不认清单里
+			// 显式写的 secret 字段**——公开客户端 xjk_device_public 的哨兵值就是这么
+			// 被播种成空串的（表现：authorize 一律 client_not_configured，永远进不了同意页）。
+			clientSecret(c),
 			JSON.stringify(c.redirectUris ?? []),
 			c.loopback ? 1 : 0,
 			JSON.stringify(c.scopes ?? []),
@@ -177,6 +214,25 @@ let cache: { stamp: number; list: OAuthClientRecord[] } | null = null;
 let stamp = 0;
 
 /** 写操作完成后调一次，让下一次 allClients() 重新读库。 */
+/**
+ * 内置客户端的密钥对齐（幂等补空）。
+ *
+ * 为什么需要：`seedFromConfig` 只 INSERT 不 UPDATE。一旦某条内置客户端的密钥
+ * 被播种成空串（历史上 `seedSecretOf` 不认清单里显式写的 secret 字段就会这样），
+ * 那行"空 secret"记录会一直躺在库里，`hasSecret()` 永远为 false，
+ * 表现为 authorize 一律 `client_not_configured` —— 而且重启再怎么跑种子都不会自愈。
+ *
+ * 这里每次读清单时顺手补：只在库里为空时写入，**不覆盖**站长的任何手动改动。
+ */
+function ensureBuiltinSecrets(db: ReturnType<typeof getDb>): void {
+	const upd = db.prepare(`UPDATE oauth_clients SET secret = ? WHERE id = ? AND (secret IS NULL OR secret = '')`);
+	for (const c of readConfig()) {
+		const want = clientSecret(c);
+		if (!want) continue;
+		upd.run(want, c.id);
+	}
+}
+
 function invalidate(): void {
 	stamp += 1;
 	cache = null;
@@ -186,6 +242,8 @@ function allClients(): OAuthClientRecord[] {
 	if (cache) return cache.list;
 	const db = getDb();
 	seedFromConfig(db);
+	ensureBuiltinSecrets(db);
+	invalidate(); // 上一步可能改了库，缓存必须失效，否则读到的还是旧（空）密钥
 	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as ClientRow[];
 	const list = rows.map(rowToRecord);
 	cache = { stamp, list };
@@ -232,6 +290,14 @@ export function validateClient(clientId: string, secret: string): boolean {
 	if (!rec || rec.enabled === false) return false;
 	const expected = clientSecret(rec);
 	if (!expected) return false;
+	// 公开客户端（哨兵密钥）：允许不携带 secret 完成授权码流程。
+	// 完整理由见 PUBLIC_CLIENT_SECRET 的注释——它不是"跳过校验"，
+	// 而是把信任从「 Client 持有的密钥」换成「用户已授权 + 回拨地址唯一」。
+	if (expected === PUBLIC_CLIENT_SECRET) {
+		// 仍然要求对方**明确不带**密钥（而不是随便塞个东西过来），避免把
+		// "带错 secret" 与 "公开客户端" 两种状态混为一谈。
+		return (secret ?? "").trim() === "";
+	}
 	return safeEqual(expected, secret ?? "");
 }
 

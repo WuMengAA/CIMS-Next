@@ -23,8 +23,18 @@ import { syncUserToCims } from "$lib/server/cims-account.js";
 import { can, type Role } from "$lib/permissions.js";
 
 function clientMeta(event: RequestEvent) {
+	// 反代（Cloudflare 隧道/nginx）后 getClientAddress() 返回的是 127.0.0.1（代理 sockaddr），
+	// 真实访客公网 IP 在 X-Forwarded-For（代理链，最左是原始客户端）。活动审计/登录锁必须记真 IP。
 	let ip = "";
-	try { ip = event.getClientAddress(); } catch { /* 适配器不支持时忽略 */ }
+	try {
+		const xff = event.request.headers.get("x-forwarded-for");
+		if (xff) {
+			// 取链上最左一个非空项；逗号分隔（如 "1.2.3.4, 10.0.0.1"）
+			const first = xff.split(",")[0]?.trim();
+			if (first) ip = first;
+		}
+		if (!ip) ip = event.getClientAddress();
+	} catch { /* 适配器不支持时忽略 */ }
 	return { ip, userAgent: event.request.headers.get("user-agent") || "" };
 }
 
