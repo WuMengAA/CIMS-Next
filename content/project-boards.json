@@ -56,6 +56,32 @@
     "milestones": [],
     "releases": [
       {
+        "id": "rel-qt062-viewer",
+        "tag": "v0.6.2",
+        "name": "星集控 0.6.2 管理端（Qt）",
+        "notes": "管理端「集控」页上线：通知下发/定时任务/广播并入桌面端；课表编辑器补全（撤销全覆盖+拖拽吸附+学期起点可配置）；CSV 导入导出；托盘常驻。绿色版免安装。",
+        "file": "stelarith-viewer-portable-0.6.2.zip",
+        "url": "https://www.245959623.xyz/download",
+        "size": 128125234,
+        "createdAt": "2026-10-06T11:00:00+08:00",
+        "downloads": 0,
+        "prerelease": false,
+        "source": "local"
+      },
+      {
+        "id": "rel-qt064-agent",
+        "tag": "v0.6.4",
+        "name": "星集控 0.6.4 被控端（Qt）",
+        "notes": "OOBE 新增「用星璃账号绑定」；OAuth 公开客户端 + 设备票鉴权（HMAC 签名/30 天/指纹绑定）；支持 OTA 自更新。",
+        "file": "stelarith-agent-portable-0.6.4.zip",
+        "url": "https://www.245959623.xyz/download",
+        "size": 100693367,
+        "createdAt": "2026-10-06T10:47:16+08:00",
+        "downloads": 0,
+        "prerelease": false,
+        "source": "local"
+      },
+      {
         "id": "rel-103",
         "tag": "v1.0.3",
         "name": "星集控 1.0.3",
