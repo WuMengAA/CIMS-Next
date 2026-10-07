@@ -29,7 +29,8 @@
 		Music,
 		CalendarDays,
 		ArrowLeftRight,
-		Smartphone
+		Smartphone,
+		Wrench
 	} from "@lucide/svelte";
 	import type { PageData } from "./$types";
 
@@ -248,6 +249,18 @@
 				desc: "设备列表 / 软件 / 日志聚合",
 				href: "/admin/console/manage",
 				icon: MonitorCog,
+				need: true,
+				needLabel: "",
+				group: "设备"
+			},
+			{
+				// 2026-10-08 设备报修台账。真源在云端 repairs.json（cloud-ws a5266cf），
+				// 不是站点本地存 —— 否则老师和被控端报的同一件事会出现两套账。
+				// 生产副本可能还没同步 a5266cf，页内会显示「通道未启用」而不是白屏。
+				title: "设备报修",
+				desc: "故障工单台账 · 建单 / 流转 / 备注",
+				href: "/admin/console/repairs",
+				icon: Wrench,
 				need: true,
 				needLabel: "",
 				group: "设备"
