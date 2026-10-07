@@ -2,7 +2,7 @@
  * 控制轴 · 报修单详情 / 改状态 / 删除（`/api/console/control/repairs/[id]`）
  *
  *   GET    — 单条报修单（需设备管理档）
- *   PATCH  — 改状态 + 备注（需设备管理档）
+ *   PATCH  — 改状态 / 写备注（需设备管理档）—— 两者都可选，至少改一项
  *   DELETE — 删除报修单（需设备管理档）
  *
  * 列表 / 建档走 `../repairs/+server.ts`。
@@ -95,10 +95,20 @@ export async function PATCH(event: RequestEvent) {
 	const body = await readControlBody(event);
 	const status = String(body.status ?? "").trim();
 	const note = String(body.note ?? "").trim();
+	const hasStatus = status !== "";
+	const hasNote = note !== "" || body.note !== undefined;
+
+	// PATCH 契约与云端 updateRepair 对齐（repairs.js）：status 与 note 都可选，只校验出现的那项。
+	// ⚠️ 不能强制 status —— UI 把「改状态」和「写备注」做成两个独立动作，saveNote 只发 {note}；
+	// 一旦把 status 当必填，保存备注会全部 400「状态只能是…」。那是一次 e2e 漏网的真 bug：
+	// 测试里 PATCH 总是同时带 status 和 note，没单独验过纯备注路径。
+	if (!hasStatus && !hasNote) {
+		return json({ ok: false, error: "请提供状态或备注（至少一项）" }, { status: 400 });
+	}
 	// 枚举必须与云端 repairs.js 一致（open|processing|fixed|closed）。
 	// ⚠️ 400 响应不能带 enabled:false —— 那是「通道未启用」的降级信号，
 	// 页面看到它会把横幅切到「云端未同步」，把用户的输入错误谎报成平台故障。
-	if (!["open", "processing", "fixed", "closed"].includes(status)) {
+	if (hasStatus && !["open", "processing", "fixed", "closed"].includes(status)) {
 		return json({ ok: false, error: "状态只能是 open / processing / fixed / closed" }, { status: 400 });
 	}
 	if (note.length > 500) {
@@ -107,7 +117,7 @@ export async function PATCH(event: RequestEvent) {
 
 	const res = await cloudRepair(id, {
 		method: "PATCH",
-		body: JSON.stringify({ status, ...(note ? { note } : {}) })
+		body: JSON.stringify({ ...(hasStatus ? { status } : {}), ...(hasNote ? { note } : {}) })
 	});
 	if (!res) return json(UNREACHABLE, { status: 503 });
 	if (res.status === 404 && cloudEndpointMissing(res.body)) return json(NOT_FOUND_HINT, { status: 503 });
