@@ -156,7 +156,15 @@ export async function POST(event: RequestEvent) {
 			? (rawPresets as unknown[]).map((s) => String(s).trim()).filter(Boolean).slice(0, 6)
 			: [];
 		if (presets.length) flags.reply_presets = presets;
-		if (pick("emergency_confirm") === true) flags.emergency_confirm = true;
+		// 2026-10-07 对齐 Qt 被控端：被控端（stelarith-control-qt · notifyFromParams）
+		// 读 flags.confirm（需确认）与 flags.replies（快捷回复话术）；旧名 reply_presets /
+		// emergency_confirm 保留给旧被控端与存档案，避免字段名不一致的"假绿"（发了界面
+		// 报成功、教室端实际不显示确认按钮/快捷回复）。
+		if (presets.length) flags.replies = presets;
+		if (pick("emergency_confirm") === true) {
+			flags.emergency_confirm = true;
+			flags.confirm = true;
+		}
 	}
 	if (typed === "popup" || typed === "fullscreen") {
 		// 语音播报：会出声的能力，同样只走白名单、严格判定 true。

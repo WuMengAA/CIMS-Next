@@ -32,6 +32,8 @@
 	let ntType = $state("");
 	let ntSeverity = $state("remind"); // 全屏严重度：remind/inform/urgent（仅存档标记）
 	let tts = $state(false); // 语音播报（服务端白名单 → flags.speech，被控端 SAPI 朗读）
+	let ntConfirm = $state(false); // 弹窗需确认（popup：被控端显示「确认」按钮）
+	let ntReplies = $state(""); // 快捷回复话术（逗号分隔，popup：被控端显示为按钮行）
 	let classes = $state<{ class_id: string; name: string; device_count: number }[]>([]);
 	let picked = $state<string[]>([]);
 	let notices = $state<Notice[]>([]);
@@ -82,6 +84,14 @@
 			// 时长改由 body.duration_seconds → params.seconds 承载（Qt 认），这里不再重复发。
 			if (tts) flags.tts = true; // 服务端白名单映射为 flags.speech 下发
 			if (ntType === "fullscreen" && ntSeverity) flags.severity = ntSeverity;
+			// 弹窗确认 + 快捷回复（2026-10-07 补 UI）：popup 语义 = 需确认/可回复。
+			// 服务端把 reply_presets → flags.replies、emergency_confirm → flags.confirm，
+			// 对齐被控端 notifyFromParams（旧字段 reply_presets/emergency_confirm 同时保留）。
+			if (ntType === "popup" && ntConfirm) {
+				flags.emergency_confirm = true;
+				const reps = ntReplies.split(",").map((s: string) => s.trim()).filter(Boolean).slice(0, 6);
+				if (reps.length) flags.reply_presets = reps;
+			}
 			const body: Record<string, unknown> = { title: title.trim(), content: content.trim(), scope, broadcast: true };
 			if (scope === "本班" && picked.length) body.classes = picked;
 			if (ntType) body.type = ntType;
@@ -97,7 +107,7 @@
 			else if (b && (b.delivered ?? 0) > 0) toast.success(`已下发到 ${b.delivered} 台设备（是否收到看「指令回执」）`);
 			else if (b?.error) toast.warning(`已留痕，但未下发成功：${b.error}`);
 			else toast.success("已发布");
-			title = ""; content = ""; tts = false; ntType = "";
+			title = ""; content = ""; tts = false; ntType = ""; ntConfirm = false; ntReplies = "";
 			const nRes = await fetch("/api/console/control/notices");
 			notices = Array.isArray(await nRes.json()) ? (await (await fetch("/api/console/control/notices")).json()).map(norm) : [];
 		} catch (e) {
@@ -144,6 +154,7 @@
 					<select id="nt-type" bind:value={ntType} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
 						<option value="">普通通知</option>
 						<option value="island">弹幕 · 顶部滚动（时长自动适配）</option>
+						{#if data.role === "admin" || data.role === "owner" || data.role === "homeroom"}<option value="popup">弹窗 · 需确认/可回复</option>{/if}
 						{#if data.role === "admin" || data.role === "owner" || data.role === "homeroom"}<option value="fullscreen">全屏 · 三档严重度</option>{/if}
 					</select>
 				</div>
@@ -158,7 +169,10 @@
 			</div>
 			{#if ntType === "fullscreen"}
 				<div class="grid gap-1.5">
-					<Label for="nt-sev">严重度（存档标记，被控端未读此字段）</Label>
+					<!-- 2026-10-06 改文案：这条说明是错的。站点 /api/console/control/notices 会真的把
+					     flags.severity 写进下发帧，被控端 main.cpp::notifyFromParams 也真的读它决定全屏配色
+					     （未知值回落 remind，不把任意串插进样式）。所以它不是一个只进存档的死字段。 -->
+					<Label for="nt-sev">严重度（随通知下发，决定全屏配色；未知值回落 remind）</Label>
 					<select id="nt-sev" bind:value={ntSeverity} class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring">
 						<option value="remind">提醒（remind）</option>
 						<option value="inform">通知（inform）</option>
@@ -171,7 +185,19 @@
 					<input type="checkbox" class="accent-primary" bind:checked={tts} />
 					<span>语音播报（教室大屏会念出来，慎用）</span>
 				</label>
+				{#if ntType === "popup"}
+					<label class="flex cursor-pointer items-center gap-2 text-sm">
+						<input type="checkbox" class="accent-primary" bind:checked={ntConfirm} />
+						<span>需确认（教室端弹「确认」按钮 + 快捷回复）</span>
+					</label>
+				{/if}
 			</div>
+			{#if ntType === "popup" && ntConfirm}
+				<div class="grid gap-1.5">
+					<Label for="nt-replies">快捷回复话术（逗号分隔，如：收到,好的,稍后处理；最多 6 条）</Label>
+					<input id="nt-replies" type="text" bind:value={ntReplies} placeholder="收到,好的,稍后处理" class="h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm" />
+				</div>
+			{/if}
 			<div class="grid gap-1.5">
 				<Label>目标班级（选填，默认范围决定）</Label>
 				{#if classErr}
