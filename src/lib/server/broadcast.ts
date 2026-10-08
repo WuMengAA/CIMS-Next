@@ -67,6 +67,11 @@ function dedupeKey(title: string, content: string, classes: string[]): string {
 /**
  * 云端 HTTP 基址（2026-10-04 · 乙阶段：广播投递改走云端，不再经 CIMS）。
  * 从 PUBLIC_CLOUD_WS_URL（ws://host:8788）推导：ws → http，其余不变。
+ * ⚠️ 2026-10-08 修复：原来只做 ws→http 替换、**保留路径**。而 PUBLIC_CLOUD_WS_URL
+ * 配的是 `wss://host/ws/agent`（WebSocket 握手路径），于是所有 `${base}/api/...`
+ * 调用拼成 `/ws/agent/api/...`，实测返回 404 —— 设备在线状态、全校广播、回执对账、
+ * 定时广播调度全部静默失效（调度器还把 404 当成功标已执行，假成功）。
+ * 现在剥掉路径只留 origin（协议+主机+端口）：HTTP API 挂根路径，/ws/agent 只属于 WS 握手。
  * 云端 HTTP 端口同 WS 端口（8788），站点与云端同机（127.0.0.1）。
  * ⚠️ PUBLIC_ 前缀变量属于 $env/dynamic/public（SvelteKit 会把 PUBLIC_ 从
  * private_env 里剔除）——所以这里必须用 publicEnv 读，用 privateEnv 读永远是 undefined。
@@ -74,7 +79,17 @@ function dedupeKey(title: string, content: string, classes: string[]): string {
 export function cloudHttpBase(): string | null {
 	const ws = (publicEnv.PUBLIC_CLOUD_WS_URL ?? "").trim();
 	if (!ws) return null;
-	return ws.replace(/^ws:\/\//i, "http://").replace(/^wss:\/\//i, "https://").replace(/\/$/, "");
+	try {
+		const u = new URL(ws);
+		u.protocol = u.protocol === "wss:" ? "https:" : "http:";
+		u.pathname = "/";
+		u.search = "";
+		u.hash = "";
+		return u.toString().replace(/\/$/, "");
+	} catch {
+		// 非法 URL 兜底：至少换协议，不抛
+		return ws.replace(/^ws:\/\//i, "http://").replace(/^wss:\/\//i, "https://").replace(/\/$/, "");
+	}
 }
 
 /** 云端 HTTP 管理面 Bearer 令牌（与云端 .env 的 CLOUD_VIEWER_TOKEN 同值，2026-10-04 鉴权）。 */
