@@ -19,6 +19,7 @@ import { json } from "@sveltejs/kit";
 import type { RequestEvent } from "@sveltejs/kit";
 import { consumeActivationCode } from "$lib/server/console-ext.js";
 import { recordDeviceBinding } from "$lib/server/device-bindings.js";
+import { getStelarithClass } from "$lib/server/stelarith/classes.js";
 import { deviceSecretOf, deviceSecretOk, deviceForbidden } from "$lib/server/guard-device.js";
 
 export async function POST(event: RequestEvent) {
@@ -52,5 +53,12 @@ export async function POST(event: RequestEvent) {
 	// 这一步此前缺失：码上只写了 usedBy，机器归了哪个班查不到、不可审计。
 	// fail-soft：登记失败不阻断接入（recordDeviceBinding 内部吞异常）。
 	recordDeviceBinding({ uid, classId: item.classId, className: item.className, boundBy: "activation-code" });
-	return json({ ok: true, classId: item.classId, className: item.className, uid });
+	// 2026-10-09：回喂**权威班级码**给被控端 —— 它随后 register 时带给云端做班级索引的**键**。
+	//   ⚠️ 班级表的 `code` 列存的是**中文名**（如 "1班"），不合云端 `^[A-Za-z0-9_-]{6,16}$`，
+	//      所以键取**真源 class_id**（"class_01"，8–12 位、恰好合规）。若哪天 `code` 被
+	//      改成合规 ASCII，这里会自动优先用它（不必再改一次）。
+	const cls = getStelarithClass(item.classId);
+	const rawCode = String(cls?.code ?? "").trim();
+	const classCode = /^[A-Za-z0-9_-]{6,16}$/.test(rawCode) ? rawCode : item.classId;
+	return json({ ok: true, classId: item.classId, className: item.className, classCode, uid });
 }
