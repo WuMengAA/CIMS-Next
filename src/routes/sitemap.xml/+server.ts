@@ -19,7 +19,8 @@ const STATIC_PATHS = [
 	"/forum",
 	"/tools",
 	"/tools/cover-generator",
-	"/voicehub"
+	"/voicehub",
+	"/voicehub/help"
 ];
 
 const DETAIL_SECTIONS = [
@@ -60,19 +61,25 @@ function urlTag(loc: string, lastmod?: string, priority?: string): string {
 }
 
 export const GET: RequestHandler = async () => {
-	const base = getSiteUrl().replace(/\/$/, "");
+	const siteBase = getSiteUrl().replace(/\/$/, "");
 	const today = new Date().toISOString().slice(0, 10);
 	const entries: string[] = [];
 
+	// voicehub 区块的 SEO 首选域名由用户指定为 voicehub.245959623.xyz，
+	// 与校站主域名 www 区分，避免多域名重复收录 / 规范地址冲突。
+	const VOICEHUB_SEO_BASE = "https://voicehub.245959623.xyz";
+	const voicehubPaths = new Set(["/voicehub", "/voicehub/help"]);
+	const baseFor = (p: string) => (voicehubPaths.has(p) ? VOICEHUB_SEO_BASE : siteBase);
+
 	for (const p of STATIC_PATHS) {
-		entries.push(urlTag(base + p, today, p === "/" ? "1.0" : "0.6"));
+		entries.push(urlTag(baseFor(p) + p, today, p === "/" ? "1.0" : "0.6"));
 	}
 
 	for (const { section, prefix } of DETAIL_SECTIONS) {
 		for (const item of listItems(section)) {
 			if (item.status !== "published") continue;
 			const lastmod = fmtDate(item.updated) || fmtDate(item.date);
-			entries.push(urlTag(base + prefix + item.slug, lastmod, "0.8"));
+			entries.push(urlTag(siteBase + prefix + item.slug, lastmod, "0.8"));
 		}
 	}
 

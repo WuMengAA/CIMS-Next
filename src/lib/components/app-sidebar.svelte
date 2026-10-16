@@ -103,6 +103,7 @@
 		{ title: "连接", url: "/links", icon: "links" },
 		{ title: "订阅", url: "/subscribe", icon: "rss" },
 		{ title: "旧站归档", url: "/archives", icon: "archives" },
+		{ title: "点歌帮助", url: "/voicehub/help", icon: "docs" },
 		{ title: "反馈", url: "/feedback", icon: "feedback" }
 	];
 	const defaultBottom = [
