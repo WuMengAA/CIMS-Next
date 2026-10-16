@@ -18,4 +18,3 @@ Disallow: /novels
 Disallow: /create
 
 Sitemap: https://www.245959623.xyz/sitemap.xml
-Sitemap: https://voicehub.245959623.xyz/sitemap.xml

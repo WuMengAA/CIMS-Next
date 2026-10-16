@@ -19,9 +19,10 @@ const STATIC_PATHS = [
 	"/feedback",
 	"/forum",
 	"/tools",
-	"/tools/cover-generator",
-	"/voicehub",
-	"/voicehub/help"
+	"/tools/cover-generator"
+	// ⚠️ /voicehub 与 /voicehub/help 刻意不入 sitemap：这两个路由已改为 301 跳转到
+	// voicehub.245959623.xyz（内容归正式域名，www 不再承载）。sitemap 里 advertised
+	// 会跳转的 URL 是坏实践 —— 搜索引擎跟过去只拿到跳转，浪费抓取配额还可能报软 404。
 ];
 
 const DETAIL_SECTIONS = [
