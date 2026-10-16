@@ -1,6 +1,8 @@
 /// 星集控 · 独立桌面集控端入口
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,11 +13,25 @@ import 'core/log.dart';
 import 'core/settings.dart';
 import 'core/tray.dart';
 import 'core/update_check.dart';
+import 'features/history/history_window.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // 日志落盘：被控机器无人值守，出问题时只有这个文件能拿到现场
   FileLog.init();
+
+  // 独立历史消息窗口入口：`xingjikong.exe --history` 启动为只读的
+  // 悬浮历史侧栏（屏幕右侧独立窗口，可置顶/贴边/缩放），主窗口的「历史」抽屉
+  // 用它拉起新实例。历史数据与本窗口同读本机 notice_history.json 文件，
+  // 无需跨进程同步。
+  final isHistoryWindow =
+      Platform.executableArguments.any((a) => a.toLowerCase() == '--history');
+  if (isHistoryWindow) {
+    Log.i('===== 星集控独立历史窗口启动 =====', 'history');
+    await runHistoryWindow();
+    return;
+  }
+
   Log.i('===== 星集控桌面端启动 =====', 'app');
 
   // 桌面外壳先建壳、后接容器：它自己要读容器里的设置与引擎，

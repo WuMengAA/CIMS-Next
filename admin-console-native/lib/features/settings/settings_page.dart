@@ -7,6 +7,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/settings.dart';
 import '../../core/update_action.dart';
@@ -414,6 +415,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     isThreeLine: true,
                   ),
                   const SizedBox(height: 10),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.tune),
+                    title: const Text('监控参数'),
+                    subtitle: const Text('截图质量/远控编码/码率（网页配置页）'),
+                    trailing: const Icon(Icons.open_in_new, size: 18),
+                    onTap: () => _openMonitorPage(context),
+                  ),
+                  const SizedBox(height: 10),
                   const _UpdateCard(),
                 ],
               ),
@@ -423,11 +433,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       ),
     );
   }
+
+  /// 打开网页监控参数页（与网页 NAV 的 /admin/console/monitor 对齐）。
+  Future<void> _openMonitorPage(BuildContext context) async {
+    final s = ref.read(settingsProvider);
+    final host = (s.siteHost.isNotEmpty ? s.siteHost : "http://127.0.0.1:8090").replaceAll(RegExp(r"/+$"), "");
+    final url = '$host/admin/console/monitor';
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (e) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("无法打开网页配置页: ${e.toString()}")));
+    }
+  }
 }
 
-/// 关于页的「自动更新」卡片（票 #245）：显示当前状态 + 可手动检查 + 可改更新源。
-///
-/// 状态三种：有更新 / 已是最新 / 暂时无法检查（接口没部署或网络不通，不报错、不假成功）。
 class _UpdateCard extends ConsumerStatefulWidget {
   const _UpdateCard();
 

@@ -165,11 +165,52 @@ class AgentNotice {
   /// 所有通知都置顶会变成"这软件老弹出来"的反感源。
   final bool urgent;
 
+  /// 呈现类型（与服务端 `type` 对齐）：
+  ///   · `plain`        —— 本机产生的确认（已截图/已收文件），普通横幅；
+  ///   · `island`       —— 课表岛内的普通通知，滚动循环即可视为已读；
+  ///   · `popup`        —— 弹窗通知，需老师点确认（emergency_confirm 时更强调）；
+  ///   · `fullscreen`   —— 全屏紧急通知，必须覆盖整块屏幕、手动关掉。
+  ///
+  /// 为什么类型必须带在对象上而不是只靠 [urgent]：界面要按类型决定"是盖满屏、
+  /// 是要给回复按钮、要不要语音朗读"。只给一个布尔量，界面就得猜 ——
+  /// 猜错的表现是老师压根没看见那通知。
+  final String kind;
+
+  /// 服务端通知 id。0 表示这条是本机自己产生的，**不上报回执**
+  /// （本机确认类的回执没有"操控端"在等它）。
+  final int noticeId;
+
+  /// 预设回复短语（老师点一下就能回）。来自 flags.reply_presets，最多 6 条。
+  final List<String> presets;
+
+  /// 需要老师点「确认收到」按钮才算送达（popup 默认要）。
+  final bool requiresConfirm;
+
+  /// 紧急：文案里要给出明确警示（⚠️ 紧急）。
+  final bool emergency;
+
+  /// 需要老师**回复**（文字或预设短语），回复会回传操控端。
+  final bool replyable;
+
+  /// 是否需要本机用系统语音朗读一遍（TTS）。仅 `island`/`popup` 生效。
+  final bool tts;
+
+  /// 全屏通知自动关闭秒数（0 = 必须手动关）。
+  final int autoDismissSeconds;
+
   const AgentNotice({
     required this.title,
     required this.body,
     required this.at,
     this.urgent = true,
+    this.kind = 'plain',
+    this.noticeId = 0,
+    this.presets = const <String>[],
+    this.requiresConfirm = false,
+    this.emergency = false,
+    this.replyable = false,
+    this.tts = false,
+    this.autoDismissSeconds = 0,
   });
 
   /// 界面上显示的主文本：标题和正文重复时只留一份。
@@ -502,6 +543,23 @@ class DeviceAgent {
         ? '，但未配置设备密钥（设置→设备上报密钥），监控端看不到本图'
         : (uploaded ? '，已回传集控端' : '（回传失败：$upload）');
     await _notify('星集控 · 已截图', '保存到 ${r.path}$suffix');
+    // 完成上报：面板的「执行回执」页要靠它显示"这张图到底传到哪了"。
+    // upload_note 带上未配置密钥 / 回传失败的原因 —— 只有成败色块的话，
+    // 老师在面板里等图等到天黑也不知道是密钥没配还是网络断了。
+    final shotDetail = upload == null
+        ? '未配置设备密钥，图未回传（本机已保存）'
+        : (uploaded ? '图已回传集控端' : '回传失败：$upload');
+    unawaited(reportCompletion(
+      event: 'screenshot',
+      ok: uploaded,
+      detail: shotDetail,
+      extra: {
+        'path': r.path,
+        'uploaded': uploaded,
+        'upload_note': upload ?? '未配置设备密钥',
+        'bytes': r.detail,
+      },
+    ));
     return ActionResult.yes('截图已保存：${r.path}$suffix');
   }
 
@@ -634,6 +692,18 @@ class DeviceAgent {
     // ④ 本机提示 + 回执
     final title = kind == 'voice' ? '星集控 · 收到语音' : '星集控 · 收到文件';
     await _notify(title, '${kind == "voice" ? "正在播放" : "已保存"}：${dest.path}$played');
+    unawaited(reportCompletion(
+      event: 'file_receive',
+      ok: true,
+      detail: '${kind == "voice" ? "语音" : "文件"}已保存到 ${dest.path}（${bytes.length} 字节）$played',
+      extra: {
+        'path': dest.path,
+        'bytes': bytes.length,
+        'kind': kind,
+        'name': safeName,
+        'played': kind == 'voice' && played.isEmpty,
+      },
+    ));
     return ActionResult.yes(
         '${kind == "voice" ? "语音已接收" : "文件已接收"}：${dest.path}（${bytes.length} 字节）$played');
   }
@@ -657,7 +727,7 @@ class DeviceAgent {
     if (nid <= 0) return ActionResult.no('类型化通知缺少 notice_id');
     final kind = (p['__kind'] ?? 'island').toString();
     final title = (p['title'] ?? '集控通知').toString().trim();
-    final body = (p['content'] ?? '').toString().trim();
+    final body = (p['content'] ?? p['body'] ?? '').toString().trim();
     final flagsRaw = p['flags'];
     final flags = flagsRaw is Map ? flagsRaw : <dynamic, dynamic>{};
     final presetsRaw = flags['reply_presets'];
@@ -672,8 +742,23 @@ class DeviceAgent {
       if (kind == 'fullscreen' && ads > 0) '（$ads 秒后自动关闭）',
     ];
     final urgent = kind == 'popup' || kind == 'fullscreen';
-    await _notify(title, lines.join('\n'), urgent: urgent);
+    final isEmergency = flags['emergency_confirm'] == true;
+    final needConfirm = kind == 'popup' || isEmergency;
+    await _notify(
+      title,
+      lines.join('\n'),
+      urgent: urgent,
+      kind: kind,
+      noticeId: nid,
+      presets: presets,
+      requiresConfirm: needConfirm,
+      emergency: isEmergency,
+      replyable: kind == 'popup' && presets.isNotEmpty,
+      tts: flags['tts'] == true || flags['voice'] == true,
+      autoDismissSeconds: kind == 'fullscreen' ? ads : 0,
+    );
     // 回执（异步，不阻塞指令循环）
+    // popup 只报 received（人还没点确认）；等界面收到「确认收到」再补 read。
     unawaited(_ackNotice(nid, kind == 'popup' ? 'received' : 'read'));
     if (kind == 'fullscreen' && ads > 0) {
       unawaited(() async {
@@ -682,6 +767,21 @@ class DeviceAgent {
       }());
     }
     Log.i('类型化通知 #$nid（$kind）已呈现，回执=${kind == "popup" ? "received" : "read"}', 'agent');
+    // 完成上报：操控端要能看见"这条通知**确实弹到了老师眼前**"，
+    // 而不是只看到一条"已下发"。界面关掉时还会再补一条 read 回执。
+    unawaited(reportCompletion(
+      event: 'notice_shown',
+      ok: true,
+      detail: kind == 'popup'
+          ? (isEmergency ? '已弹窗（紧急，等待确认）' : '已弹窗（等待确认）')
+          : '已呈现（$kind）',
+      extra: {
+        'notice_id': nid,
+        'kind': kind,
+        'needs_confirm': needConfirm,
+        'replyable': kind == 'popup' && presets.isNotEmpty,
+      },
+    ));
     return ActionResult.yes(
         kind == 'popup' ? '已送达弹窗（等待确认）' : '通知已呈现（$kind）');
   }
@@ -713,6 +813,111 @@ class DeviceAgent {
       }
     } catch (e) {
       Log.w('类型化通知 #$noticeId 回执失败：$e', 'agent');
+    }
+  }
+
+  /// 界面回执：老师点了「确认收到」/ 关掉了全屏 → 补一条 `read`。
+  ///
+  /// 只把「弹出来了」当送达是不够的：面板要能区分"人看到了"和"机器收到了"，
+  /// 否则紧急通知的确认率永远是 0，真出事时无从追溯。
+  Future<void> confirmNotice(int noticeId) async {
+    if (noticeId <= 0) return;
+    await _ackNotice(noticeId, 'read');
+  }
+
+  /// 老师点预设回复 / 发出自定义回复 → 回传操控端（双向传递的另一半）。
+  ///
+  /// 没有这一半，回复就只是"老师在自己机器上点了一下"，操控端永远看不到，
+  /// 老师也会认定"这功能坏了"。失败只记日志，绝不因此再弹一次窗打扰老师。
+  Future<bool> replyNotice(int noticeId, String text) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    final body = text.trim();
+    if (noticeId <= 0 || body.isEmpty) return false;
+    if (secret.isEmpty || uid.isEmpty) {
+      Log.w('回复未发出：本机未配置设备密钥（设置→设备上报密钥）', 'agent');
+      return false;
+    }
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request(
+        'POST',
+        Uri.parse('$base/api/console/ext/notice-reply'),
+      )
+        ..headers['Content-Type'] = 'application/json'
+        ..headers['x-stelarith-device-secret'] = secret
+        ..body = jsonEncode({
+          'notice_id': noticeId,
+          'uid': uid,
+          'text': body.length > 500 ? body.substring(0, 500) : body,
+        });
+      final streamed =
+          await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode >= 400) {
+        Log.w('回复上报失败（HTTP ${res.statusCode}）', 'agent');
+        return false;
+      }
+      Log.i('已回复通知 #$noticeId：$body', 'agent');
+      await reportCompletion(
+        event: 'notice_reply',
+        ok: true,
+        detail: body,
+        extra: {'notice_id': noticeId},
+      );
+      return true;
+    } catch (e) {
+      Log.w('回复上报失败：$e', 'agent');
+      return false;
+    }
+  }
+
+  /// 被控端「操作完成」上报 —— 面板的「执行回执」页靠它。
+  ///
+  /// 与 command/ack 的区别：ack 回答的是"这条指令收到了、结果如何"，
+  /// 而这里回答的是"这个动作**做完之后**留下了什么"（截图存到哪、文件落在哪、
+  /// 语音播了没）。没有它，面板只有成败两个色块，看不到老师那台机器到底发生了什么。
+  ///
+  /// 失败一律只记日志 —— 上报失败不该让本机动作回滚，也不该弹窗打扰。
+  Future<void> reportCompletion({
+    required String event,
+    required bool ok,
+    required String detail,
+    Map<String, dynamic> extra = const <String, dynamic>{},
+  }) async {
+    final s = _read();
+    final secret = s.deviceSecret.trim();
+    final uid = s.deviceUid.trim();
+    if (secret.isEmpty || uid.isEmpty) return;
+    try {
+      final base = s.siteHost.endsWith('/')
+          ? s.siteHost.substring(0, s.siteHost.length - 1)
+          : s.siteHost;
+      final req = http.Request('POST', Uri.parse('$base/api/console/ext/events'))
+        ..headers['Content-Type'] = 'application/json'
+        ..headers['x-stelarith-device-secret'] = secret
+        ..body = jsonEncode({
+          'uid': uid,
+          'event': event,
+          'ok': ok,
+          'detail': detail.length > 400 ? '${detail.substring(0, 400)}…' : detail,
+          'extra': extra,
+          'at': DateTime.now().toIso8601String(),
+        });
+      final streamed =
+          await _client.send(req).timeout(const Duration(seconds: 8));
+      final res = await http.Response.fromStream(streamed)
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode >= 400) {
+        // 常见原因是端点还没部署（旧站点）→ 只记 warning，别刷屏。
+        Log.w('完成上报失败（HTTP ${res.statusCode}）：$event', 'agent');
+      }
+    } catch (e) {
+      Log.w('完成上报失败：$e', 'agent');
     }
   }
 
@@ -828,8 +1033,23 @@ class DeviceAgent {
     return ActionResult.yes('音量已设为 $v%${muted ? "（静音）" : ""}');
   }
 
-  Future<ActionResult> _notify(String title, String body,
-      {bool urgent = false}) async {
+  /// 投递一条通知给界面。
+  ///
+  /// [kind] 决定界面怎么呈现（见 [AgentNotice.kind]）；[noticeId] > 0 时界面
+  /// 会在关闭时自动回执（read / received），0 表示纯本机提示不需回执。
+  Future<ActionResult> _notify(
+    String title,
+    String body, {
+    bool urgent = false,
+    String kind = 'plain',
+    int noticeId = 0,
+    List<String> presets = const <String>[],
+    bool requiresConfirm = false,
+    bool emergency = false,
+    bool replyable = false,
+    bool tts = false,
+    int autoDismissSeconds = 0,
+  }) async {
     // ⓪ 静默（不弹任何窗口，只记日志）：设置里关了通知弹窗（agentNotifyQuiet），
     //    或处于演练模式（dryRun——装样子不打扰）。教室里要展示公告时把开关打开。
     //    ⚠️ 用户 2026-09-25 明令：「agent 弹窗不要弹出来，弹出最小化也不行」——
@@ -853,6 +1073,14 @@ class DeviceAgent {
         body: body,
         at: DateTime.now(),
         urgent: urgent,
+        kind: kind,
+        noticeId: noticeId,
+        presets: presets,
+        requiresConfirm: requiresConfirm,
+        emergency: emergency,
+        replyable: replyable,
+        tts: tts,
+        autoDismissSeconds: autoDismissSeconds,
       );
       Log.i('已投递通知到界面（第 $_noticeSeq 条${urgent ? "" : "，非急"}）：${_clip(body)}',
           'agent');
@@ -1156,10 +1384,13 @@ class DeviceAgent {
         if (t is Map) {
           final action = (t['action'] ?? '').toString();
           if (action.isNotEmpty) {
-            final p = t['params'];
+            // 载荷字段命名对齐：网站 broadcast 与桌面端 sendTask 都用 `payload`，
+            // 旧版/内部格式用 `params`。两头都得认，否则桌面端收到自己/网站下发的
+            // 类型化任务时 payload 解析成空 → 弹窗报"缺少 notice_id"。
+            final rawP = t['payload'] ?? t['params'];
             return StelarithTask(
               action: action,
-              params: p is Map ? Map<String, dynamic>.from(p) : const {},
+              params: rawP is Map ? Map<String, dynamic>.from(rawP) : const {},
               scope: (t['scope'] ?? 'device').toString(),
             );
           }
@@ -1195,15 +1426,41 @@ class DeviceAgent {
       return null;
     }
     if (node is Map) {
-      // 官方 SendNotification 信封：MessageMask 是**标题**，MessageContent 是正文。
-      // 之前只找 content 系字段，而面板广播/通知带的就是这张信封、且 MessageContent
-      // 常是空串 → 取不到 → 退回 payload 原文 → 桌面弹窗里显示的是一坨 JSON。
-      // 所以这里必须**优先**取 MessageMask，而不是把它当成"又一个候选字段"。
+      // ① stelarith_task 信封（弹窗/全屏等结构化指令）：**不能**把 JSON 当通知文本显示。
+      //    payload 里带干净的 title/content 时取它们；没有则取信封里的 title/body 字段。
+      final st = node['stelarith_task'];
+      if (st is Map) {
+        final pl = st['payload'];
+        if (pl is Map) {
+          final title = (pl['title'] ?? '').toString().trim();
+          final content = (pl['content'] ?? '').toString().trim();
+          if (title.isNotEmpty || content.isNotEmpty) {
+            if (title.isNotEmpty && content.isNotEmpty) {
+              return title + '\n' + content;
+            }
+            return title.isNotEmpty ? title : content;
+          }
+        }
+        // 任务自身带 title/body（CIMS 直发形态）
+        final tt = (st['title'] ?? '').toString().trim();
+        final bb = (st['body'] ?? '').toString().trim();
+        if (tt.isNotEmpty || bb.isNotEmpty) {
+          if (tt.isNotEmpty && bb.isNotEmpty) {
+            return tt + '\n' + bb;
+          }
+          return tt.isNotEmpty ? tt : bb;
+        }
+        return null; // 识别出是任务信封但无可见文案 → 交给教室端弹窗呈现，这里不显示 JSON
+      }
+      // ② 官方 SendNotification 信封：MessageMask 是**标题**，MessageContent 是正文。
+      //    之前只找 content 系字段，而面板广播/通知带的就是这张信封、且 MessageContent
+      //    常是空串 → 取不到 → 退回 payload 原文 → 桌面弹窗里显示的是一坨 JSON。
+      //    所以这里必须**优先**取 MessageMask，而不是把它当成"又一个候选字段"。
       final mask = node['MessageMask'];
       if (mask is String && mask.trim().isNotEmpty) {
         final body = node['MessageContent'];
         if (body is String && body.trim().isNotEmpty) {
-          return '${mask.trim()}\n${body.trim()}';
+          return mask.trim() + '\n' + body.trim();
         }
         return mask.trim();
       }
@@ -1216,7 +1473,7 @@ class DeviceAgent {
         'body',
       ]) {
         final v = node[k];
-        if (v is String && v.trim().isNotEmpty) return v.trim();
+        if (v is String && v.trim().isNotEmpty && !v.trim().startsWith('{')) return v.trim();
       }
       // 再往里挖一层：后端/面板可能把通知包在自定义信封里（如 `{'data': {...}}`）。
       // 不做这层递归的后果和上面一样 —— 弹出来的是 JSON 原文。

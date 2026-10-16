@@ -260,7 +260,7 @@ class CimsApi {
 
   // ---- 设备动作 ----
   /// CIMS 原生指令端点（restart / refresh→update-data / notify→send-notification）
-  Future<dynamic> deviceAction(String uid, String action) async {
+  Future<dynamic> deviceAction(String uid, String action, [Map<String, dynamic>? args]) async {
     if (!s.canUseBackend) return {'status': 'success', 'message': '（演示）指令已模拟下发'};
     final ep = {
       'restart': 'restart',
@@ -278,6 +278,10 @@ class CimsApi {
     // lock / screenshot / 音量 / 文件：统一走 stelarith_task 通知链路
     if (action == 'lock' || action == 'screenshot') {
       return sendTask(uid, action, scope: 'device');
+    }
+    // 音量：带 volume 参数走任务链路
+    if (action == 'set_volume') {
+      return sendTask(uid, action, scope: 'device', payload: {'volume': args?['volume'] ?? 60});
     }
     throw ApiException('不支持的动作：$action');
   }
@@ -319,17 +323,24 @@ class CimsApi {
   }
 
   // ---- 广播通知 ----
-  /// 下发通知；返回实际送达台数。
+  /// 下发通知（v2.2 增强：标题/正文分离、通知方式、时长、班级范围）。
   ///
-  /// [scope] 只用于留痕文案（「全校」「八年级 3 班」），是给人看的。
-  /// [onlyUids] 非空时只发给这些设备（按班级筛选时用）；为空即全校。
+  /// [kind]：island（岛内）/ popup（弹窗，可确认回复）/ fullscreen（全屏紧急）。
+  /// [title] / [body]：标题与正文（设备端按 kind 呈现）。
+  /// [durationSeconds]：显示时长（0 = 默认）。
+  /// [requireAck]：popup/fullscreen 是否需要手动确认。
+  /// [onlyUids]：null = 全校。
   Future<int> sendNotice(
     String title, {
+    String body = '',
     String scope = '全校',
+    String kind = 'island',
+    int durationSeconds = 0,
+    bool requireAck = false,
     List<String>? onlyUids,
   }) async {
     if (!s.canUseBackend) return 0;
-    final all = await reqToManagement('/account/${s.accountId}/client/list');
+    final all = await reqToManagement('/account/' + s.accountId + '/client/list');
     if (all is! List) return 0;
     final uids = onlyUids == null
         ? all
@@ -337,22 +348,52 @@ class CimsApi {
     var sent = 0;
     for (final u in uids) {
       try {
-        await reqToManagement(
-            '/account/${s.accountId}/client/${u.toString()}/command/send-notification',
-            method: 'POST',
-            body: {'MessageContent': title});
-        sent++;
+        // v2.2 通知方式 → 教室端呈现映射：
+        //   island      → 官方通知（ClassIsland 播报/滚动条）；
+        //   popup       → stelarith_task interactive_notice（自建置顶弹窗：确认/回复/回执）；
+        //   fullscreen  → stelarith_task fullscreen_notice（自建真全屏 + 二次确认 + 回执）。
+        // 弹窗/全屏不依赖 ClassIsland 官方能力（官方 NotificationContent 只有纯展示），
+        // 弹窗能力由插件自建 Avalonia 窗口提供 —— 这正是用户 2026-09-26 澄清的方向。
+        if (kind == 'popup' || kind == 'fullscreen') {
+          final action = kind == 'popup' ? 'interactive_notice' : 'fullscreen_notice';
+          final res = await sendTask(
+            u.toString(),
+            action,
+            scope: 'device',
+            payload: {
+              'notice_id': DateTime.now().millisecondsSinceEpoch.toString(),
+              'title': title,
+              'body': body.isEmpty ? title : body,
+              if (requireAck) 'require_ack': true,
+              if (kind == 'fullscreen' && durationSeconds > 0)
+                'auto_dismiss_seconds': durationSeconds,
+            },
+          );
+          if (res is Map && (res['status'] == 'success' || res['message'] == '通知已递送')) {
+            sent++;
+          }
+        } else {
+          final payload = <String, dynamic>{
+            'MessageMask': title,
+            'MessageContent': body.isEmpty ? title : body,
+            'DurationSeconds': durationSeconds > 0 ? durationSeconds : 5.0,
+            'RepeatCounts': 1,
+          };
+          await reqToManagement(
+              '/account/' + s.accountId + '/client/' + u.toString() + '/command/send-notification',
+              method: 'POST',
+              body: payload);
+          sent++;
+        }
       } catch (_) {}
     }
-    Log.i('广播「$title」送达 $sent/${uids.length} 台', 'notice');
-    // 留痕到扩展网关（失败不阻断下发结果）
+    Log.i('通知「' + title + '」（' + kind + '）送达 ' + sent.toString() + '/' + uids.length.toString() + ' 台', 'notice');
     try {
       await reqTo(s.extHost, '/notices',
           method: 'POST', body: {'title': title, 'scope': scope, 'sent': sent});
     } catch (_) {}
     return sent;
   }
-
   // ---- 设备截图回传（#T07.7 步骤 4）----
   /// 拉取设备回传的截图：GET `{site}/api/console/ext/captures?uid=xxx`（Bearer 会话）。
   /// 返回 `{at, bytes, image_base64}`；没报过/已过期/失败一律返回 null（**不抛**——
@@ -370,6 +411,77 @@ class CimsApi {
       return null;
     }
   }
+
+  // ---- 回复收件箱 / 执行回执（v2.1 双向消息闭环）----
+  //
+  // 被控端（教室大屏/桌面端）对互动通知的「确认/回复」回执落在 CIMS notice_replies 表，
+  // 对指令的「执行结果」回执落在 command_completions 表 —— 操控端据此看到
+  // 「谁确认了、回了什么、哪台设备执行了（成功/失败）」，而不是只有一条「已下发」。
+  // 走管理端 /class/* 端点（Bearer 鉴权，租户经令牌上下文识别）。
+
+  /// 拉取本租户的互动通知回执（确认/回复）。
+  /// [noticeId] 过滤单条广播；返回 null = 接口不可用/无数据（不抛，页面显示空态）。
+  Future<List<NoticeReply>?> listNoticeReplies({String noticeId = ''}) async {
+    if (!s.canUseBackend) return null;
+    try {
+      final q = noticeId.isNotEmpty ? '?notice_id=' + Uri.encodeComponent(noticeId) : '';
+      final r = await reqToManagement('/class/notice-replies' + q);
+      if (r is! Map) return null;
+      final list = r['replies'];
+      if (list is! List) return null;
+      return list
+          .whereType<Map>()
+          .map((e) => NoticeReply.fromJson(Map<String, dynamic>.from(e)))
+          .whereType<NoticeReply>()
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 拉取本租户的设备执行回执（截图/锁屏/远控等动作结果）。
+  /// [clientId] / [action] 可过滤；返回 null = 接口不可用（不抛）。
+  Future<List<CommandCompletion>?> listCompletions({
+    String clientId = '',
+    String action = '',
+  }) async {
+    if (!s.canUseBackend) return null;
+    try {
+      final q = <String>[
+        if (clientId.isNotEmpty) 'client_id=' + Uri.encodeComponent(clientId),
+        if (action.isNotEmpty) 'action=' + Uri.encodeComponent(action),
+      ].join('&');
+      final r = await reqToManagement('/class/command-completions' + (q.isEmpty ? '' : '?' + q));
+      if (r is! Map) return null;
+      final list = r['completions'];
+      if (list is! List) return null;
+      return list
+          .whereType<Map>()
+          .map((e) => CommandCompletion.fromJson(Map<String, dynamic>.from(e)))
+          .whereType<CommandCompletion>()
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 拉取最近「新截图就绪」事件（ext capture-events；操控端主动感知设备回传截图）。
+  /// 返回 [{uid, at}]；接口不可用/无权限返回 null（不抛）。
+  Future<List<Map<String, dynamic>>?> listCaptureEvents() async {
+    if (!s.canUseBackend) return null;
+    final site = s.siteHost.trim();
+    if (site.isEmpty || s.token.isEmpty) return null;
+    try {
+      final r = await reqTo(site, '/api/console/ext/capture-events');
+      if (r is! Map) return null;
+      final list = r['events'];
+      if (list is! List) return null;
+      return list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
 
   // ---- 文件传输 v2（2026-09-25 班级系统配套）----
   //

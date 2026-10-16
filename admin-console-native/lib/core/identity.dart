@@ -191,8 +191,8 @@ class Identity {
         // v2：传文件是唯一设备动作；设备监控页收回。
         return const ['file', 'settings'];
       case 'techrep':
-        // v2：电教委员面板 + 文件传输。
-        return const ['teacher', 'file', 'settings'];
+        // v2：电教委员面板 + 文件传输 + 回复收件箱。
+        return const ['teacher', 'file', 'replies', 'settings'];
       case 'homeroom':
         return const ['teacher', 'devices', 'file', 'notify', 'volume', 'settings'];
       case 'moderator':
@@ -220,6 +220,9 @@ class Identity {
       case 'volume':
         // 对教室设备下发指令：v2 用动作矩阵（notify）兜粗档（旧服务端兼容）。
         return canNotify || canControl || canRemote || canManage;
+      case 'replies':
+        // 回复收件箱：查看被控端确认/回复与执行回执 —— 需要能下发通知/管理设备。
+        return canNotify || canManage || canControl;
       case 'file':
         // v2 传文件：动作矩阵明示（老师/班主任/电教委员/站长）。
         return canFile || canControl || canManage;

@@ -23,7 +23,7 @@ mod media;
 
 // 被控端 WebRTC（#247-A）：真 WebRTC 远控，与面板 p2p-connector.js 对齐。
 // 仅新增能力，绝不替换 VNC / 媒体直连；信令地址为空时完全不启用。
-// mod rtc; // TODO(2026-09-23): 适配 webrtc 0.21 新版 API 后恢复
+mod rtc; // WebRTC 被控端（#247-A）：与面板 p2p-connector.js billdDesk 协议对齐
 
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -583,32 +583,10 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
         // screen_shot.dart 的 PS 兜底脚本约束）。不引第三方截图 crate —— 代理保持
         // 数 MB 单二进制体量，且教室 Windows 必有 powershell.exe。
         "screenshot" => {
-            let shots_dir = "C:/ProgramData/Stelarith/shots";
-            let _ = std::fs::create_dir_all(shots_dir);
-            let ts = Utc::now().format("%Y%m%d-%H%M%S");
-            let out_path = format!("{shots_dir}/shot-{ts}.png");
-            match run_powershell_shot(&out_path) {
-                Ok(Some(size)) => {
-                    let _ = write_status(&format!("screenshot ok {out_path} ({size} bytes)"));
-                    out.insert("result".into(), "captured".into());
-                    out.insert("path".into(), out_path.clone());
-                    out.insert("bytes".into(), size.to_string());
-                    // #T07.7 步骤 2：把 PNG 回传到扩展网关，面板按 uid 轮询取图。
-                    // 上传是后台线程（独立于回执），失败只记日志不影响本次命令结果。
-                    match std::fs::read(&out_path) {
-                        Ok(png) => media::report_capture(&png),
-                        Err(e) => {
-                            let _ = write_status(&format!("[warn] screenshot 回传读 PNG 失败：{e}"));
-                        }
-                    }
-                }
-                Ok(None) => {
-                    out.insert("error".into(), "screenshot 落盘为空（PNG 0 字节？）".into());
-                }
-                Err(e) => {
-                    let _ = write_status(&format!("[error] screenshot failed: {e}"));
-                    out.insert("error".into(), e);
-                }
+            if take_and_report_shot() {
+                out.insert("result".into(), "captured".into());
+            } else {
+                out.insert("error".into(), "截图失败（详见 agent.status.log）".into());
             }
         }
         "shell" => {
@@ -677,6 +655,59 @@ fn execute(task: &Task, st: &AgentState) -> HashMap<String, String> {
             );
             return out;
         }
+        // 快捷打开软件（#远程打开）：target 为进程名或可执行路径。
+        // 白名单约束：默认仅允许安全的教育/办公类应用，避免「任意程序可被远程拉起」
+        // 成为攻击面。管理员可通过环境变量 STELARITH_AGENT_LAUNCH_ALLOWLIST 追加
+        // （逗号分隔的进程名/路径片段，大小写不敏感；含此片段即放行）。
+        "launch_app" | "open_app" => {
+            // target 经 cmd 字段承载（插件转发时设置 cmd = 要打开的进程名/路径）：
+            // Task 结构没有 extra，用既有 cmd 通道最省线改动。
+            let target = task
+                .cmd
+                .clone()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if target.is_empty() {
+                out.insert("error".into(), "launch_app: 缺少 target（进程名或路径）".into());
+                return out;
+            }
+            let allowlist = std::env::var("STELARITH_AGENT_LAUNCH_ALLOWLIST")
+                .unwrap_or_default()
+                .to_lowercase();
+            let allowed = allowlist.split(',').any(|item| {
+                let item = item.trim();
+                !item.is_empty() && target.to_lowercase().contains(item)
+            });
+            let target_lower = target.to_lowercase();
+            let builtin_safe = [
+                "classisland",
+                "xingjikong",
+                "explorer.exe",
+                "msedge",
+                "chrome",
+                "firefox",
+                "wechat",
+                "wps",
+                "word", "excel", "powerpnt",
+                "notepad",
+                "cmd.exe",
+            ]
+            .iter()
+            .any(|b| target_lower.contains(b));
+            if !allowed && !builtin_safe {
+                out.insert(
+                    "error".into(),
+                    format!("launch_app: 「{target}」不在内置安全名单（classisland/xingjikong/浏览器/Office/记事本…），被拒绝。可配置 STELARITH_AGENT_LAUNCH_ALLOWLIST 放行。"),
+                );
+                return out;
+            }
+            let _ = Command::new("cmd")
+                .args(["/c", "start", "", &target])
+                .spawn();
+            out.insert("result".into(), format!("launching: {target}"));
+            return out;
+        }
         other => {
             out.insert("error".into(), format!("unknown action: {other}"));
         }
@@ -689,7 +720,7 @@ pub(crate) fn write_status(line: &str) -> std::io::Result<()> {
         .create(true)
         .append(true)
         .open("C:/ProgramData/Stelarith/agent.status.log")?;
-    writeln!(f, "{} {}", Utc::now().to_rfc3339(), line)
+    writeln!(f, "{} {}", chrono::Local::now().to_rfc3339(), line)
 }
 
 /// 执行 PowerShell 截全屏脚本，返回 PNG 落盘字节数。
@@ -736,7 +767,16 @@ try {
     std::fs::write(&script_path, PS_SCRIPT)
         .map_err(|e| format!("无法写入 PS 脚本 {}: {e}", script_path))?;
 
-    let out = Command::new("powershell.exe")
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        let mut c = Command::new("powershell.exe");
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW：不弹控制台窗口（闪窗根因修复）
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = Command::new("powershell.exe");
+    let out = cmd
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -833,6 +873,16 @@ async fn status_handler(
 
 #[tokio::main]
 async fn main() {
+    // --activate <code>：首次接入（消费激活码写配置后退出）。
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--activate") {
+        if let Some(code) = args.get(pos + 1) {
+            run_activation(code);
+            return;
+        }
+        eprintln!("[activate] 用法：stelarith-agent.exe --activate XJK-XXXX");
+        std::process::exit(1);
+    }
     let secret = std::env::var("STELARITH_AGENT_SECRET").unwrap_or_else(|_| "dev-secret-change-me".into());
     let vnc_cmd = std::env::var("STELARITH_VNC_CMD").unwrap_or_else(|_| "vncserver".into());
     let port: u16 = std::env::var("STELARITH_AGENT_PORT")
@@ -855,14 +905,18 @@ async fn main() {
 
     // 定时关机调度线程（每 30s 检查，到点执行 shutdown /s /t 60）
     spawn_scheduler(&st);
+    // 定时截图（监控参数 interval_sec>0 时自动）
+    spawn_periodic_screenshot();
+    // 首次启动立即截一张（验证链路 + 供面板轮询）
+    let _ = take_and_report_shot();
 
     // 被控端 WebRTC（#247-A）：按需起一个被控 peer。
-    // ⚠️ TODO(2026-09-23)：webrtc crate 镜像版为 0.21 重写版（Sans-I/O 架构），
-    // rtc.rs 仍按旧版 API 编写，编不过 → 本条链路**暂时禁用**，VNC + 媒体直连不受影响。
-    // STELARITH_P2P_SIGNAL 为空时 rtc::start_p2p 内部直接返回；恢复适配后再启用。
-    // if rtc::p2p_enabled() {
-    //     rtc::start_p2p(media::device_uid());
-    // }
+    // ✅ 2026-09-26：rtc.rs 已适配 webrtc 0.21（PeerConnectionBuilder + handler trait +
+    //    trickle ICE + tokio::process 桌面采集），恢复启用。STELARITH_P2P_SIGNAL 为空时
+    //    rtc::start_p2p 内部直接返回（回落 VNC/媒体直连）。
+    if rtc::p2p_enabled() {
+        rtc::start_p2p(media::device_uid());
+    }
 
     // 仅绑 localhost：外部不可直接访问，符合"占用少 + 默认安全"。
     // （媒体直连服务是**另一个**监听器，由 media 模块在真的发生媒体动作时才按需启动，
@@ -878,4 +932,181 @@ async fn main() {
         media::media_root()
     );
     axum::serve(listener, app).await.unwrap();
+}
+
+
+/// PNG → WebP（q=75，限宽 1280）：目标 ~100KB/张，比 PNG 直传省 40-60% 带宽。
+/// 失败（ffmpeg 缺失/编码错误）返回 None，调用方回退原 PNG。
+/// 同步拉监控参数（截图/远控）：经设备密钥 GET /api/console/ext/monitor-config。
+/// ⚠️ 不能在 tokio 上下文 drop blocking reqwest → 独立 std 线程执行。
+/// 返回 (webp_quality, max_width, interval_sec, retention_days) 字符串形式。
+fn fetch_sync_monitor_params() -> (String, String, String, String) {
+    let out = std::thread::spawn(move || {
+        let ext_url = std::env::var("STELARITH_EXT_URL").ok().filter(|s| !s.trim().is_empty())?;
+        let ext_secret = std::env::var("STELARITH_EXT_SECRET").ok().filter(|s| !s.trim().is_empty())?;
+        let url = format!("{}/api/console/ext/monitor-config", ext_url.trim_end_matches('/'));
+        let client = reqwest::blocking::Client::new();
+        let resp = client
+            .get(&url)
+            .header("x-stelarith-device-secret", ext_secret)
+            .timeout(std::time::Duration::from_secs(4))
+            .send()
+            .ok()?;
+        if !resp.status().is_success() { return None; }
+        let json: serde_json::Value = resp.json().ok()?;
+        let cfg = json.get("config").cloned().unwrap_or(json);
+        let s = |k: &str, d: &str| cfg.get(k).and_then(|v| v.as_str()).map(|x| x.to_string()).filter(|x| !x.is_empty()).unwrap_or_else(|| d.to_string());
+        Some((s("screenshot_webp_quality", "75"), s("screenshot_max_width", "1280"), s("monitor_interval_sec", "0"), s("monitor_retention_days", "7")))
+    })
+    .join()
+    .ok()
+    .flatten();
+    out.unwrap_or_else(|| ("75".into(), "1280".into(), "0".into(), "7".into()))
+}
+
+
+/// 截图 + webp 转码 + 回传（execute 的 screenshot 分支与定时截图共用）。
+/// 返回是否成功捕获（失败记日志但不 panic）。
+fn take_and_report_shot() -> bool {
+    let shots_dir = "C:/ProgramData/Stelarith/shots";
+    if std::fs::create_dir_all(shots_dir).is_err() { return false; }
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let out_path = format!("{shots_dir}/shot-{ts}.png");
+    match run_powershell_shot(&out_path) {
+        Ok(Some(_size)) => {
+            let (q, w, _iv, rt) = fetch_sync_monitor_params();
+            let webp_path = out_path.replace(".png", ".webp");
+            let upload: Option<Vec<u8>> = match png_to_webp(&out_path, &webp_path, &q, &w) {
+                Some(_) => std::fs::read(&webp_path).ok(),
+                None => std::fs::read(&out_path).ok(),
+            };
+            if let Some(bytes) = upload {
+                media::report_capture(&bytes);
+            }
+            if let Ok(days) = rt.parse::<u32>() {
+                prune_old_shots(days);
+            }
+            true
+        }
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// 定时截图循环：每 tick 检查 monitor_interval_sec（>0 才启），到点截图。
+fn spawn_periodic_screenshot() {
+    // 独立 OS 线程：每 30s 轮询监控参数，interval_sec>0 时到点截图。
+    // 用 std 线程避开 tokio task 里的同步阻塞/join 潜在问题。
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            let (_q, _w, iv, _rt) = fetch_sync_monitor_params();
+            let Ok(secs) = iv.parse::<u64>() else { continue };
+            if secs == 0 { continue; }
+            let _ = write_status(&format!("[periodic] 定时截图触发 interval={secs}s"));
+            let _ = take_and_report_shot();
+            if secs >= 30 {
+                std::thread::sleep(std::time::Duration::from_secs(secs.saturating_sub(30)));
+            }
+        }
+    });
+}
+
+
+fn png_to_webp(png_path: &str, webp_path: &str, quality: &str, max_width: &str) -> Option<u64> {
+    let ff = std::env::var("STELARITH_FFMPEG")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "ffmpeg".into());
+    let vf = format!("scale='min({},iw)':-2", max_width);
+    let ok = std::process::Command::new(&ff)
+        .args([
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-i", png_path,
+            "-vf", vf.as_str(),
+            "-c:v", "libwebp",
+            "-quality", quality,
+            webp_path,
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok { return None; }
+    std::fs::metadata(webp_path).ok().map(|m| m.len())
+}
+
+
+/// 按保留天数清理历史截图（webp/png）。retention<=0 不清理。
+fn prune_old_shots(retention_days: u32) {
+    if retention_days == 0 { return; }
+    let dir = "C:/ProgramData/Stelarith/shots";
+    let cutoff = Utc::now() - chrono::Duration::days(retention_days as i64);
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut removed = 0u32;
+    for e in entries.flatten() {
+        let p = e.path();
+        let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+        if ext != "png" && ext != "webp" { continue; }
+        if let Ok(meta) = std::fs::metadata(&p) {
+            if let Ok(modified) = meta.modified() {
+                let mtime: chrono::DateTime<chrono::Utc> = modified.into();
+                if mtime < cutoff {
+                    let _ = std::fs::remove_file(&p);
+                    removed += 1;
+                }
+            }
+        }
+    }
+    if removed > 0 {
+        let _ = write_status(&format!("prune shots removed={removed} retention_days={retention_days}"));
+    }
+}
+
+
+/// 激活码接入（--activate <code>）：消费码 → 生成/更新本地 agent-secret.cmd。
+/// 首次安装教室机：管理员生成班级接入码 → 机器上运行 stelarith-agent.exe --activate XJK-XXX
+/// → 本函数消费码、按码生成 uid（lab-pc-<短随机>）并写全配置，之后正常 run-agent.cmd 启动。
+fn run_activation(code: &str) {
+    use std::io::Write;
+    let ext_url = std::env::var("STELARITH_EXT_URL").ok().filter(|s| !s.trim().is_empty());
+    let Some(base) = ext_url else {
+        eprintln!("[activate] 未配置 STELARITH_EXT_URL —— 无法连接站点，请在环境里先设好站点地址");
+        std::process::exit(1);
+    };
+    // blocking reqwest 不能在 tokio 上下文 —— 独立 std 线程里消费+拿配置。
+    let code_owned = code.trim().to_string();
+    let base_owned = base.trim_end_matches('/').to_string();
+    let fetched = std::thread::spawn(move || {
+        let uid = format!("lab-pc-{:04}", (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() % 9000) + 1000);
+        let url = format!("{}/api/console/ext/device-activate?code={}&uid={}", base_owned, code_owned, uid);
+        let resp = reqwest::blocking::get(&url).ok()?;
+        if !resp.status().is_success() { return None; }
+        let json: serde_json::Value = resp.json().ok()?;
+        let class_id = json.get("classId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        Some((uid, class_id))
+    })
+    .join()
+    .ok()
+    .flatten();
+    let Some((uid, class_id)) = fetched else {
+        eprintln!("[activate] 接入失败：码无效/过期/站点不可达");
+        std::process::exit(1);
+    };
+    eprintln!("[activate] 接入成功：uid={uid} class={class_id}");
+
+    // 写 agent-secret.cmd（uid 由 run-agent.cmd 引用，这里追加到 secret 文件末尾）。
+    let dir = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let secret_path = dir.join("agent-secret.cmd");
+    let mut content = String::new();
+    if let Ok(existing) = std::fs::read_to_string(&secret_path) {
+        content.push_str(&existing);
+        if !content.ends_with("\n") && !content.ends_with("\r\n") { content.push('\n'); }
+    }
+    if !content.contains("STELARITH_DEVICE_UID") {
+        content.push_str(&format!("set \"STELARITH_DEVICE_UID={}\"\r\n", uid));
+    }
+    if let Ok(mut f) = std::fs::File::create(&secret_path) {
+        let _ = f.write_all(content.as_bytes());
+    }
+    eprintln!("[activate] 配置已写入 agent-secret.cmd，请用 run-agent.cmd 正常启动代理");
 }

@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using ClassIsland.Core;
 using ClassIsland.Core.Abstractions;
@@ -129,6 +133,8 @@ public class StelarithControlPlugin : PluginBase
         services.AddComponent<StelarithNowPlayingComponent, StelarithIslandSettings>();
         services.AddComponent<StelarithSongQueueComponent, StelarithIslandSettings>();
         services.AddComponent<StelarithStatusComponent, StelarithIslandSettings>();
+        // 底部滚动通知条：常驻字幕循环显示最近广播/通知（默认开，可在组件设置里关）。
+        services.AddComponent<StelarithNoticeMarqueeComponent, StelarithIslandSettings>();
     }
 
     /// <summary>
@@ -221,6 +227,10 @@ public class StelarithTask
     [System.Text.Json.Serialization.JsonPropertyName("require_ack")]
     public bool RequireAck { get; set; }
 
+    /// <summary>全屏紧急通知自动关闭秒数（1~300；0 = 必须手动确认）。</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("auto_dismiss_seconds")]
+    public int AutoDismissSeconds { get; set; }
+
     /// <summary>
     /// 定时关机计划（schedule_shutdown 动作承载；见 <see cref="StelarithScheduleSpec"/>）。
     /// 面板下发 → 插件弹「60s 确认窗」→ 教室端确认后原样透传给本地代理落盘+调度。
@@ -277,6 +287,14 @@ public sealed class StelarithServiceProviderBridge
 public static class StelarithDispatch
 {
     private static readonly AgentClient Agent = new();
+
+    /// <summary>执行回执上报用 HttpClient（与其它通道同款短连接策略）。</summary>
+    private static readonly HttpClient CompletionHttp = new(new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromSeconds(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(1),
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+    });
 
     // 集控面板下发的载荷字段为小写（action/token/scope/ts），而 StelarithTask 属性是 PascalCase。
     // System.Text.Json 默认大小写敏感，不开这个开关会反序列化出 Action="" —— 表现为
@@ -372,6 +390,12 @@ public static class StelarithDispatch
                 if (!RequireModule(StelarithModules.Notification, "互动通知")) break;
                 StelarithInteractiveNotice.Show(task, fallbackTitle, fallbackBody);
                 break;
+            // 全屏紧急通知：覆盖整块屏幕 + 置顶 + 红边，必须手动二次确认。
+            // 归「全屏通知」模块门控（独立于普通播报，可单独关闭）。
+            case "fullscreen_notice":
+                if (!RequireModule(StelarithModules.FullscreenNotice, "全屏紧急通知")) break;
+                StelarithFullscreenNotice.Show(task, fallbackTitle, fallbackBody);
+                break;
             // 定时关机（长期计划：每天/每周/一次性/倒计时）：弹「60s 确认窗」，
             // 教室端确认后才透传给本地代理落盘+调度；拒绝/超时则回执上报并不生效。
             // 关机类动作统一归「远程控制」模块门控（与一键关机同模块，可一键全关）。
@@ -400,6 +424,8 @@ public static class StelarithDispatch
                 StelarithProfileWriter.Diag("dispatch set_active_class -> " + r);
                 StelarithNotificationProvider.Current?.Push(
                     StelarithBranding.SourceName, $"课表切换：{r}", 6);
+                await ReportCompletionAsync(task, ok: !string.IsNullOrWhiteSpace(r) && !r.StartsWith("失败"),
+                    detail: "远程切班：" + r);
                 break;
             // 功能模块开关：面板「插件管理 / 功能模块」的真实落点。
             // 关掉一个模块会立即改变本机行为，因此这是**双向**能力 —— 关闭核心模块会被拒绝。
@@ -408,6 +434,8 @@ public static class StelarithDispatch
                 var applyResult = StelarithModules.ApplyFromTask(task);
                 StelarithModules.Diag("dispatch set_module -> " + applyResult);
                 StelarithNotificationProvider.Current?.Push(StelarithBranding.SourceName, "功能模块调整：" + applyResult, 6);
+                await ReportCompletionAsync(task, ok: !applyResult.StartsWith("失败") && !applyResult.StartsWith("跳过"),
+                    detail: "功能模块调整：" + applyResult);
                 break;
             // 需要 OS 级 / 网络级动作的，一律交给本地代理（它才有权限启 VNC、控进程、验签）
             case "remote_control_start":
@@ -440,6 +468,14 @@ public static class StelarithDispatch
                 if (!RequireModule(StelarithModules.RemoteControl, "远程控制")) break;
                 await ForwardToAgentAsync(task, "系统");
                 break;
+            // 快捷打开软件（v2.2）：操控端远程在被控端拉起指定应用（ClassIsland/
+            // 星集控/浏览器/Office 等内置安全名单）。target 经 task.Cmd 传给本地代理，
+            // 代理侧有内置白名单 + 环境变量追加名单双重约束。
+            case "launch_app":
+            case "open_app":
+                if (!RequireModule(StelarithModules.RemoteControl, "快捷打开软件")) break;
+                await ForwardToAgentAsync(task, "快捷打开软件");
+                break;
             default:
                 break;
         }
@@ -461,12 +497,84 @@ public static class StelarithDispatch
         if (r.Ok)
         {
             Diag($"agent ok: {task.Action}");
+            // 执行回执上报：操控端要能看到「这台设备确实执行了（成功/失败+原因）」，
+            // 而不是只看到一条「已下发」。失败也上报，但失败会在下方另行推上大屏。
+            await ReportCompletionAsync(task, ok: true, detail: $"{what}已执行");
             return;
         }
 
         Diag($"agent FAIL: {task.Action} -> {r.Error}");
+        await ReportCompletionAsync(task, ok: false, detail: $"{what}未执行：{r.Error}");
         StelarithNotificationProvider.Current?.Push(
             StelarithBranding.SourceName, $"{what}指令未执行：{r.Error}", 8);
+    }
+
+    /// <summary>
+    /// 尽力通知桌面端星集控（ClassIsland 不可用时的降级出口）。
+    /// 桌面端有自己的全屏/弹窗呈现（notice_popup.dart），走本地代理通道（127.0.0.1:17999）。
+    /// 代理未起时静默失败 —— 降级是尽力而为，不能因此再弹一条错误。
+    /// </summary>
+    internal static async Task NotifyDesktopAsync(string title, string body, string kind = "island")
+    {
+        try
+        {
+            var desktopTask = new StelarithTask
+            {
+                Action = kind == "fullscreen" ? "fullscreen_notice" : "popup_notice",
+                Title = title,
+                Body = body,
+            };
+            var r = await Agent.SendAsync(desktopTask);
+            if (!r.Ok)
+            {
+                Diag($"notify desktop degrade FAIL: {r.Error}");
+            }
+            else
+            {
+                Diag($"notify desktop degrade ok: {kind} {title}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Diag("notify desktop degrade exception: " + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 执行回执上报：POST 到 CIMS 设备端（与心跳同一信任链：Host 头识别租户）。
+    /// 失败只记诊断 —— 回执是增强能力，不能因为上报失败让本机动作重试或报错。
+    /// </summary>
+    private static async Task ReportCompletionAsync(StelarithTask task, bool ok, string detail)
+    {
+        try
+        {
+            var opt = StelarithSyncOptions.Load();
+            if (opt is null || string.IsNullOrWhiteSpace(opt.ClientUid)) return;
+
+            var url = $"{opt.ClientAppBase}/api/v1/client/{Uri.EscapeDataString(opt.ClientUid)}/completions";
+            var payload = JsonSerializer.Serialize(new Dictionary<string, string?>
+            {
+                ["action"] = task.Action,
+                ["ok"] = ok ? "true" : "false",
+                ["detail"] = detail,
+                ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+            });
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Headers = { Host = $"{opt.Slug}.{opt.BaseDomain}" },
+                Content = new StringContent(payload, Encoding.UTF8, new System.Net.Http.Headers.MediaTypeHeaderValue("application/json")),
+            };
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var resp = await CompletionHttp.SendAsync(req, cts.Token);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Diag($"completion report HTTP {(int)resp.StatusCode}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Diag("completion report exception: " + ex.Message);
+        }
     }
 
     internal static void Diag(string msg)

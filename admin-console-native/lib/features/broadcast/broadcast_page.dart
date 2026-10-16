@@ -29,14 +29,26 @@ class BroadcastPage extends ConsumerStatefulWidget {
 
 class _BroadcastPageState extends ConsumerState<BroadcastPage> {
   final _title = TextEditingController();
+  final _body = TextEditingController();
   bool _busy = false;
 
   /// 发送对象：'全校' 或某个班级名（人类可读，绝不出现设备 uid / 班级编码）。
   String _target = '全校';
 
+  /// 通知方式：island（岛内）/ popup（弹窗）/ fullscreen（全屏紧急）。
+  String _kind = 'island';
+
+  /// 显示时长（秒；0 = 默认 5s）。
+  int _duration = 0;
+  static const _durations = <int>[0, 5, 10, 15, 30, 60];
+
+  /// popup/fullscreen 是否需要手动确认。
+  bool _requireAck = false;
+
   @override
   void dispose() {
     _title.dispose();
+    _body.dispose();
     super.dispose();
   }
 
@@ -62,7 +74,7 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
     final title = _title.text.trim();
     if (title.isEmpty) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请先写要通知的内容')));
+          .showSnackBar(const SnackBar(content: Text('请先写通知标题（或正文）')));
       return;
     }
     final api = ref.read(apiProvider);
@@ -74,19 +86,26 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
     final onlyUids = _uidsFor(devices);
     if (onlyUids != null && onlyUids.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('「$_target」名下还没有可接收的设备')));
+          SnackBar(content: Text('「' + _target + '」名下还没有可接收的设备')));
       return;
     }
     setState(() => _busy = true);
     try {
-      final sent = await api.sendNotice(title,
-          scope: _target, onlyUids: onlyUids);
+      final sent = await api.sendNotice(
+        title,
+        body: _body.text.trim(),
+        scope: _target,
+        kind: _kind,
+        durationSeconds: _duration,
+        requireAck: _requireAck,
+        onlyUids: onlyUids,
+      );
       if (!mounted) return;
-      // 广播是 fail-open：必须看实际送达台数，不能只看请求是否返回。
       if (sent > 0) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('已送到 $sent 台设备的屏幕')));
+            .showSnackBar(SnackBar(content: Text('已送到 ' + sent.toString() + ' 台设备的屏幕')));
         _title.clear();
+        _body.clear();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('没有设备收到通知，请确认目标教室的电脑是否开机')));
@@ -95,7 +114,7 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('发送失败：$e')));
+          .showSnackBar(SnackBar(content: Text('发送失败：' + e.toString())));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -108,7 +127,6 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
     final devicesAsync = ref.watch(devicesProvider);
     final devices = devicesAsync.valueOrNull ?? const <CimsDevice>[];
     final targets = _targets(devices);
-    // 目标班级可能在刷新后消失，回退到全校，避免下拉框值不在选项里而崩。
     if (!targets.contains(_target)) {
       _target = '全校';
     }
@@ -120,7 +138,7 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
         children: [
           Text('发通知', style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
-          Text('写一句话，按下发送，就会出现在教室电脑的屏幕角落。',
+          Text('把一条消息送到教室大屏：可选岛内 / 弹窗 / 全屏紧急三种呈现。',
               style: theme.textTheme.bodySmall),
           const SizedBox(height: 16),
           Card(
@@ -129,13 +147,47 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── 通知方式 ──
+                  Text('通知方式', style: theme.textTheme.labelLarge),
+                  const SizedBox(height: 6),
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(
+                          value: 'island',
+                          icon: Icon(Icons.article_outlined),
+                          label: Text('岛内普通')),
+                      ButtonSegment(
+                          value: 'popup',
+                          icon: Icon(Icons.mail_outline),
+                          label: Text('弹窗通知')),
+                      ButtonSegment(
+                          value: 'fullscreen',
+                          icon: Icon(Icons.fullscreen),
+                          label: Text('全屏紧急')),
+                    ],
+                    selected: {_kind},
+                    onSelectionChanged: (s) =>
+                        setState(() => _kind = s.first),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // ── 标题 ──
                   TextField(
                     controller: _title,
+                    maxLines: 1,
+                    decoration: const InputDecoration(
+                      labelText: '标题',
+                      hintText: '例如：下午第三节课改到多功能厅',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _body,
                     maxLines: 2,
                     minLines: 1,
                     decoration: const InputDecoration(
-                      labelText: '通知内容',
-                      hintText: '例如：下午第三节课改到多功能厅',
+                      labelText: '正文（可选）',
+                      hintText: '详细内容，显示在标题下方',
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -144,13 +196,52 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
                     runSpacing: 4,
                     children: _quickPhrases
                         .map((p) => ActionChip(
-                              label: Text(p,
-                                  style: const TextStyle(fontSize: 12)),
+                              label: Text(p, style: const TextStyle(fontSize: 12)),
                               onPressed: () => setState(() => _title.text = p),
                             ))
                         .toList(),
                   ),
                   const SizedBox(height: 12),
+
+                  // ── 时长 / 需确认（弹窗与全屏生效；岛内发送时忽略）──
+                  
+                    Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<int>(
+                            initialValue: _duration,
+                            decoration: const InputDecoration(labelText: '显示时长'),
+                            items: [
+                              for (final d in _durations)
+                                DropdownMenuItem(
+                                    value: d,
+                                    child: Text(d == 0
+                                        ? '默认（5 秒）'
+                                        : d.toString() + ' 秒' + (d >= 30 ? '（长时间）' : ''))),
+                            ],
+                            onChanged: (v) => setState(() => _duration = v ?? 0),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: CheckboxListTile(
+                            value: _requireAck,
+                            onChanged: (v) => setState(() => _requireAck = v ?? false),
+                            title: const Text('需确认收到', style: TextStyle(fontSize: 13)),
+                            subtitle: Text('回执上报操控端',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurfaceVariant)),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            controlAffinity: ListTileControlAffinity.leading,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                  // ── 发给谁 + 发送 ──
                   Row(
                     children: [
                       Expanded(
@@ -191,7 +282,7 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
           Expanded(
             child: notices.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('加载失败：$e')),
+              error: (e, _) => Center(child: Text('加载失败：' + e.toString())),
               data: (list) => list.isEmpty
                   ? Center(
                       child: Text('还没有发送过通知',
@@ -204,7 +295,7 @@ class _BroadcastPageState extends ConsumerState<BroadcastPage> {
                           leading: const Icon(Icons.notifications_none),
                           title: Text(n.title),
                           subtitle: Text(
-                              '${n.scope.isEmpty ? '全校' : n.scope} · ${n.at}',
+                              '' + (n.scope.isEmpty ? '全校' : n.scope) + ' · ' + n.at,
                               style: theme.textTheme.bodySmall),
                         );
                       },

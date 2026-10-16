@@ -98,9 +98,20 @@ class TeacherPage extends ConsumerWidget {
     );
   }
 
+  /// 从老师主页推入二级页（我的班级/广播通知/待审核），用带返回按钮的壳包一层：
+  /// 目标页本身按「顶层 IndexedStack」设计、没有自己的顶栏，直接 push 会陷入
+  /// 「进得来出不去」——没有返回按钮，只能关窗口。
   void _push(BuildContext context, Widget page) {
-    Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => page));
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => Scaffold(
+        appBar: AppBar(
+          title: const Text('返回', style: TextStyle(fontSize: 15)),
+          leading: const BackButton(), // 无参默认 pop 当前路由
+          automaticallyImplyLeading: true,
+        ),
+        body: page,
+      ),
+    ));
   }
 }
 

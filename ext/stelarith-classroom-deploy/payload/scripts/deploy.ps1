@@ -260,12 +260,28 @@ if ($DryRun) {
 # ---------------------------------------------------------------- 5. 写配置
 Write-Head '第 5 步 / 共 7 步 · 写入指向服务端的配置'
 
-# 5.1 插件同步配置：stelarith-sync.json（插件从程序集目录读取，即插件目录下）
+# 5.1 插件同步配置：stelarith-sync.json
+#
+# ⚠️ 必须写**两处**，且内容一致：
+#   · 插件读配置走 StelarithSyncOptions.ResolveConfigDir() →
+#     优先 PluginConfigFolder（data\Config\Plugins\StelarithControlPlugin），
+#     取不到才回落程序集目录（data\Plugins\StelarithControlPlugin）。
+#   · 只写后者时，若目标机 data\Config\Plugins\... 里已有一份（包种子或上一台机器留下的），
+#     那份会**静默胜出** —— 表现为「部署脚本说写好了，设备却顶着别人的身份/连错环境」。
+#   · ClientUid 留空 → 插件用计算机名兜底（逐机唯一）。deployment.json 里显式填了才用填的。
+$netMode = if ($cfg.NetworkMode) { ([string]$cfg.NetworkMode).Trim().ToLowerInvariant() } else { 'wan' }
+if ($netMode -ne 'lan' -and $netMode -ne 'wan') { $netMode = 'wan' }
+# 两组都必须非空：插件的 lan 分支不做校验，空串会让整套同步静默失效。
+$wanBase = if ($cfg.WanClientAppBase) { [string]$cfg.WanClientAppBase } else { [string]$cfg.ServerBase }
+$wanDom  = if ($cfg.WanBaseDomain)    { [string]$cfg.WanBaseDomain }    else { [string]$cfg.BaseDomain }
+$lanBase = if ($cfg.LanClientAppBase) { [string]$cfg.LanClientAppBase } else { 'http://10.0.0.10:8096' }
+$lanDom  = if ($cfg.LanBaseDomain)    { [string]$cfg.LanBaseDomain }    else { 'localhost' }
+
 $syncCfg = [ordered]@{
     ClientAppBase          = $cfg.ServerBase
     BaseDomain             = $cfg.BaseDomain
     Slug                   = $cfg.Slug
-    ClientUid              = $cfg.ClientUid
+    ClientUid              = $(if ($cfg.ClientUid) { $cfg.ClientUid } else { '' })
     ClassPlanName          = $(if ($cfg.ClassPlanName) { $cfg.ClassPlanName } else { 'default_classplan' })
     ComponentsName         = 'default_components'
     RefreshIntervalSeconds = [int]$cfg.RefreshIntervalSeconds
@@ -276,26 +292,42 @@ $syncCfg = [ordered]@{
     VoiceHubKey            = $cfg.VoiceHubKey
     SongboardResource      = 'songboard'
     SongboardRefreshSeconds = 15
+    NetworkMode            = $netMode
+    WanClientAppBase       = $wanBase
+    WanBaseDomain          = $wanDom
+    LanClientAppBase       = $lanBase
+    LanBaseDomain          = $lanDom
 }
-$syncPath = Join-Path $pluginDir 'stelarith-sync.json'
 
 # 5.2 面板地址：stelarith-panel.json（插件设置页内嵌面板用）
 $panelCfg = [ordered]@{ panelUrl = $cfg.ServerPanel }
+
+# 插件配置目录（PluginConfigFolder）—— 插件真正读的那一处
+$cfgPluginDir = Join-Path $dataDir 'Config\Plugins\StelarithControlPlugin'
+$syncPath  = Join-Path $pluginDir 'stelarith-sync.json'
 $panelPath = Join-Path $pluginDir 'stelarith-panel.json'
+$syncPath2  = Join-Path $cfgPluginDir 'stelarith-sync.json'
+$panelPath2 = Join-Path $cfgPluginDir 'stelarith-panel.json'
 
 if ($DryRun) {
-    Write-Info ("[演练] 将写入 " + $syncPath)
-    Write-Info ("[演练] 将写入 " + $panelPath)
+    Write-Info ("[演练] 将写入 " + $syncPath + " / " + $syncPath2)
+    Write-Info ("[演练] 将写入 " + $panelPath + " / " + $panelPath2)
 } else {
-    if (Test-Path -LiteralPath $syncPath) {
-        $b = Backup-File $syncPath 'before-deploy'
-        Write-Info ("已备份原同步配置：" + (Split-Path -Leaf $b))
+    if (-not (Test-Path -LiteralPath $cfgPluginDir)) {
+        New-Item -ItemType Directory -Path $cfgPluginDir -Force | Out-Null
     }
-    Save-JsonFile -Path $syncPath -Object $syncCfg
-    Write-Ok 'stelarith-sync.json 已写入'
-
-    Save-JsonFile -Path $panelPath -Object $panelCfg
-    Write-Ok 'stelarith-panel.json 已写入'
+    foreach ($p in @($syncPath, $syncPath2)) {
+        if (Test-Path -LiteralPath $p) {
+            $b = Backup-File $p 'before-deploy'
+            Write-Info ("已备份原同步配置：" + (Split-Path -Leaf $b))
+        }
+    }
+    foreach ($p in @($syncPath, $syncPath2))   { Save-JsonFile -Path $p -Object $syncCfg }
+    foreach ($p in @($panelPath, $panelPath2)) { Save-JsonFile -Path $p -Object $panelCfg }
+    Write-Ok ('stelarith-sync.json / stelarith-panel.json 已写入两处（含插件实际读取的 Config\Plugins）')
+    if ($netMode -eq 'lan') {
+        Write-Info ('当前网络模式：内网直连 -> ' + $cfg.ServerBase + '（Host: ' + $cfg.Slug + '.' + $cfg.BaseDomain + '）')
+    }
 }
 
 # 5.3 宿主设置：关闭「插件异常即自动禁用」、跳过欢迎向导
@@ -369,8 +401,12 @@ if ($DryRun) {
         if ($cfg.AutoStart) {
             $lnk = Join-Path $startup 'ClassIsland.lnk'
             New-ShortcutFile -Path $lnk -TargetPath $exeRoot -WorkingDirectory $cfg.InstallDir -IconLocation $icon
-            Write-Ok ('已加入开机自启：' + $lnk)
-            Write-Info '（通过「启动」文件夹实现：登录桌面后自动显示课表，不需要 UAC 授权，也便于随时删除）'
+            # T08 防拆 L3：收紧 lnk 的 ACL —— 移除继承，只给 SYSTEM/管理员/当前部署用户
+            # 完全控制，普通学生账号只保留读+执行（能双击打开，但删不掉快捷方式）。
+            # 若学生账号就是部署账号本人，ACL 挡不住 —— 由看门狗任务每 5 分钟自愈兜底。
+            & icacls $lnk /inheritance:r /grant:r "BUILTIN\Administrators:(F)" "NT AUTHORITY\SYSTEM:(F)" "${env:USERDOMAIN}\${env:USERNAME}:(F)" "BUILTIN\Users:(RX)" 2>&1 | Out-Null
+            Write-Ok ('已加入开机自启：' + $lnk + '（ACL 已收紧：仅管理员/系统可删，学生账号只读+执行）')
+            Write-Info '（通过「启动」文件夹实现：登录桌面后自动显示课表，不需要 UAC 授权）'
         }
 
         if ($cfg.CreateDesktopShortcut) {
@@ -461,6 +497,14 @@ if ($cfg.Agent.Enabled -and -not $DryRun) {
     $checks += ,@('代理启动器',    (Test-Path -LiteralPath (Get-AgentCmdPath $cfg.InstallDir)))
     $checks += ,@('代理自启任务',  ($null -ne (Get-AgentTaskInfo)))
     $checks += ,@('代理正在运行',  ((Test-AgentStatus).Ok))
+    # T08 防拆 L3：看门狗任务 + 脚本必须都在（每 5 分钟复查，不在就拉起）
+    $checks += ,@('代理看门狗任务',  ($null -ne (Get-AgentWatchdogTaskInfo)))
+    $checks += ,@('代理看门狗脚本',  (Test-Path -LiteralPath (Get-AgentWatchdogCmdPath $cfg.InstallDir)))
+    # T11 防拆 L2：守护进程二进制 + 任务（常驻 15s 探活 agent/ClassIsland）
+    if (Test-Path -LiteralPath (Get-AgentGuardExePath $cfg.InstallDir)) {
+        $checks += ,@('守护进程 exe',   (Test-Path -LiteralPath (Get-AgentGuardExePath $cfg.InstallDir)))
+        $checks += ,@('守护进程任务',   ($null -ne (Get-AgentGuardTaskInfo)))
+    }
 }
 $allOk = $true
 foreach ($c in $checks) {

@@ -206,13 +206,46 @@ public sealed class StelarithSyncOptions
         }
         // 空串视为「配置了但没填」，回落到默认，避免 UI 上出现空白来源名
         if (string.IsNullOrWhiteSpace(opt.NotificationSourceName)) opt.NotificationSourceName = "集控广播";
-        // 客户端 uid 留空 → 用机器名（每台教室机天然唯一），不再写死 lab-pc-001
-        if (string.IsNullOrWhiteSpace(opt.ClientUid)) opt.ClientUid = Environment.MachineName;
+        // 客户端 uid 留空 → 优先读本机 agent 的 uid（与星集控共用同一设备名），
+        // 读不到再回退机器名（每台教室机天然唯一）。
+        if (string.IsNullOrWhiteSpace(opt.ClientUid))
+        {
+            opt.ClientUid = TryReadAgentUid() ?? Environment.MachineName;
+        }
         // slug 留空 → 明确告警。不静默用一个错误默认值去请求：那会 403 → 被 CCProtect 自封 IP → 429，
         // 表现为「插件拉不到课表、主界面空白」，且现象与原因完全不相关，极难排查。
         if (string.IsNullOrWhiteSpace(opt.Slug))
             SyncOptionsDiag("警告：租户 slug 未配置（stelarith-sync.json 的 Slug）—— 所有 CIMS 请求会 403。");
         return opt;
+    }
+
+    /// 与星集控 agent 共用设备名：读本机 agent 的 uid（run-agent.cmd / agent-secret.cmd）。
+    /// 教室机先装 agent（uid 固化），插件读到同一 uid → CIMS 设备表只有一条记录。
+    /// 读取失败（agent 未装/文件被移）返回 null，调用方回退机器名。
+    private static string? TryReadAgentUid()
+    {
+        try
+        {
+            var candidates = new[]
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Stelarith", "agent", "device.uid"),
+                @"C:ClassIslandagentun-agent.cmd",
+                @"C:ClassIslandagentagent-secret.cmd",
+            };
+            foreach (var p in candidates)
+            {
+                if (!File.Exists(p)) continue;
+                var text = File.ReadAllText(p);
+                var m = System.Text.RegularExpressions.Regex.Match(text, "STELARITH_DEVICE_UID=([^\r\n\"]+)");
+                if (m.Success && !string.IsNullOrWhiteSpace(m.Groups[1].Value))
+                {
+                    var uid = m.Groups[1].Value.Trim();
+                    if (uid.Length <= 64) return uid;
+                }
+            }
+        }
+        catch { /* 读取失败静默，回退机器名 */ }
+        return null;
     }
 }
 

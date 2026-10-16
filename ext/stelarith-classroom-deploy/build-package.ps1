@@ -47,8 +47,12 @@ param(
     #   2) 注入器类插件在教室机环境会往 UI 线程抛异常，而宿主又不能开
     #      AutoDisableCorruptPlugins（否则会连带禁用集控插件）
     #      → 表现为「进程活着、主窗口不显示」。
-    # 教室端只需要集控插件。确实要带别的，用 -PluginAllowList 显式列出。
-    [string[]]$PluginAllowList = @()
+    # 插件携带策略（2026-09-21 用户纠正：装哪些插件是用户的事，不该由脚本拍板）。
+    #   · 两个都不传  → **全部带上**（默认，只排除 .bak-* 备份）
+    #   · -PluginAllowList  → 只带这几个（集控插件仍强制带上）
+    #   · -ExcludePlugins   → 除了这几个都带
+    [string[]]$PluginAllowList = @(),
+    [string[]]$ExcludePlugins = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -168,6 +172,23 @@ if (-not (Test-Path -LiteralPath $AgentExe)) {
     Ok ('代理已入包：' + $agentSizeKB + ' KB，SHA256 ' + $agentSha.Substring(0, 12) + '...')
 }
 
+# 1.5.1 T11 防拆 L2：守护进程 stelarith-guard.exe（与代理同级入包）。
+# 没有它只是少一层 15s 快速兜底（L3 看门狗仍在）——所以缺它时警告、不阻断。
+$guardIncluded = $false
+$guardSizeKB = 0
+$guardSrc = Join-Path (Split-Path -Parent $PSScriptRoot) 'stelarith-guard\target\release\stelarith-guard.exe'
+if (Test-Path -LiteralPath $guardSrc) {
+    $dstGuard = Join-Path $OutDir 'agent\stelarith-guard.exe'
+    Copy-Item -LiteralPath $guardSrc -Destination $dstGuard -Force
+    $guardSizeKB = [math]::Round((Get-Item -LiteralPath $dstGuard).Length / 1KB, 0)
+    $guardIncluded = $true
+    Ok ('守护进程已入包：' + $guardSizeKB + ' KB（stelarith-guard.exe，防拆 L2）')
+} else {
+    Warn ('未找到守护进程二进制：' + $guardSrc)
+    Warn '  缺它的后果：教室端少一层 15s 常驻兜底（学生杀 agent 后要等 5 分钟看门狗才拉回）。'
+    Warn '  补上它： cd ext\stelarith-guard ; cargo build --release'
+}
+
 # ---------------------------------------------------------------- 2. app
 if (-not $SkipApp) {
     Write-Host ''
@@ -247,19 +268,23 @@ Get-ChildItem -LiteralPath $srcProfiles -File -Filter '*.json' |
     }
 Ok ("课表档案 " + $profN + " 份（离线显示基线）")
 
-# 3.3 Config —— 排除密钥与日志
+# 3.3 Config —— 排除日志/备份；含明文密钥的设置**保留文件但置空密钥**
+#
+# 为什么不再整份跳过：2026-09-18 那次跳过 aisettings.json 的后果是「插件本体在、配置没了」
+# → 教室机启动即刷报错。2026-09-21 用户又明确指出「装哪些插件不该由脚本替他决定」。
+# 现在的做法是两头都占：**文件照常带上**（插件行为正常），**密钥置空**（红线不破），
+# 并允许部署后在教室机上自行填写自己的 Key。
 $srcConfig = Join-Path $srcData 'Config'
 $dstConfig = Join-Path $dstSeed 'Config'
 $cfgSkipped = New-Object System.Collections.Generic.List[string]
+$cfgRedacted = New-Object System.Collections.Generic.List[string]
 Get-ChildItem -LiteralPath $srcConfig -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Substring($srcConfig.Length).TrimStart('\')
-    # 排除：日志、备份、以及含明文密钥的第三方插件设置
+    # 排除：日志、备份
     if ($_.Extension -eq '.log') { return }
     if ($_.Name -match '\.bak') { return }
-    if ($rel -ieq 'Plugins\ClassIsland.AISmartClass\aisettings.json') {
-        $cfgSkipped.Add($rel + '  ← 含明文 apiKey') | Out-Null
-        return
-    }
+    # 已知含明文密钥的第三方插件设置：保留文件、置空密钥
+    $isSecretCfg = ($rel -ieq 'Plugins\ClassIsland.AISmartClass\aisettings.json')
     $dst = Join-Path $dstConfig $rel
     $dir = Split-Path -Parent $dst
     if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -269,23 +294,46 @@ Get-ChildItem -LiteralPath $srcConfig -Recurse -File | ForEach-Object {
         $t = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
         $t = $t.Replace($srcEsc, '{{INSTALL_DIR}}')
         $t = $t.Replace($SourceRoot, '{{INSTALL_DIR}}')
+        if ($isSecretCfg) {
+            $before = $t
+            # 先按字段清空，再兜底清掉任何漏网的 sk- 值（自检 5.1 会再扫一遍）
+            $t = [regex]::Replace($t, '("apiKey"\s*:\s*")[^"]*(")', '${1}${2}')
+            $t = [regex]::Replace($t, 'sk-[A-Za-z0-9]{16,}', '')
+            if ($t -ne $before) { $cfgRedacted.Add($rel + '  ← 明文 apiKey 已置空（文件保留，插件照常可用）') | Out-Null }
+        }
         [System.IO.File]::WriteAllText($dst, $t, (New-Object System.Text.UTF8Encoding($false)))
     } else {
         Copy-Item -LiteralPath $_.FullName -Destination $dst -Force
     }
 }
-Ok 'Config（已排除日志 / 备份 / 含密钥项）'
+Ok 'Config（已排除日志 / 备份；含密钥项已置空而非整份丢弃）'
 foreach ($s in $cfgSkipped) { Warn ("排除：" + $s) }
+foreach ($s in $cfgRedacted) { Ok ("脱敏：" + $s) }
 
-# 3.4 Plugins —— 只带白名单插件（默认仅集控插件），排除 .bak-* 与插件内的私密配置
+# 3.4 Plugins —— 默认**全部带上**（2026-09-21 用户明确纠正）
+#
+# 历史：这里曾经默认「只带集控插件、其余全部剔除」，理由是制作机是开发机，
+# 装着壁纸注入、AI 课堂、地震预警、动画等个人插件，拿到教室机上会刷报错甚至
+# 让 ClassIsland 主窗口不显示。但——**这是产品决策，不该由出包脚本替用户拍板**，
+# 用户安装/部署哪些插件由用户决定。所以改成：
+#   · 默认：全部带上（只排除 .bak-* 备份目录）；
+#   · 要"只带某几个"：显式传 -PluginAllowList（此时集控插件仍强制带上）；
+#   · 要"除了某几个都带"：传 -ExcludePlugins。
 $srcPlugins = Join-Path $srcData 'Plugins'
 $dstPlugins = Join-Path $dstSeed 'Plugins'
 
-# 集控插件永远带上（没它这个包就没有意义），其余看白名单
-$allow = @($PluginAllowList | Where-Object { $_ }) + @('StelarithControlPlugin') | Select-Object -Unique
-
 $allPlugins = @(Get-ChildItem -LiteralPath $srcPlugins -Directory |
     Where-Object { $_.Name -notmatch '^\.?bak' -and $_.Name -notmatch '\.bak-' })
+
+$explicitAllow = @($PluginAllowList | Where-Object { $_ })
+if ($explicitAllow.Count -gt 0) {
+    # 显式白名单模式（集控插件没它包就没意义，永远带上）
+    $allow = @($explicitAllow + 'StelarithControlPlugin' | Select-Object -Unique)
+} else {
+    # 默认模式：全带，减去 -ExcludePlugins
+    $allow = @($allPlugins | Where-Object { $ExcludePlugins -notcontains $_.Name } | ForEach-Object { $_.Name })
+    if ($allow -notcontains 'StelarithControlPlugin') { throw '集控插件被排除了 —— 这样的包没有意义，请检查 -ExcludePlugins。' }
+}
 $keepPlugins = @($allPlugins | Where-Object { $allow -contains $_.Name })
 $skipPlugins = @($allPlugins | Where-Object { $allow -notcontains $_.Name })
 
@@ -295,7 +343,31 @@ foreach ($p in $keepPlugins) {
     if ($LASTEXITCODE -ge 8) { throw ("复制插件失败：" + $p.Name) }
     $plugN = $plugN + 1
 }
-Ok ("插件 " + $plugN + " 个（白名单：" + ($keepPlugins.Name -join ', ') + "）")
+Ok ("插件 " + $plugN + " 个（全带；" + ($keepPlugins.Name -join ', ') + "）")
+
+# 3.4a 插件目录内的**文本文件**同样要做绝对路径占位化。
+# 为什么必须单列这一步：插件目录是用 robocopy **原样**搬过去的（见 3.4），
+# 而插件自带的 README.md 里写着制作机上的示例路径（如 D:\Classlsland\data\...）。
+# 不处理有两个后果：① 包拷到别的机器后，文档里全是"不存在的目录"，照着做会踩空；
+# ② 出包自检（5.1）会以「源机绝对路径残留」直接拦下整包 —— 2026-09-21 实测踩到。
+# 只动文本类扩展名，二进制（dll / pdb / png）一律不碰。
+$scrubExts = @('.md', '.json', '.yml', '.yaml', '.txt', '.ps1', '.cmd', '.jsonc')
+$scrubN = 0
+$scrubHit = 0
+if (Test-Path -LiteralPath $dstPlugins) {
+    Get-ChildItem -LiteralPath $dstPlugins -Recurse -File |
+        Where-Object { $scrubExts -contains $_.Extension.ToLower() } | ForEach-Object {
+            $scrubN = $scrubN + 1
+            $t = [System.IO.File]::ReadAllText($_.FullName, [System.Text.Encoding]::UTF8)
+            if ($t.Contains($srcEsc) -or $t.Contains($SourceRoot)) {
+                # 先替换 JSON 里的转义形态，再替换原样形态，避免二次替换互相吃掉
+                $t = $t.Replace($srcEsc, '{{INSTALL_DIR}}').Replace($SourceRoot, '{{INSTALL_DIR}}')
+                [System.IO.File]::WriteAllText($_.FullName, $t, (New-Object System.Text.UTF8Encoding($false)))
+                $scrubHit = $scrubHit + 1
+            }
+        }
+}
+Ok ("插件文本文件 " + $scrubN + " 个：占位化改写 " + $scrubHit + " 个")
 
 # 3.4b 清掉未入选插件的**配置目录** —— 插件本体不带了，配置留着是无源之水，
 #      且 PluginsIndex 里若仍登记，宿主启动时会去找一个不存在的插件目录。
@@ -309,20 +381,45 @@ if (Test-Path -LiteralPath $seedCfgPlugins) {
     }
 }
 if ($skipPlugins.Count -gt 0) {
-    Warn ("未入选插件 " + $skipPlugins.Count + " 个（教室端不需要）：" + ($skipPlugins.Name -join ', '))
+    Warn ("按你的 -PluginAllowList / -ExcludePlugins 排除插件 " + $skipPlugins.Count + " 个：" + ($skipPlugins.Name -join ', '))
 }
 if ($cfgRemoved -gt 0) { Ok ("已移除 " + $cfgRemoved + " 个未入选插件的配置目录") }
 
 # 3.5 插件同步配置 —— 用部署包配置预填（部署时脚本还会重写一次）
+#
+# ⚠️ 这里必须写**两个**位置，而且**不能**把制作机的配置原样带出去：
+#   · 插件读配置走 StelarithSyncOptions.ResolveConfigDir()：
+#       优先 PluginConfigFolder（= data\Config\Plugins\StelarithControlPlugin），
+#       取不到才回落程序集目录（= data\Plugins\StelarithControlPlugin）。
+#   · 3.3 会把制作机的 data\Config 整个搬进种子，其中就含**制作机自己的**
+#       stelarith-sync.json（ClientUid=lab-pc-001、demo 租户、内网指向 127.0.0.1）。
+#   · 若只写 install dir，那份制作机配置会**静默胜出** → 每间教室都顶着同一个 uid 注册。
+#     （2026-09-21 实测发现，见 PACKAGE-INFO 的 SeedSyncWrittenTo。）
+#   · ClientUid 一律**留空**：插件在留空时用机器名兜底，天然逐机唯一。
 $seedPluginDir = Join-Path $dstPlugins 'StelarithControlPlugin'
-if (-not (Test-Path -LiteralPath $seedPluginDir)) {
-    New-Item -ItemType Directory -Path $seedPluginDir -Force | Out-Null
+$seedCfgPluginDir = Join-Path $dstSeed 'Config\Plugins\StelarithControlPlugin'
+foreach ($d in @($seedPluginDir, $seedCfgPluginDir)) {
+    if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
 }
+
+# 双通道（内网直连 / 公网域名）—— 插件设置页有「切到内网直连 / 切到公网域名」两个按钮，
+# 切换时会把对应那组地址成对写入。两组都必须非空，否则切一次就把 ClientAppBase 刷成空串
+# （插件的 lan 分支**不做校验**，空串会让整套同步静默失败）。
+$netMode = if ($deployCfg.NetworkMode) { ([string]$deployCfg.NetworkMode).Trim().ToLowerInvariant() } else { 'wan' }
+if ($netMode -ne 'lan' -and $netMode -ne 'wan') { $netMode = 'wan' }
+$wanBase = if ($deployCfg.WanClientAppBase) { [string]$deployCfg.WanClientAppBase } else { [string]$deployCfg.ServerBase }
+$wanDom  = if ($deployCfg.WanBaseDomain)    { [string]$deployCfg.WanBaseDomain }    else { [string]$deployCfg.BaseDomain }
+$lanBase = if ($deployCfg.LanClientAppBase) { [string]$deployCfg.LanClientAppBase } else { 'http://10.0.0.10:8096' }
+$lanDom  = if ($deployCfg.LanBaseDomain)    { [string]$deployCfg.LanBaseDomain }    else { 'localhost' }
+if (-not $deployCfg.LanClientAppBase -or -not $deployCfg.LanBaseDomain) {
+    Warn ('内网备用地址未在 config\deployment.json 里显式配置，暂用 ' + $lanBase + '（内网基域 ' + $lanDom + '）；若学校走内网，请填真实的内网服务地址与内网基域。')
+}
+
 $sync = [ordered]@{
     ClientAppBase           = [string]$deployCfg.ServerBase
     BaseDomain              = [string]$deployCfg.BaseDomain
     Slug                    = [string]$deployCfg.Slug
-    ClientUid               = [string]$deployCfg.ClientUid
+    ClientUid               = ''
     ClassPlanName           = 'default_classplan'
     ComponentsName          = 'default_components'
     RefreshIntervalSeconds  = 30
@@ -333,14 +430,21 @@ $sync = [ordered]@{
     VoiceHubKey             = ''
     SongboardResource       = 'songboard'
     SongboardRefreshSeconds = 15
+    NetworkMode             = $netMode
+    WanClientAppBase        = $wanBase
+    WanBaseDomain           = $wanDom
+    LanClientAppBase        = $lanBase
+    LanBaseDomain           = $lanDom
 }
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText((Join-Path $seedPluginDir 'stelarith-sync.json'),
-    ($sync | ConvertTo-Json -Depth 10), $utf8)
 $panelUrl = if ($deployCfg.ServerPanel) { [string]$deployCfg.ServerPanel } else { '' }
-[System.IO.File]::WriteAllText((Join-Path $seedPluginDir 'stelarith-panel.json'),
-    ([ordered]@{ panelUrl = $panelUrl } | ConvertTo-Json), $utf8)
-Ok 'stelarith-sync.json / stelarith-panel.json（已按部署配置预填）'
+foreach ($d in @($seedPluginDir, $seedCfgPluginDir)) {
+    [System.IO.File]::WriteAllText((Join-Path $d 'stelarith-sync.json'),
+        ($sync | ConvertTo-Json -Depth 10), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $d 'stelarith-panel.json'),
+        ([ordered]@{ panelUrl = $panelUrl } | ConvertTo-Json), $utf8)
+}
+Ok ('stelarith-sync.json / stelarith-panel.json（两处均写：data\Plugins + data\Config\Plugins；模式 ' + $netMode + '）')
 
 # ---------------------------------------------------------------- 4. 包信息
 $appMB  = 0; $seedMB = 0
@@ -355,6 +459,12 @@ $info = [ordered]@{
     ClassIslandVersion = ($srcApp.Name -replace '^app-', '')
     PluginVersion      = $pluginVer
     PluginCount        = $plugN
+    Plugins            = @($keepPlugins.Name)
+    PluginPolicy       = '默认全部带上；如需裁剪用 -PluginAllowList（只带这些）或 -ExcludePlugins（除这些都带）'
+    RedactedFiles      = @($cfgRedacted)
+    NetworkMode        = $netMode
+    SeedSyncWrittenTo  = 'data\Plugins\StelarithControlPlugin + data\Config\Plugins\StelarithControlPlugin（两处内容一致；插件优先读后者）'
+    ClientUidPolicy    = '包内 ClientUid 一律留空 → 插件按计算机名兜底，逐机唯一（绝不能让某一台机器的 uid 出厂）'
     AgentIncluded      = $agentIncluded
     AgentSHA256        = $agentSha
     AgentSizeKB        = $agentSizeKB
@@ -366,7 +476,7 @@ $info = [ordered]@{
         'data\Logs / Cache / Temp / Backups（运行时产物）',
         'data\Plugins\*.bak-*（历史备份）',
         'data\Config\Plugins\**\*.log（日志）',
-        'data\Config\Plugins\ClassIsland.AISmartClass\aisettings.json（含明文 API Key —— 安全红线）'
+        'data\Config\Plugins\ClassIsland.AISmartClass\aisettings.json 的 apiKey 值（文件保留，密钥置空 —— 安全红线）'
     )
     AbsolutePathPolicy = '种子内所有制作机绝对路径已替换为 {{INSTALL_DIR}}，由 deploy.ps1 在目标机替换为真实安装目录'
 }
@@ -423,6 +533,12 @@ Get-ChildItem -LiteralPath $OutDir -Recurse -File | Where-Object { $txtExts -con
     if ($t -match 'sk-[A-Za-z0-9]{16,}') {
         $fail.Add('密钥泄露: ' + $_.FullName)
     }
+    # T06 安全红线：代理指令密钥不得以明文落包。
+    # 模板写法是 `'set "STELARITH_AGENT_SECRET=' + ...`（等号后是引号），
+    # 真实明文值是 `STELARITH_AGENT_SECRET=abc...`（等号后是值字符）——用这个区分。
+    if ($t -match 'STELARITH_(AGENT_SECRET|SITE_PUBKEY)=[^"'']') {
+        $fail.Add('代理密钥明文落包: ' + $_.FullName)
+    }
     if ($t.Contains($SourceRoot) -or $t.Contains($srcEsc2)) {
         $fail.Add('源机绝对路径残留: ' + $_.FullName)
     }
@@ -477,6 +593,32 @@ if (Test-Path -LiteralPath $agentPath) {
     Write-Host '  · 本地代理：未入包 —— 面板上的「远程屏幕控制 / 系统级重启」将不可用' -ForegroundColor Yellow
 }
 
+# 5.5.1 T11 防拆 L2：守护进程 stelarith-guard.exe（PE 校验，防截断/防缺包）
+$guardPath = Join-Path $OutDir 'agent\stelarith-guard.exe'
+if (Test-Path -LiteralPath $guardPath) {
+    $gb = [System.IO.File]::ReadAllBytes($guardPath)
+    if ($gb.Length -lt 10240) {
+        $fail.Add('守护进程体积异常（' + $gb.Length + ' 字节），疑似截断')
+    } elseif ($gb[0] -ne 0x4D -or $gb[1] -ne 0x5A) {
+        $fail.Add('守护进程不是有效 PE 可执行文件（缺 MZ 头）')
+    } else {
+        Write-Host ('  · 守护进程：PE 头/体积已校验（' + [math]::Round($gb.Length / 1KB, 0) + ' KB，防拆 L2）') -ForegroundColor Gray
+    }
+} else {
+    Write-Host '  · 守护进程：未入包 —— 教室端少一层 15s 常驻兜底（仅 L3 看门狗 5 分钟在）' -ForegroundColor Yellow
+}
+
+# 5.5.2 T11 防拆 L2 防回归：部署脚本必须含 guard 安装/注册逻辑（关键词扫描）
+# 与 T08 的 5.8 防拆 L3 防回归同理：改了脚本忘了同步注册逻辑，出包自检直接拦下。
+$guardKeywords = @('Register-StelarithGuard', 'AGENT_GUARD_TASK', 'stelarith-guard.exe', 'Get-AgentGuardExePath', 'Remove-StelarithGuard')
+$libCommon = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot 'payload\scripts\lib-common.ps1'))
+foreach ($kw in $guardKeywords) {
+    if (-not $libCommon.Contains($kw)) {
+        $fail.Add('防拆 L2 防回归：lib-common.ps1 缺关键词 "' + $kw + '"（guard 安装逻辑不完整）')
+    }
+}
+Write-Host ('  · 防拆 L2（guard）关键词：' + $guardKeywords.Count + '/' + $guardKeywords.Count + ' 已校验') -ForegroundColor Gray
+
 # 5.6 全包不得残留任何 *.log
 # 出包机的运行时诊断日志（ste-*-diag.log 在应用目录、插件日志在 data 下）一旦入包，
 # 新装教室机的 preflight 会读到出包机的日志并误报「插件日志 N 分钟前」，
@@ -488,6 +630,63 @@ if ($allLogs.Count -gt 0) {
     }
 }
 Write-Host ("  · 全包日志文件：" + $allLogs.Count + " 个（必须为 0）") -ForegroundColor Gray
+
+# 5.7 插件同步配置：身份与网络模式
+# 为什么单列：这两项错了**都不会报错**，只会"看起来很正常的跑着"。
+#   · ClientUid 带了某一台机器的值 → 全校教室注册成同一台设备（设备管理全乱、指令发错班）；
+#   · 内网/公网那两组地址有一组空 → 面板上点一次"切换网络"就把 ClientAppBase 刷成空串，
+#     整套同步静默失效（插件的 lan 分支不做校验）。
+$syncJsons = @(Get-ChildItem -LiteralPath $OutDir -Recurse -File -Filter 'stelarith-sync.json' -ErrorAction SilentlyContinue)
+if ($syncJsons.Count -eq 0) {
+    $fail.Add('包内没有任何 stelarith-sync.json —— 插件将用代码内置默认值（多半指向 demo 环境）')
+} else {
+    foreach ($sj in $syncJsons) {
+        $rel = $sj.FullName.Substring($OutDir.Length).TrimStart('\')
+        try { $j = [System.IO.File]::ReadAllText($sj.FullName, [System.Text.Encoding]::UTF8) | ConvertFrom-Json }
+        catch { $fail.Add('stelarith-sync.json 非法 JSON: ' + $rel); continue }
+        if (-not [string]::IsNullOrWhiteSpace([string]$j.ClientUid)) {
+            $fail.Add('ClientUid 非空（全校会共用同一设备身份）: ' + $rel + ' -> ' + $j.ClientUid)
+        }
+        foreach ($k in @('ClientAppBase', 'BaseDomain', 'Slug', 'WanClientAppBase', 'WanBaseDomain', 'LanClientAppBase', 'LanBaseDomain')) {
+            $v = [string]$j.$k
+            if ([string]::IsNullOrWhiteSpace($v)) { $fail.Add('stelarith-sync.json 缺非空字段 ' + $k + ': ' + $rel) }
+        }
+        if ([string]$j.Slug -ne [string]$deployCfg.Slug) {
+            $fail.Add('stelarith-sync.json 的 Slug(' + $j.Slug + ') 与 deployment.json(' + $deployCfg.Slug + ') 不一致: ' + $rel)
+        }
+    }
+    if ($syncJsons.Count -lt 2) {
+        $fail.Add('只写了 ' + $syncJsons.Count + ' 处 stelarith-sync.json —— 插件优先读 data\Config\Plugins\..., 只写 install dir 会被制作机配置屏蔽')
+    } else {
+        $h = $syncJsons | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } | Select-Object -Unique
+        if ($h.Count -ne 1) { $fail.Add('两处 stelarith-sync.json 内容不一致（哪份生效取决于插件配置目录）') }
+    }
+}
+Write-Host ("  · 插件同步配置：" + $syncJsons.Count + " 处，身份/双通道地址已校验") -ForegroundColor Gray
+
+# 5.8 防拆 L3（T08）：payload 必须包含看门狗任务的三件套 —— 常量、注册函数、生成脚本路径。
+# 为什么单列：防拆是「少了不报错、只会在被拆时躺平」的静默能力。某次重构若把
+# Register-AgentWatchdog 删了，出包自检必须在出包那一刻拦住，不能等教室机被拆了才发现。
+$libPath = Join-Path $OutDir 'scripts\lib-common.ps1'
+if (Test-Path -LiteralPath $libPath) {
+    $libTxt = [System.IO.File]::ReadAllText($libPath, [System.Text.Encoding]::UTF8)
+    $tamperParts = @(
+        @('看门狗任务名常量',  'AGENT_WATCHDOG_TASK'),
+        @('看门狗注册函数',    'function Register-AgentWatchdog'),
+        @('看门狗移除函数',    'function Remove-AgentWatchdog'),
+        @('自启任务加固参数',  '-RestartCount 3 -RestartInterval'),
+        @('自启任务防叠实例',  '-MultipleInstances IgnoreNew'),
+        @('自启任务补启动',    '-StartWhenAvailable')
+    )
+    foreach ($tp in $tamperParts) {
+        if ($libTxt -notmatch [regex]::Escape($tp[1])) {
+            $fail.Add('防拆 L3 组件缺失（' + $tp[0] + '）: ' + $tp[1] + ' 不在 lib-common.ps1 中')
+        }
+    }
+    Write-Host ("  · 防拆 L3 看门狗组件：" + $tamperParts.Count + " 项已校验（lib-common.ps1）") -ForegroundColor Gray
+} else {
+    $fail.Add('scripts\lib-common.ps1 缺失，无法校验防拆组件')
+}
 
 Write-Host ''
 if ($fail.Count -gt 0) {

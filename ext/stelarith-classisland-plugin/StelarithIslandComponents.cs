@@ -70,6 +70,32 @@ public sealed class StelarithIslandSettings : INotifyPropertyChanged
         set { if (_onlyOwnClass != value) { _onlyOwnClass = value; Raise(); } }
     }
 
+    // ─── 底部滚动通知条设置（marquee 组件）───
+    private int _noticeCount = 5;
+    private double _noticeScrollPixelsPerSecond = 24;
+    private bool _showSpeaker = true;
+
+    /// <summary>滚动条展示的最近通知条数（1~20）。</summary>
+    public int NoticeCount
+    {
+        get => _noticeCount;
+        set { var v = Math.Clamp(value, 1, 20); if (_noticeCount != v) { _noticeCount = v; Raise(); } }
+    }
+
+    /// <summary>滚动速度（像素/秒，0 = 静止显示最新一条）。</summary>
+    public double NoticeScrollPixelsPerSecond
+    {
+        get => _noticeScrollPixelsPerSecond;
+        set { var v = Math.Clamp(value, 0, 200); if (Math.Abs(_noticeScrollPixelsPerSecond - v) > 0.01) { _noticeScrollPixelsPerSecond = v; Raise(); } }
+    }
+
+    /// <summary>是否显示左侧喇叭图标。</summary>
+    public bool ShowSpeaker
+    {
+        get => _showSpeaker;
+        set { if (_showSpeaker != value) { _showSpeaker = value; Raise(); } }
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void Raise([CallerMemberName] string? name = null)

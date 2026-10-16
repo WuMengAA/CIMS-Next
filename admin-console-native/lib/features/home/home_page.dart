@@ -23,6 +23,7 @@ import '../../core/update_check.dart';
 import '../../core/updater.dart';
 import '../broadcast/broadcast_page.dart';
 import '../devices/devices_page.dart';
+import '../replies/replies_page.dart';
 import '../review/review_page.dart';
 import '../settings/settings_page.dart';
 import '../swap/swap_page.dart';
@@ -33,26 +34,35 @@ import '../tools/volume_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// 一个侧栏功能项。[key] 与 [Identity.primaryNav] 里的键一一对应。
+/// [group] 是分组名（设备 / 通知 / 班级 / 工具 / 设置），桌面侧栏按组分段显示。
 class _NavItem {
   final String key;
+  final String group;
   final IconData icon;
   final IconData selectedIcon;
   final String label;
   final Widget page;
-  const _NavItem(this.key, this.icon, this.selectedIcon, this.label, this.page);
+  const _NavItem(this.key, this.group, this.icon, this.selectedIcon, this.label, this.page);
 }
 
-/// 全部功能（顺序即侧栏顺序）。身份适配只做"显不显示"，不动这份目录。
+/// 全部功能（顺序即侧栏顺序；同一组内按使用频率排）。身份适配只做"显不显示"，
+/// 不动这份目录 —— 分组是视觉分隔，不改变权限逻辑。
 const _catalog = <_NavItem>[
-  _NavItem('devices', Icons.devices_other_outlined, Icons.devices_other, '教室设备', DevicesPage()),
-  _NavItem('swap', Icons.swap_horiz_outlined, Icons.swap_horiz, '自助切班', SwapPage()),
-  _NavItem('teacher', Icons.school_outlined, Icons.school, '老师', TeacherPage()),
-  _NavItem('notify', Icons.campaign_outlined, Icons.campaign, '发通知', BroadcastPage()),
-  _NavItem('review', Icons.fact_check_outlined, Icons.fact_check, '审核', ReviewPage()),
-  _NavItem('random', Icons.casino_outlined, Icons.casino, '随机点名', RandomDrawPage()),
-  _NavItem('file', Icons.upload_file_outlined, Icons.upload_file, '发文件', FileTransferPage()),
-  _NavItem('volume', Icons.volume_up_outlined, Icons.volume_up, '调音量', VolumePage()),
-  _NavItem('settings', Icons.settings_outlined, Icons.settings, '设置', SettingsPage()),
+  // ── 设备 ──
+  _NavItem('devices', '设备', Icons.devices_other_outlined, Icons.devices_other, '教室设备', DevicesPage()),
+  // ── 通知 ──
+  _NavItem('notify', '通知', Icons.campaign_outlined, Icons.campaign, '发通知', BroadcastPage()),
+  _NavItem('replies', '通知', Icons.inbox_outlined, Icons.inbox, '回复收件箱', RepliesPage()),
+  // ── 班级 ──
+  _NavItem('teacher', '班级', Icons.school_outlined, Icons.school, '老师', TeacherPage()),
+  _NavItem('swap', '班级', Icons.swap_horiz_outlined, Icons.swap_horiz, '自助切班', SwapPage()),
+  _NavItem('random', '班级', Icons.casino_outlined, Icons.casino, '随机点名', RandomDrawPage()),
+  // ── 工具 ──
+  _NavItem('file', '工具', Icons.upload_file_outlined, Icons.upload_file, '发文件', FileTransferPage()),
+  _NavItem('volume', '工具', Icons.volume_up_outlined, Icons.volume_up, '调音量', VolumePage()),
+  _NavItem('review', '工具', Icons.fact_check_outlined, Icons.fact_check, '审核', ReviewPage()),
+  // ── 设置 ──
+  _NavItem('settings', '设置', Icons.settings_outlined, Icons.settings, '设置', SettingsPage()),
 ];
 
 class HomePage extends ConsumerStatefulWidget {
@@ -162,37 +172,102 @@ class _HomePageState extends ConsumerState<HomePage> {
       );
     }
 
+    // 桌面侧栏：自定义分组列表（组标签 + 图标项 + 「更多功能」折叠），
+    // 比原生 NavigationRail 多了分组分段，解决「功能挤在一起顺序混乱」的问题。
     return Scaffold(
       body: Row(
         children: [
-          NavigationRail(
-            // 「更多」那一项只是开合按钮，永远不处于选中态。
-            selectedIndex: selected,
-            onDestinationSelected: (i) {
-              if (hasExtra && i == shown.length) {
-                setState(() => _moreOpen = !_moreOpen);
-                return;
-              }
-              setState(() => _current = shown[i].key);
-            },
-            labelType: NavigationRailLabelType.all,
-            destinations: [
-              for (final it in shown)
-                NavigationRailDestination(
-                  icon: Icon(it.icon),
-                  selectedIcon: Icon(it.selectedIcon),
-                  label: Text(it.label),
-                ),
-              if (hasExtra)
-                NavigationRailDestination(
-                  icon: const Icon(Icons.more_horiz),
-                  selectedIcon: const Icon(Icons.more_horiz),
-                  label: Text(_moreOpen ? '收起' : '更多'),
-                ),
-            ],
+          _Sidebar(
+            items: shown,
+            selectedKey: _current,
+            hasExtra: hasExtra,
+            moreOpen: _moreOpen,
+            onSelect: (key) => setState(() => _current = key),
+            onToggleMore: () => setState(() => _moreOpen = !_moreOpen),
           ),
           const VerticalDivider(width: 1, thickness: 1),
           Expanded(child: content),
+        ],
+      ),
+    );
+  }
+}
+
+/// 桌面分组侧栏：按 [group] 分段渲染图标项，组与组之间用标签分隔。
+class _Sidebar extends StatelessWidget {
+  final List<_NavItem> items;
+  final String selectedKey;
+  final bool hasExtra;
+  final bool moreOpen;
+  final ValueChanged<String> onSelect;
+  final VoidCallback onToggleMore;
+  const _Sidebar({
+    required this.items,
+    required this.selectedKey,
+    required this.hasExtra,
+    required this.moreOpen,
+    required this.onSelect,
+    required this.onToggleMore,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // 按组分组（保持目录顺序）
+    final groups = <String, List<_NavItem>>{};
+    for (final it in items) {
+      groups.putIfAbsent(it.group, () => []).add(it);
+    }
+    final entries = groups.entries.toList();
+
+    return SizedBox(
+      width: 200,
+      child: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          for (var g = 0; g < entries.length; g++) ...[
+            if (g > 0)
+              Divider(
+                height: 16,
+                indent: 16,
+                endIndent: 16,
+                color: Colors.white.withValues(alpha: 0.05),
+              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+              child: Text(
+                entries[g].key,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            for (final it in entries[g].value)
+              ListTile(
+                dense: true,
+                selected: it.key == selectedKey,
+                selectedTileColor:
+                    theme.colorScheme.primary.withValues(alpha: 0.10),
+                leading: Icon(
+                  it.key == selectedKey ? it.selectedIcon : it.icon,
+                  size: 20,
+                ),
+                title: Text(it.label, style: const TextStyle(fontSize: 13)),
+                onTap: () => onSelect(it.key),
+              ),
+          ],
+          if (hasExtra) ...[
+            const SizedBox(height: 4),
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.more_horiz, size: 20),
+              title: Text(moreOpen ? '收起' : '更多功能',
+                  style: const TextStyle(fontSize: 13)),
+              onTap: onToggleMore,
+            ),
+          ],
         ],
       ),
     );
