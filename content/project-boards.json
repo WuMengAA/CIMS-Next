@@ -1,7 +1,7 @@
 [
   {
     "slug": "xingjikong",
-    "repo": "",
+    "repo": "WuMengAA/xingjikong-qt",
     "todos": [
       {
         "id": "todo-ota",
@@ -54,50 +54,30 @@
       }
     ],
     "milestones": [],
-    "releases": [
-      {
-        "id": "rel-103",
-        "tag": "v1.0.3",
-        "name": "星集控 1.0.3",
-        "notes": "设备密钥自动获取 + 集成 agent 自举 + 通知三档/过期拦截",
-        "file": "xingjikong-setup.exe",
-        "url": "/uploads/xingjikong-setup.exe",
-        "size": 15846612,
-        "createdAt": "2026-09-27T03:00:00+08:00",
-        "downloads": 2,
-        "prerelease": false,
-        "source": "local"
-      },
-      {
-        "id": "rel-105",
-        "tag": "v1.0.5",
-        "name": "星集控 1.0.5",
-        "notes": "远控跨公网打通（国内 STUN + 0.0.0.0 绑定 + video transceiver + 键鼠坐标）+ 自动静默非覆盖安装 + 存储中心",
-        "file": "xingjikong-setup.exe",
-        "url": "/uploads/xingjikong-setup.exe",
-        "size": 15870972,
-        "createdAt": "2026-09-27T07:30:00+08:00",
-        "downloads": 2,
-        "prerelease": false,
-        "source": "local"
-      },
-      {
-        "id": "rel-106",
-        "tag": "v1.0.6",
-        "name": "星集控 1.0.6",
-        "notes": "安全与隐私全套（OAuth 动态注册 / 登录时限 30-60-120 天 / 接入码绑定 / 权限双闸）+ 软件管理页与更新日志后台",
-        "file": "xingjikong-setup.exe",
-        "url": "/uploads/xingjikong-setup.exe",
-        "size": 15870972,
-        "createdAt": "2026-09-27T08:00:00+08:00",
-        "downloads": 2,
-        "prerelease": false,
-        "source": "local"
-      }
-    ],
-    "sync": null,
+    "releases": [],
+    "sync": {
+      "at": "2026-10-06T16:27:02.211Z",
+      "fullName": "",
+      "description": "",
+      "homepage": "",
+      "language": "",
+      "license": "",
+      "stars": 0,
+      "forks": 0,
+      "watchers": 0,
+      "openIssues": 0,
+      "defaultBranch": "main",
+      "pushedAt": "",
+      "createdAt": "",
+      "archived": false,
+      "topics": [],
+      "anonymous": true,
+      "truncated": false,
+      "commitTotal": 0,
+      "error": "网络无法访问 GitHub：fetch failed"
+    },
     "contrib": {},
     "tagline": "教室数字运维平台：设备管控、远控、通知广播。控制端/被控端双形态，云端静默非覆盖升级，存储中心。",
-    "updatedAt": "2026-10-06T12:02:08.564Z"
+    "updatedAt": "2026-10-06T16:27:02.211Z"
   }
 ]

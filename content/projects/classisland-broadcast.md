@@ -11,8 +11,8 @@ tags:
   - 信息屏
 owner: admin
 excerpt: 把站点公告、新文章、聚合新闻合成一份 ClassIsland Web 公告源，推送到桌面信息屏。一份内容，两种序列化视图：RSS 给订阅器，播报给大屏。
+order: 2
 ---
-
 ## 它是什么
 
 「星璃公告广播网关」是 Stelarith 平台对外暴露的一个端点：`https://你的域名/api/classisland/announcements`。它把站内的"公告 + 新文章 + 聚合新闻"合成一份 ClassIsland 能直接拉取的 Web 公告源，让一块信息屏自动播报站点动态。

@@ -1,33 +1,61 @@
 {
-  "_comment": "自动化规则：上课时段自动隐藏集控主浮窗，下课自动恢复。逻辑：触发器=课程状态(进行中) → 动作=隐藏主视图 / 切换到专注视图。字段名需对照 ClassIsland 实际 Automation schema。",
-  "Guid": "11111111-1111-1111-1111-111111111111",
-  "Name": "上课自动隐藏浮窗",
-  "Enabled": true,
-  "Triggers": [
+  "_comment": "⚠️ 这是【上课时段 AI 简报】示例，不是【上课隐藏浮窗】。原因：ClassIsland 2.1.0.1 的 Action.Id 集里只有 aiisland.generate-ai-notification（AIIsland 插件的 AI 生成通知），没有隐藏视图/隐藏组件的 action。要上课自动隐藏需要自写插件扩展 Action 集，或用集控端按上课时段下发不同视图配置。schema 严格对照真机 D:\\Classlsand\\data\\Config\\Automations\\Default.json 反解。",
+  "_schema_source": "D:\\Classlsand\\data\\Config\\Automations\\Default.json (ClassIsland 2.1.0.1)",
+  "_real_actions": ["aiisland.generate-ai-notification"],
+  "_real_rules": ["classisland.lessons.timeState", "extraIsland.trigger.timePassed", "extraIsland.rule.laterThan"],
+  "version": 1,
+  "automations": [
     {
-      "Type": "ClassIsland.Core.Automation.Triggers.ClassStateTrigger",
-      "Settings": {
-        "State": "InClass",
-        "Mode": "OnEnter"
-      }
-    }
-  ],
-  "Actions": [
-    {
-      "Type": "ClassIsland.Core.Automation.Actions.SetViewVisibilityAction",
-      "Settings": {
-        "TargetView": "教室主视图-标准",
-        "Visible": false
-      }
-    }
-  ],
-  "ExitActions": [
-    {
-      "Type": "ClassIsland.Core.Automation.Actions.SetViewVisibilityAction",
-      "Settings": {
-        "TargetView": "教室主视图-标准",
-        "Visible": true
-      }
+      "Triggers": [],
+      "IsConditionEnabled": true,
+      "Ruleset": {
+        "Mode": 0,
+        "IsReversed": false,
+        "Groups": [
+          {
+            "Rules": [
+              {
+                "IsReversed": false,
+                "Id": "classisland.lessons.timeState",
+                "Settings": {
+                  "State": 3,
+                  "IsActive": true
+                },
+                "IsActive": true
+              }
+            ],
+            "Mode": 1,
+            "IsReversed": false,
+            "IsEnabled": true,
+            "IsActive": true
+          }
+        ],
+        "IsActive": true
+      },
+      "ActionSet": {
+        "IsWorking": false,
+        "Guid": "11111111-1111-1111-1111-111111111111",
+        "Name": "上课时段生成 AI 简报",
+        "Actions": [
+          {
+            "IsCompleted": false,
+            "Id": "aiisland.generate-ai-notification",
+            "Settings": {
+              "scenario": 1,
+              "customPrompt": "请基于本节课和后续课程生成简短的课前简报",
+              "includeScheduleContext": true,
+              "bypassCache": false,
+              "notificationTitle": "本课简报"
+            },
+            "IsActive": true
+          }
+        ],
+        "IsEnabled": true,
+        "IsRevertEnabled": true,
+        "Status": 0,
+        "IsActive": true
+      },
+      "IsActive": true
     }
   ]
 }

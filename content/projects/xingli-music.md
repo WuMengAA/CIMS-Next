@@ -14,8 +14,9 @@ tags:
   - 一起听
   - 中转
 owner: admin
-siteUrl: https://www.245959623.xyz
+siteUrl: 'https://www.245959623.xyz'
 excerpt: 一款"会思考"的本地音乐播放器。算法与小模型驱动，核心理念是"可停留的空间"——音乐为主，视觉与音效为辅，给你一个愿意多待一会儿的地方。
+order: 4
 ---
 ## 它是什么
 

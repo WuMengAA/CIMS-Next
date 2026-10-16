@@ -1,32 +1,60 @@
 {
-  "_comment": "自动化规则：考试时段（由 CIMS 下发的时间窗口或标签触发）全校/全班隐藏娱乐与公告组件，仅保留倒计时与打铃。可由 CIMS 通过配置下发统一启用。字段名需对照 ClassIsland 实际 Automation schema。",
-  "Guid": "22222222-2222-2222-2222-222222222222",
-  "Name": "考试时段全校专注",
-  "Enabled": true,
-  "Priority": 100,
-  "Triggers": [
+  "_comment": "⚠️ 这是【考试时段 AI 智能提醒】示例，不是【考试隐藏娱乐组件】。原因：ClassIsland 2.1.0.1 的 Action.Id 集里只有 aiisland.generate-ai-notification，没有隐藏组件/切档案的 action。要考试隐藏需要自写插件或用集控端按考试时段下发不同配置。",
+  "_schema_source": "D:\\Classlsand\\data\\Config\\Automations\\Default.json (ClassIsland 2.1.0.1)",
+  "_real_actions": ["aiisland.generate-ai-notification"],
+  "version": 1,
+  "automations": [
     {
-      "Type": "ClassIsland.Core.Automation.Triggers.TimeTrigger",
-      "Settings": {
-        "Start": "09:00",
-        "End": "11:00",
-        "Days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
-      }
-    }
-  ],
-  "Actions": [
-    {
-      "Type": "ClassIsland.Core.Automation.Actions.SetComponentVisibilityAction",
-      "Settings": {
-        "Component": "Notification",
-        "Visible": false
-      }
-    },
-    {
-      "Type": "ClassIsland.Core.Automation.Actions.SwitchProfileAction",
-      "Settings": {
-        "Profile": "考试专注"
-      }
+      "Triggers": [],
+      "IsConditionEnabled": true,
+      "Ruleset": {
+        "Mode": 0,
+        "IsReversed": false,
+        "Groups": [
+          {
+            "Rules": [
+              {
+                "IsReversed": false,
+                "Id": "classisland.lessons.timeState",
+                "Settings": {
+                  "State": 3,
+                  "IsActive": true
+                },
+                "IsActive": true
+              }
+            ],
+            "Mode": 1,
+            "IsReversed": false,
+            "IsEnabled": true,
+            "IsActive": true
+          }
+        ],
+        "IsActive": true
+      },
+      "ActionSet": {
+        "IsWorking": false,
+        "Guid": "22222222-2222-2222-2222-222222222222",
+        "Name": "考试时段智能提醒",
+        "Actions": [
+          {
+            "IsCompleted": false,
+            "Id": "aiisland.generate-ai-notification",
+            "Settings": {
+              "scenario": 3,
+              "customPrompt": "考试时段智能提醒",
+              "includeScheduleContext": true,
+              "bypassCache": false,
+              "notificationTitle": "考试提醒"
+            },
+            "IsActive": true
+          }
+        ],
+        "IsEnabled": true,
+        "IsRevertEnabled": true,
+        "Status": 0,
+        "IsActive": true
+      },
+      "IsActive": true
     }
   ]
 }

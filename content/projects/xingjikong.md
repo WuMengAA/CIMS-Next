@@ -12,11 +12,11 @@ tags:
   - WebRTC
   - ClassIsland
 owner: admin
-repoUrl: https://github.com/WuMengAA/CIMS-Next
-siteUrl: https://www.245959623.xyz
+repoUrl: 'https://github.com/WuMengAA/CIMS-Next'
+siteUrl: 'https://www.245959623.xyz'
 excerpt: 面向教室的数字运维平台：设备管控、远程控制、通知广播、班级管理。Qt 管理端 / 被控端双端，云端指令通道与 OTA 自更新。
+order: 0
 ---
-
 ## 它是什么
 
 星集控是**教室数字运维平台**：一块屏幕管理全校设备，把"通知、远控、关机、重启、截图、音量、文件下发"收进一个统一入口。
@@ -69,4 +69,3 @@ excerpt: 面向教室的数字运维平台：设备管控、远程控制、通�
 ## 当前状态
 
 已发布 0.6.x：管理端 0.6.2（集控页 / 课表补全 / 托盘常驻）与 被控端 0.6.4（星璃账号绑定 / 设备票鉴权）都在官网下载中心可下；被控端支持 OTA 自更新，发版后教室机可自助升级。
-
