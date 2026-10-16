@@ -13,10 +13,6 @@
 
 	let active = $state("student");
 
-	// SEO 首选域名（用户指定），canonical/OG 一律写死，避免 www/voicehub 多域名重复收录
-	const SITE = "https://voicehub.245959623.xyz";
-	const canon = `${SITE}/voicehub/help`;
-
 	// FAQ 结构化数据：放在父页 DOM（不在 iframe 内），搜索引擎可直读，用于富媒体结果。
 	// 客服邮箱与文档一致。
 	const faqLd = {
@@ -47,12 +43,10 @@
 	<title>点歌帮助 | Stelarith</title>
 	<meta name="description" content="校园点歌使用帮助：同学点歌须知、广播站成员操作与维护须知、一页纸合并版。覆盖在哪点歌、审核标准、排单播前检查与故障处理。" />
 	<meta name="robots" content="index, follow" />
-	<link rel="canonical" href={canon} />
 	<meta property="og:type" content="article" />
 	<meta property="og:locale" content="zh_CN" />
 	<meta property="og:title" content="校园点歌 · 使用帮助 | Stelarith" />
 	<meta property="og:description" content="同学点歌须知 + 广播站成员操作维护须知 + 一页纸合并版。点歌步骤、审核标准、排单播前检查、故障应急全覆盖。" />
-	<meta property="og:url" content={canon} />
 	<meta property="og:site_name" content="Stelarith" />
 	<meta name="twitter:card" content="summary_large_image" />
 	<meta name="twitter:title" content="校园点歌 · 使用帮助 | Stelarith" />
