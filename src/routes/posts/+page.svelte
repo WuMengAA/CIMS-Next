@@ -4,6 +4,7 @@
 	import { Search, Pin, FileText } from "@lucide/svelte";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
+	import Seo from "$lib/components/Seo.svelte";
 
 	let { data }: { data: { posts: any[]; categories: string[] } } = $props();
 
@@ -26,9 +27,11 @@
 	);
 </script>
 
-<svelte:head>
-	<title>博客 | Stelarith</title>
-</svelte:head>
+<Seo
+	title="博客"
+	description="Stelarith 博客：记录开发实践、项目复盘、工具与生活的随笔。"
+	path="/posts"
+/>
 
 <Container>
 	<PageHeader title="博客" description="记录开发、追番、工具与生活的随笔。" />

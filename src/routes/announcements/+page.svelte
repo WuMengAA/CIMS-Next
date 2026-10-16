@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Megaphone, Info, CheckCircle2, AlertTriangle, AlertOctagon, Pin } from "@lucide/svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 	import type { PageProps } from "./$types";
 
@@ -13,11 +14,13 @@
 	};
 </script>
 
-<svelte:head>
-	<title>公告 | Stelarith</title>
-	<meta name="description" content="站点公告与重要通知" />
-	<meta name="robots" content="noindex" />
-</svelte:head>
+<!-- noindex 保留原样：公告是时效性内容，不该占搜索结果位 -->
+<Seo
+	title="公告"
+	description="站点公告与重要通知"
+	path="/announcements"
+	noindex
+/>
 
 <div class="ef-shell flex flex-col gap-8 py-10">
 	<PageHeader eyebrow="Announcements" title="公告" description="站点动态、维护通知与重要提醒" />

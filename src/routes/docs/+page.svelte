@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { BookMarked } from "@lucide/svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import Container from "$lib/components/container.svelte";
 	import RollingNumber from "$lib/components/rhine/rolling-number.svelte";
 	import TypingText from "$lib/components/rhine/typing-text.svelte";
@@ -31,9 +32,11 @@
 	const groupCount = $derived(groups.length);
 </script>
 
-<svelte:head>
-	<title>教程 | Stelarith</title>
-</svelte:head>
+<Seo
+	title="教程"
+	description="从入门到实操的图文教程：AI、开发工具与站点运维。"
+	path="/docs"
+/>
 
 <!-- 作用域根：.rhine-docs 让莱茵令牌只在这一页生效 -->
 <div class="rhine-docs min-h-screen bg-background text-foreground">

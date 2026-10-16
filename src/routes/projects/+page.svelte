@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Rocket, GitPullRequestArrow, Star, CircleDot, Package, GitCommitHorizontal } from "@lucide/svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import { Github } from "$lib/components/icons/index.js";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
@@ -73,10 +74,11 @@
 	});
 </script>
 
-<svelte:head>
-	<title>项目 | Stelarith</title>
-	<meta name="description" content="项目展板：进度、待办、活跃度、Issues 与发行下载。" />
-</svelte:head>
+<Seo
+	title="项目"
+	description="项目展板：进度、待办、活跃度、Issues 与发行下载。"
+	path="/projects"
+/>
 
 <Container>
 	<PageHeader title="项目" description="我的个人项目与作品 —— 进度、待办、活跃度与发行。" />

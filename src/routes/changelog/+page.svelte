@@ -1,6 +1,7 @@
 <script lang="ts">
 	/** 更新日志：按版本倒序，每个版本一条可展开明细。 */
 	import Container from "$lib/components/container.svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
@@ -42,7 +43,11 @@
 	const shown = $derived(filtered.filter((e) => e.items.length > 0));
 </script>
 
-<svelte:head><title>更新日志 | Stelarith</title></svelte:head>
+<Seo
+	title="更新日志"
+	description="每一次改动都记下来：新增了什么、修了什么、调整了什么。"
+	path="/changelog"
+/>
 
 <Container class="py-10">
 	<PageHeader title="更新日志" description="每一次改动都记下来：新增了什么、修了什么、调整了什么。" />

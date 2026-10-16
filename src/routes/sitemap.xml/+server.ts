@@ -10,6 +10,7 @@ const STATIC_PATHS = [
 	"/projects",
 	"/docs",
 	"/pages",
+	"/posts",
 	"/links",
 	"/news",
 	"/archive",
@@ -26,7 +27,8 @@ const STATIC_PATHS = [
 const DETAIL_SECTIONS = [
 	{ section: "projects" as const, prefix: "/projects/" },
 	{ section: "docs" as const, prefix: "/docs/" },
-	{ section: "pages" as const, prefix: "/pages/" }
+	{ section: "pages" as const, prefix: "/pages/" },
+	{ section: "posts" as const, prefix: "/posts/" }
 ];
 
 function esc(s: unknown): string {
@@ -65,14 +67,8 @@ export const GET: RequestHandler = async () => {
 	const today = new Date().toISOString().slice(0, 10);
 	const entries: string[] = [];
 
-	// voicehub 区块的 SEO 首选域名由用户指定为 voicehub.245959623.xyz，
-	// 与校站主域名 www 区分，避免多域名重复收录 / 规范地址冲突。
-	const VOICEHUB_SEO_BASE = "https://voicehub.245959623.xyz";
-	const voicehubPaths = new Set(["/voicehub", "/voicehub/help"]);
-	const baseFor = (p: string) => (voicehubPaths.has(p) ? VOICEHUB_SEO_BASE : siteBase);
-
 	for (const p of STATIC_PATHS) {
-		entries.push(urlTag(baseFor(p) + p, today, p === "/" ? "1.0" : "0.6"));
+		entries.push(urlTag(siteBase + p, today, p === "/" ? "1.0" : "0.6"));
 	}
 
 	for (const { section, prefix } of DETAIL_SECTIONS) {

@@ -1,4 +1,4 @@
-import { getItem, renderMarkdown } from "$lib/server/content-store.js";
+import { getItem, renderMarkdown, getSiteUrl } from "$lib/server/content-store.js";
 import { getBoard, listIssues, issueStats } from "$lib/server/project-board.js";
 import { hasGithubToken } from "$lib/server/github.js";
 import { fetchPublished, humanSize } from "$lib/server/downloads.js";
@@ -54,6 +54,8 @@ export async function load({ params }) {
 		downloads,
 		issues: listIssues(params.slug, { state: "all" }),
 		stats: issueStats(params.slug),
-		hasGithubToken: hasGithubToken()
+		hasGithubToken: hasGithubToken(),
+		// 供页面拼 JSON-LD 的绝对地址
+		siteUrl: getSiteUrl()
 	};
 }

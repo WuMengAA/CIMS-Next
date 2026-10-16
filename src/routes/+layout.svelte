@@ -148,19 +148,19 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<meta name="description" content={data.settings.description} />
 	<!-- color-scheme 由 mode-watcher 在运行时写 html 的 inline style（随主题变），
 	     这里不再写死 content="dark" —— 写死会让亮色模式下浏览器仍按深色渲染
 	     原生控件与滚动条。theme-color 保留为 SSR 深色兜底，运行时被改写。 -->
 	<meta name="theme-color" content="#1b1b19" />
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content={data.settings.title} />
-	<meta property="og:title" content={data.settings.title} />
-	<meta property="og:description" content={data.settings.description} />
-	<meta property="og:url" content={data.siteUrl || "/"} />
-	<link rel="canonical" href={data.siteUrl || "/"} />
 	<meta name="twitter:card" content="summary_large_image" />
 	<link rel="alternate" type="application/rss+xml" title={data.settings.title + " · 博客 RSS"} href="/rss.xml" />
+	<!-- ⚠️ 这里刻意不写 description / og:title / og:description / og:url / canonical：
+	     Svelte 的 svelte:head **不做去重**，布局与页面各写一份会同时输出两个标签，
+	     而 OG 抓取器与搜索引擎通常取第一个 —— 布局里指向站根的 canonical 更糟，
+	     它等于声明"此详情页是首页副本"，会把详情页踢出索引。
+	     这些一律由页面级 <Seo> 组件提供（见 $lib/components/Seo.svelte）。 -->
 </svelte:head>
 
 	<!-- 主题：亮色 / 暗色 / 跟随系统。

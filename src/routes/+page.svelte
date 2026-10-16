@@ -9,6 +9,7 @@
 import { splitReveal } from "$lib/actions/split-reveal.js";
 	import { page } from "$app/state";
 	import type { PageProps } from "./$types";
+	import Seo from "$lib/components/Seo.svelte";
 
 	let { data }: PageProps = $props();
 
@@ -24,9 +25,33 @@ import { splitReveal } from "$lib/actions/split-reveal.js";
 	const features = $derived(data.settings.features || []);
 </script>
 
-<svelte:head>
-	<title>首页 | Stelarith</title>
-</svelte:head>
+<Seo
+	title="首页"
+	description={data.settings.description || data.settings.heroTitle || "Stelarith"}
+	path="/"
+	jsonLd={[
+		{
+			"@context": "https://schema.org",
+			"@type": "WebSite",
+			name: data.settings.title || "Stelarith",
+			description: data.settings.description || "",
+			url: data.siteUrl || "",
+			inLanguage: "zh-CN",
+			potentialAction: {
+				"@type": "SearchAction",
+				target: `${data.siteUrl || ""}/search?q={search_term_string}`,
+				"query-input": "required name=search_term_string"
+			}
+		},
+		{
+			"@context": "https://schema.org",
+			"@type": "Organization",
+			name: data.settings.title || "Stelarith",
+			url: data.siteUrl || "",
+			logo: `${data.siteUrl || ""}/avatars/default.svg`
+		}
+	]}
+/>
 
 <div class="ef-shell flex flex-col py-12 md:py-20">
 	<!-- Hero：杂志编辑式（左对齐、Fraunces 超大标题、pill CTA） -->

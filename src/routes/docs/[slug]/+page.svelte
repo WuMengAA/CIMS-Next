@@ -6,6 +6,7 @@
 	import ReadingTracker from "$lib/components/reading-tracker.svelte";
 	import RollingNumber from "$lib/components/rhine/rolling-number.svelte";
 	import TypingText from "$lib/components/rhine/typing-text.svelte";
+	import Seo from "$lib/components/Seo.svelte";
 
 	/**
 	 * 站内锚点平滑滚动。
@@ -103,13 +104,41 @@
 	}
 </script>
 
-<svelte:head>
-	<title>{data.doc.title} | Stelarith</title>
-	<meta name="description" content={data.doc.excerpt || data.doc.title} />
-	<meta property="og:title" content={data.doc.title} />
-	<meta property="og:description" content={data.doc.excerpt || data.doc.title} />
-	<meta property="og:type" content="article" />
-</svelte:head>
+{#if data.doc}
+<Seo
+	title={data.doc.title}
+	description={data.doc.excerpt || data.doc.title}
+	path={`/docs/${data.doc.slug}`}
+	ogType="article"
+	publishedTime={data.doc.date}
+	modifiedTime={data.doc.updated || data.doc.date}
+	tags={data.doc.tags || []}
+	jsonLd={[
+		{
+			"@context": "https://schema.org",
+			"@type": "Article",
+			headline: data.doc.title,
+			description: data.doc.excerpt || data.doc.title,
+			datePublished: data.doc.date,
+			dateModified: data.doc.updated || data.doc.date,
+			author: { "@type": "Organization", name: "Stelarith" },
+			publisher: { "@type": "Organization", name: "Stelarith" },
+			mainEntityOfPage: `${data.siteUrl}/docs/${data.doc.slug}`,
+			wordCount: data.words,
+			inLanguage: "zh-CN"
+		},
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			itemListElement: [
+				{ "@type": "ListItem", position: 1, name: "首页", item: data.siteUrl },
+				{ "@type": "ListItem", position: 2, name: "文档", item: `${data.siteUrl}/docs` },
+				{ "@type": "ListItem", position: 3, name: data.doc.title, item: `${data.siteUrl}/docs/${data.doc.slug}` }
+			]
+		}
+	]}
+/>
+{/if}
 
 <ViewTracker target={"docs:" + data.doc.slug} />
 <ReadingTracker target={"docs:" + data.doc.slug} title={data.doc.title} section="docs" />

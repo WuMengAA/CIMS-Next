@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Container from "$lib/components/container.svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Rss, ExternalLink, Newspaper, RefreshCw, Sparkles } from "@lucide/svelte";
@@ -15,11 +16,12 @@
 	}
 </script>
 
-<svelte:head>
-	<title>新闻聚合 | Stelarith</title>
-	<meta name="description" content="聚合自知名新闻与博客订阅源的热门内容。" />
-	<link rel="alternate" type="application/rss+xml" title="Stelarith 博客 RSS" href="/rss.xml" />
-</svelte:head>
+<!-- RSS alternate 由布局统一提供，此处不再重复输出 -->
+<Seo
+	title="新闻聚合"
+	description="聚合自知名新闻与博客订阅源的热门内容。"
+	path="/news"
+/>
 
 <Container>
 	<PageHeader title="新闻聚合" description="聚合自知名新闻与博客订阅源，一站速览。" />

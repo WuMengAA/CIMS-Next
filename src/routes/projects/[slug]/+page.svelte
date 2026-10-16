@@ -9,6 +9,7 @@
 	import ProgressPanel from "$lib/components/board/progress-panel.svelte";
 	import IssuesPanel from "$lib/components/board/issues-panel.svelte";
 	import ReleasesPanel from "$lib/components/board/releases-panel.svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import { can } from "$lib/permissions.js";
 
 	let {
@@ -60,13 +61,40 @@
 	}
 </script>
 
-<svelte:head>
-	<title>{data.project.title} | Stelarith</title>
-	<meta name="description" content={data.project.excerpt || data.project.title} />
-	<meta property="og:title" content={data.project.title} />
-	<meta property="og:description" content={data.project.excerpt || data.project.title} />
-	<meta property="og:type" content="article" />
-</svelte:head>
+{#if data.project}
+<Seo
+	title={data.project.title}
+	description={data.project.excerpt || data.project.title}
+	path={`/projects/${data.project.slug}`}
+	ogType="article"
+	publishedTime={data.project.date}
+	modifiedTime={data.project.updated || data.project.date}
+	tags={data.project.tags || []}
+	jsonLd={[
+		{
+			"@context": "https://schema.org",
+			"@type": "Article",
+			headline: data.project.title,
+			description: data.project.excerpt || data.project.title,
+			datePublished: data.project.date,
+			dateModified: data.project.updated || data.project.date,
+			author: { "@type": "Organization", name: "Stelarith" },
+			publisher: { "@type": "Organization", name: "Stelarith" },
+			mainEntityOfPage: `${data.siteUrl}/projects/${data.project.slug}`,
+			inLanguage: "zh-CN"
+		},
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			itemListElement: [
+				{ "@type": "ListItem", position: 1, name: "首页", item: data.siteUrl },
+				{ "@type": "ListItem", position: 2, name: "项目", item: `${data.siteUrl}/projects` },
+				{ "@type": "ListItem", position: 3, name: data.project.title, item: `${data.siteUrl}/projects/${data.project.slug}` }
+			]
+		}
+	]}
+/>
+{/if}
 
 <ViewTracker target={"projects:" + data.project.slug} />
 

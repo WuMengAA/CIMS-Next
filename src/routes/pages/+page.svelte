@@ -1,14 +1,13 @@
 <script lang="ts">
 	import { FileText } from "@lucide/svelte";
+	import Seo from "$lib/components/Seo.svelte";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 
 	let { data }: { data: { pages: any[]; canEdit?: boolean } } = $props();
 </script>
 
-<svelte:head>
-	<title>页面 | Stelarith</title>
-</svelte:head>
+<Seo title="页面" description="独立页面与自定义内容。" path="/pages" />
 
 <Container>
 	<PageHeader title="页面" description="独立页面与自定义内容。" />
