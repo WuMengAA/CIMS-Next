@@ -8,6 +8,7 @@
 	import PageHeader from "$lib/components/page-header.svelte";
 	import { reveal } from "$lib/actions/reveal.js";
 	import { Download, Search } from "@lucide/svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	let { data }: { data: import("./$types").PageData } = $props();
 
@@ -22,10 +23,10 @@
 	});
 </script>
 
-<svelte:head>
-	<title>下载中心 | Stelarith 星集控</title>
-	<meta name="description" content="星集控下载中心：项目发行、图片、视频、文档、应用 —— 统一搜索与下载。" />
-</svelte:head>
+<Seo title="下载中心"
+	description="星集控下载中心：项目发行、图片、视频、文档、应用 —— 统一搜索与下载。"
+	path="/download"
+/>
 
 <Container>
 	<PageHeader

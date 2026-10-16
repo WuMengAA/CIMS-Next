@@ -4,6 +4,7 @@
 	import { Search, Heart, GitFork, FileJson2, Send, CheckCircle2, ExternalLink } from "@lucide/svelte";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	// 内联形状需与 content-store.ts 的 FriendLink 保持一致（含 category —— 模板里
 	// 用它渲染分类角标，漏掉这一项会让 svelte-check 报「属性不存在」）。
@@ -54,9 +55,10 @@
 	}
 </script>
 
-<svelte:head>
-	<title>连接 | Stelarith</title>
-</svelte:head>
+<Seo title="连接"
+	description="友情链接与站点互联。"
+	path="/links"
+/>
 
 <Container class="gap-10">
 	<PageHeader title="连接" description="支持 Stelarith，联系我，交换友情链接。" />

@@ -4,6 +4,7 @@
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
 	import HighlightText from "$lib/components/highlight-text.svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	interface Hit {
 		section: string;
@@ -51,10 +52,12 @@
 	}
 </script>
 
-<svelte:head>
-	<title>{data.q ? `${data.q} · 搜索` : "搜索"} | Stelarith</title>
-	{#if data.q}<meta name="robots" content="noindex, follow" />{/if}
-</svelte:head>
+<Seo
+	title={data.q ? `${data.q} · 搜索` : "搜索"}
+	description="站内搜索。"
+	path="/search"
+	noindex
+/>
 
 <Container class="gap-8">
 	<PageHeader title="全站搜索" description="一次检索博客、项目、教程与页面的标题、标签与正文。" />

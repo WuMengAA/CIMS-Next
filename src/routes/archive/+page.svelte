@@ -5,6 +5,7 @@
 	import { History, RotateCcw, FileText, BookMarked, Rocket, Eye } from "@lucide/svelte";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	interface Item { section: string; slug: string; title: string; versions: number; latestAt: string; }
 	let items = $state<Item[]>([]);
@@ -62,9 +63,10 @@
 	onMount(load);
 </script>
 
-<svelte:head>
-	<title>归档 | Stelarith</title>
-</svelte:head>
+<Seo title="归档"
+	description="全站内容归档总览。"
+	path="/archive"
+/>
 
 <Container class="gap-10">
 	<PageHeader title="归档" description="历史版本与内容快照，记录每一次修改，可随时查看与回滚。" />

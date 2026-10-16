@@ -5,6 +5,7 @@
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { formatBytes } from "$lib/storage-quota.js";
 	import { Activity, Users, Flame, Radio, HardDrive, ArrowRight } from "@lucide/svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	let { data }: { data: import("./$types").PageData } = $props();
 
@@ -43,7 +44,10 @@
 	}
 </script>
 
-<svelte:head><title>站点动态 | Stelarith</title></svelte:head>
+<Seo title="站点动态"
+	description="站点实时动态与活跃度。"
+	path="/pulse"
+/>
 
 <Container class="py-10">
 	<PageHeader title="站点动态" description="谁在线、最近在干什么、这站有多热闹。" />

@@ -4,6 +4,7 @@
 	import { Card } from "$lib/components/ui/card/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Rss, Copy, Check, BellRing, MonitorSmartphone, BookOpen } from "@lucide/svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	let copied = $state("");
 
@@ -32,9 +33,10 @@
 	const clients = ["Feedly", "Inoreader", "NetNewsWire", "Reeder", "Follow", "FreshRSS"];
 </script>
 
-<svelte:head>
-	<title>订阅 | {siteName}</title>
-</svelte:head>
+<Seo title="订阅"
+	description="通过 RSS 订阅站点更新。"
+	path="/subscribe"
+/>
 
 <PageHero icon={Rss} title="订阅" desc={`关注 {siteName} 的最新内容，RSS 一劳永逸。`} />
 

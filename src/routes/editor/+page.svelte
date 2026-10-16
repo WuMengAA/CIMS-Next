@@ -7,6 +7,7 @@
 	import ComponentPalette from "$lib/components/editor/ComponentPalette.svelte";
 	import EditorCanvas from "$lib/components/editor/EditorCanvas.svelte";
 	import PropertyPanel from "$lib/components/editor/PropertyPanel.svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	const STORAGE_KEY = "stelarith:ui-editor";
 
@@ -165,9 +166,11 @@
 	}
 </script>
 
-<svelte:head>
-	<title>可视化界面编辑器 · Stelarith</title>
-</svelte:head>
+<Seo title="可视化界面编辑器"
+	description="可视化界面编辑器。"
+	path="/editor"
+	noindex
+/>
 
 <div class="editor-root">
 	<header class="toolbar">

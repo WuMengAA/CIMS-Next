@@ -8,16 +8,19 @@
 		title: string;
 		desc: string;
 		backHref?: string;
-		/** 未上线功能的占位提示。传入后附带 noindex，避免搜索引擎收录空页。 */
+		/**
+		 * 未上线功能的占位提示（页面上的"功能建设中"横幅）。
+		 *
+		 * ⚠️ 这里**不再**输出 <meta name="robots">：全站 robots/noindex 已统一由
+		 * <Seo> 组件负责（见 $lib/components/Seo.svelte）。两处各写一份会同时输出
+		 * 两个 robots 标签且指令可能冲突（noindex, follow vs noindex, nofollow）。
+		 * 占位页要屏蔽收录，请在页面上传 <Seo noindex />。
+		 */
 		note?: string;
 	}
 
 	let { icon: Icon = ArrowLeft, title, desc, backHref = "/", note }: Props = $props();
 </script>
-
-<svelte:head>
-	{#if note}<meta name="robots" content="noindex, follow" />{/if}
-</svelte:head>
 
 <!-- 编辑流体内页 Hero：窄列左对齐、信号线标签、Fraunces 超大标题、pill 返回 -->
 <div class="mx-auto flex w-full max-w-[980px] flex-col gap-5 px-4 py-16 md:px-8 md:py-24">

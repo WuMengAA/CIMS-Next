@@ -20,6 +20,7 @@
 		ImageUp, Loader2, Search, Grid3x3, List, FolderPlus, Folder as FolderIcon, Trash2, Copy,
 		Wand2, Undo2, Settings2, Link2, MoveRight, HardDrive, AlertTriangle, Check
 	} from "@lucide/svelte";
+	import Seo from "$lib/components/Seo.svelte";
 
 	type ServerData = import("./$types").PageData;
 	let { data }: { data: ServerData } = $props();
@@ -293,7 +294,11 @@
 	}
 </script>
 
-<svelte:head><title>我的附件库 · {data.me.displayName}</title></svelte:head>
+<Seo title="我的附件库"
+	description="个人附件库。"
+	path="/library"
+	noindex
+/>
 
 <div class="ef-shell ef-shell--wide flex flex-col gap-6 py-8">
 	<!-- 顶部：配额 + 存储状态 -->

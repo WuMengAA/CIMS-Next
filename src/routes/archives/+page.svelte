@@ -3,6 +3,7 @@
 	import { Archive, ChevronRight } from "@lucide/svelte";
 	import Container from "$lib/components/container.svelte";
 	import PageHeader from "$lib/components/page-header.svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	const versions = [
 		{ tag: "v19", title: "Astro 一体化主站", tech: "Astro + React", year: "2026" },
@@ -14,9 +15,10 @@
 	];
 </script>
 
-<svelte:head>
-	<title>旧站归档 | Stelarith</title>
-</svelte:head>
+<Seo title="旧站归档"
+	description="旧站内容归档。"
+	path="/archives"
+/>
 
 <Container>
 	<header class="flex flex-col gap-2">

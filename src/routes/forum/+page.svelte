@@ -4,6 +4,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { MessageSquare, Plus, Lock } from "@lucide/svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	let { data }: { data: { channels: any[]; threads: any[]; user?: { username: string; role: string } | null } } = $props();
 
@@ -34,7 +35,10 @@
 	}
 </script>
 
-<svelte:head><title>论坛 | Stelarith</title></svelte:head>
+<Seo title="论坛"
+	description="社区论坛：话题讨论与交流。"
+	path="/forum"
+/>
 
 <Container>
 	<PageHeader title="论坛" description="自由交流、建立频道、分享想法。" />

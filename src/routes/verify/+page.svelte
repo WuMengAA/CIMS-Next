@@ -2,6 +2,7 @@
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { ShieldCheck, ShieldX, Loader2, MailWarning } from "@lucide/svelte";
 	import { onMount } from "svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	let token = $state("");
 	let state = $state<"loading" | "ok" | "fail">("loading");
@@ -48,10 +49,11 @@
 	}
 </script>
 
-<svelte:head>
-	<title>邮箱验证 | Stelarith</title>
-	<meta name="robots" content="noindex, nofollow" />
-</svelte:head>
+<Seo title="邮箱验证"
+	description="邮箱验证。"
+	path="/verify"
+	noindex
+/>
 
 <div class="flex min-h-[70vh] items-center justify-center px-4 py-10">
 	<div class="w-full max-w-md space-y-6">

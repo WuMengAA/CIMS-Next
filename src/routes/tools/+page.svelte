@@ -1,6 +1,7 @@
 <script lang="ts">
 	import PageHero from "$lib/components/page-hero.svelte";
 	import { Wrench, Palette, Droplet, ImagePlus } from "@lucide/svelte";
+import Seo from "$lib/components/Seo.svelte";
 
 	const tools = [
 		{
@@ -24,9 +25,10 @@
 	];
 </script>
 
-<svelte:head>
-	<title>工具集 | Stelarith</title>
-</svelte:head>
+<Seo title="工具集"
+	description="实用在线工具集合。"
+	path="/tools"
+/>
 
 <PageHero icon={Wrench} title="工具集" desc="常用在线小工具集合。" />
 

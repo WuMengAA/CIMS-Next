@@ -4,6 +4,7 @@
 	import { Label } from "$lib/components/ui/label/index.js";
 	import { UserPlus, Eye, EyeOff, Mail, User as UserIcon, ShieldCheck } from "@lucide/svelte";
 	import { toast } from "svelte-sonner";
+import Seo from "$lib/components/Seo.svelte";
 
 	let username = $state("");
 	let displayName = $state("");
@@ -65,10 +66,11 @@
 	}
 </script>
 
-<svelte:head>
-	<title>注册账号 | Stelarith</title>
-	<meta name="robots" content="noindex, nofollow" />
-</svelte:head>
+<Seo title="注册账号"
+	description="注册 Stelarith 账号。"
+	path="/register"
+	noindex
+/>
 
 <div class="flex min-h-[70vh] items-center justify-center px-4 py-10">
 	<div class="w-full max-w-md space-y-6">

@@ -7,6 +7,7 @@
 	import { Input } from "$lib/components/ui/input/index.js";
 	import { Textarea } from "$lib/components/ui/textarea/index.js";
 	import { Badge } from "$lib/components/ui/badge/index.js";
+import Seo from "$lib/components/Seo.svelte";
 
 	type Fb = {
 		id: string;
@@ -78,9 +79,10 @@
 	load();
 </script>
 
-<svelte:head>
-	<title>反馈 | Stelarith</title>
-</svelte:head>
+<Seo title="反馈"
+	description="意见反馈与建议提交。"
+	path="/feedback"
+/>
 
 <PageHero icon={MessageSquare} title="反馈" desc="意见、建议与 Bug 反馈。提交后公开可见，官方会在此跟进状态。" />
 
