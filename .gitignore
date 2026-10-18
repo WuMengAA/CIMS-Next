@@ -121,7 +121,7 @@ _probe_*.cjs
 /*.db
 /.*_cookies.txt
 
-# ��ʱ/����(�����汾��)
+# ��ʱ/����(�����汾��)
 /_sc*.txt
 /design-lab/
 /build-backup-*/
@@ -142,3 +142,6 @@ _probe_*.cjs
 # 由 scripts/sync-builds.mjs 管理（命名规整 + 历史清理），本地/构建机另行同步
 /static/downloads/*.zip
 /static/downloads/*.exe
+
+# parity 验证临时输出（scratch，勿入库；正式脚本在 scripts/pg-*.mjs）
+/_parity/

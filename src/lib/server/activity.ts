@@ -277,8 +277,8 @@ export async function topActiveUsers(days = 14, limit = 8): Promise<{ username: 
 			        COUNT(*) AS count
 			   FROM activities a LEFT JOIN users u ON u.id = a.user_id
 			  WHERE a.created_at >= ? AND a.user_id IS NOT NULL
-			  GROUP BY a.user_id
-			  ORDER BY count DESC LIMIT ?`
+			  GROUP BY a.user_id, a.username, u.display_name
+			  ORDER BY count DESC, username ASC LIMIT ?`
 		)
 		.all(since, limit) as unknown as { username: string; displayName: string; count: number }[];
 }
