@@ -101,7 +101,7 @@ export async function saveScheduledBroadcast(id: number, input: ScheduledInput):
 				id
 			);
 		} else {
-			await db.prepare(
+			const ins = await db.prepare(
 				`INSERT INTO scheduled_broadcasts (name, schedule_type, weekday, run_at, target_class_id, title, content, enabled, next_run_at, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			).run(
@@ -117,10 +117,11 @@ export async function saveScheduledBroadcast(id: number, input: ScheduledInput):
 				ts,
 				ts
 			);
+			id = Number(ins.lastInsertRowid);
 		}
 		const item = await db
 			.prepare("SELECT * FROM scheduled_broadcasts WHERE id = ?")
-			.get(id > 0 ? id : (await db.prepare("SELECT last_insert_rowid() AS r").get() as { r: number }).r) as ScheduledBroadcast;
+			.get(id) as ScheduledBroadcast;
 		return { ok: true, item };
 	} catch (err) {
 		console.warn("[scheduled-broadcast] 保存失败：", err);
