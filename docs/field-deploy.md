@@ -1,5 +1,9 @@
 # 现场部署与编译清单（Field Deploy & Build Runbook）
 
+> ⚠️ **2026-10-19 废止提示**：CIMS Docker 部署包 `deploy/` 已随「CIMS 退出」移除，
+> 下文 §1 的 `cd deploy` / `deploy/Dockerfile` 等步骤已失效，仅作历史留痕。
+> 网站的云端部署见 `deploy/site/README.md`（网站 + PostgreSQL + Nginx，与 CIMS 无关）。
+
 > 适用：终验交付后，运维/电教委员在真实环境落地本方案包。
 > 原则：**不虚构任何网关**。所有「下令」来自 CIMS 真实通知，所有「执行」都在本机；跨服务的协作（聊天/工单/审计/VNC 回执）走自有扩展网关 `ext-gateway`（应用级新增，非 CIMS 源码修改）。
 > 本文件所有命令均取自各组件 README，未新增任何接口。

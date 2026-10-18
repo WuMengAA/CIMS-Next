@@ -184,8 +184,9 @@
 ### 关键结论（实跑）
 - `node verify.mjs` 重跑 **32/32 PASS**（产物 + 契约 + 网关 `/health` + 聊天房间隔离 + 无 room 降级 + Ed25519 双模静态契约），无回归。
 - **部署链路复核（verify 静态项未覆盖，本轮代码级确认）**：
-  - `deploy/nginx.conf` 已含 `upstream stelarith_ext` + `location /ext/`（rewrite 转 proxy_pass），扩展网关反代就绪。
-  - `deploy/docker-compose.yml` 已含 `ext-gateway` 服务（`EXT_GATEWAY_PORT`/镜像卷挂载/端口映射），一键部署闭环。
+  - ⚠️ 2026-10-19：CIMS Docker 部署包 `deploy/`（nginx/compose/ext-gateway 副本）已随「CIMS 退出」移除；网站的云端部署包独立在 `deploy/site/`。下述为历史记录，留痕：
+  - （历史）`deploy/nginx.conf` 曾含 `upstream stelarith_ext` + `location /ext/`，扩展网关反代就绪。
+  - （历史）`deploy/docker-compose.yml` 曾含 `ext-gateway` 服务，一键部署闭环。
 - **嵌入镜像复核（需求 #6）**：父仓库 `admin-console/src/{api,app}.js` 与 inner `stelarith/static/console/{api,app}.js` 经 `diff -q` 字节一致（MIRROR OK），无漂移。
 - **inner stelarith 仓库 loose end 收口**：发现一处未提交改动 `src/lib/components/app-sidebar.svelte`（新增 `Newspaper/Rss/MessagesSquare/LogIn` 图标导入 + `forum/news/rss` 映射；属网站侧边栏图标增强，应用级、非敏感、与集控核心无冲突，但含一个未使用导入 `LogIn`）。已严格仅 `git add` 该文件（排除 `.workbuddy/` 自动化目录）并提交，避免工作树长期脏挂。
 

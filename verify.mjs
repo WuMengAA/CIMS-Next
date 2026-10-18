@@ -26,10 +26,6 @@ const ARTIFACTS = [
   ["STATUS.md", "进度清点"],
   ["docs/实施方案.md", "实施文档"],
   ["architecture/架构图.md", "架构图"],
-  ["deploy/docker-compose.yml", "一键部署 compose"],
-  ["deploy/Dockerfile", "CIMS 镜像"],
-  ["deploy/nginx.conf", "nginx 反代"],
-  ["deploy/ext-gateway/server.mjs", "扩展网关部署副本"],
   ["classisland-config/自动化规则-上课自动隐藏.json", "上课自动隐藏规则"],
   ["classisland-config/自动化规则-考试全校隐藏.json", "考试全校隐藏规则"],
   ["admin-console/src/api.js", "面板 API 层（含房间化 chat）"],
@@ -93,7 +89,7 @@ for (const [re, desc] of REAL_ENDPOINTS) {
 rec(!fileHas("admin-console/src/api.js", /["'`]\/gateway\//) ? "PASS" : "FAIL",
   "契约: api.js 无虚构 /gateway/* 端点", "面板只调 CIMS 原生接口 + 自有 extHost，不虚构网关");
 // 反陈旧：文档不得残留错误 Manifest 路径 / 错误后端技术栈 / 已被证伪的表述
-const DOC_FILES = ["README.md", "docs/实施方案.md", "architecture/架构图.md", "admin-console/API.md", "docs/field-deploy.md", "deploy/README.md"];
+const DOC_FILES = ["README.md", "docs/实施方案.md", "architecture/架构图.md", "admin-console/API.md", "docs/field-deploy.md"];
 for (const f of DOC_FILES) {
   const clean =
     !fileHas(f, /\/api\/v1\/client\//) &&
