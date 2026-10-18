@@ -162,17 +162,17 @@ type ConsoleUser = User & { id: number };
  * GET /captures，但桌面端没有 cookie 机制（token 存在 shared_preferences、
  * 请求一律带 Bearer 头）。不加的话桌面端拿不到截图回传，截图链路在桌面端断掉。
  */
-function requestUser(event: RequestEvent): User | null {
+async function requestUser(event: RequestEvent): Promise<User | null> {
 	const bearer = event.request.headers.get("authorization") ?? "";
 	if (/^Bearer\s+/i.test(bearer)) {
-		const u = verifyToken(bearer.replace(/^Bearer\s+/i, "").trim());
+		const u = await verifyToken(bearer.replace(/^Bearer\s+/i, "").trim());
 		if (u) return u;
 	}
-	return verifyToken(event.cookies.get("admin_token"));
+	return await verifyToken(event.cookies.get("admin_token"));
 }
 
-function guard(event: RequestEvent, need: Action | DeviceTier | "broadcast" = "viewConsole") {
-	const u = requestUser(event);
+async function guard(event: RequestEvent, need: Action | DeviceTier | "broadcast" = "viewConsole") {
+	const u = await requestUser(event);
 	if (!u) return { error: json({ error: "请先登录" }, { status: 401 }) } as const;
 	// 缺 id 时后续所有以 id 为键的操作都会静默失效，不如在这里明确拒绝。
 	if (typeof u.id !== "number") {
@@ -229,7 +229,7 @@ export async function GET(event: RequestEvent) {
 		const fp = String(event.url.searchParams.get("fp") ?? "").trim();
 		if (!fp) return json({ error: "缺少 fp（设备指纹）" }, { status: 400 });
 		try {
-			const reg = registerDeviceClient(fp);
+			const reg = await registerDeviceClient(fp);
 			return json({
 				clientId: reg.clientId,
 				clientSecret: reg.clientSecret,
@@ -244,7 +244,7 @@ export async function GET(event: RequestEvent) {
 	if (path0 === "device-config") {
 		// p2pIce：与 p2p-signal 下发给浏览器的一致（同源 STUN/TURN），
 		// agent 端 STELARITH_P2P_ICE 用同一份，两端才能互相打洞/中转。
-		const mc = getMonitorConfig();
+		const mc = await getMonitorConfig();
 		const iceRaw = String(mc.p2p_ice_override ?? "").trim();
 		let p2pIce = [
 			{ urls: "stun:stun.miwifi.com:3478" },
@@ -276,22 +276,22 @@ export async function GET(event: RequestEvent) {
 			}
 			const uid = String(event.url.searchParams.get("uid") ?? "").trim();
 			if (!uid) return json({ error: "缺少 uid 参数" }, { status: 400 });
-			const item = consumeActivationCode(code, uid);
+			const item = await consumeActivationCode(code, uid);
 			if (!item) return json({ error: "接入码无效或已过期" }, { status: 404 });
 			return json({ ok: true, classId: item.classId, className: item.className, uid });
 		}
 		if (secret) {
 			if (!deviceSecretOk(event)) return json({ error: "设备密钥无效" }, { status: 403 });
-			const g = guard(event, "viewConsole");
+			const g = await guard(event, "viewConsole");
 			if ("error" in g) return g.error;
 			if (!canDevice(g.user.role, "manage")) return json({ error: "需设备管理档" }, { status: 403 });
-			return json({ codes: listActivationCodes() });
+			return json({ codes: await listActivationCodes() });
 		}
-		const g = guard(event, "viewConsole");
+		const g = await guard(event, "viewConsole");
 		if ("error" in g) return g.error;
 		const up = g.user;
 		if (!canDevice(up.role, "manage")) return json({ error: "需设备管理档" }, { status: 403 });
-		return json({ codes: listActivationCodes() });
+		return json({ codes: await listActivationCodes() });
 	}
 
 	if (path0 === "monitor-config") {
@@ -303,12 +303,12 @@ export async function GET(event: RequestEvent) {
 					{ status: 403 }
 				);
 			}
-			return json({ config: getMonitorConfig() });
+			return json({ config: await getMonitorConfig() });
 		}
 		// 面板/网页读配置：viewConsole 门槛（与其余 console 读操作一致）。
-		const g = guard(event, "viewConsole");
+		const g = await guard(event, "viewConsole");
 		if ("error" in g) return g.error;
-		return json({ config: getMonitorConfig() });
+		return json({ config: await getMonitorConfig() });
 	}
 
 	if (path0 === "files" || path0 === "notices") {
@@ -322,18 +322,18 @@ export async function GET(event: RequestEvent) {
 			}
 			if (path0 === "files") {
 				const fid = String(event.url.searchParams.get("id") ?? "").trim();
-				const obj = fid ? getFileObject(fid) : null;
+				const obj = fid ? await getFileObject(fid) : null;
 				if (!obj) return json({ error: "文件不存在或已清理", code: "not_found" }, { status: 404 });
 				const bytes = readFileBytes(obj);
 				if (!bytes) return json({ error: "文件内容已清理", code: "gone" }, { status: 410 });
 				// 中文文件名：filename* 按 RFC 5987 编码；filename 兜底 ASCII。
-				const asciiName = obj.name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
+				const asciiName = (await obj).name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "");
 				return new Response(new Uint8Array(bytes), {
 					status: 200,
 					headers: {
 						"content-type": "application/octet-stream",
 						"content-length": String(bytes.length),
-						"content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(obj.name)}`
+						"content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent((await obj).name)}`
 					}
 				});
 			}
@@ -345,7 +345,7 @@ export async function GET(event: RequestEvent) {
 			const pendUid = String(event.url.searchParams.get("pending_for") ?? "").trim();
 			if (!pendUid) return json({ error: "缺少 pending_for（设备 uid）" }, { status: 400 });
 			const sinceRaw = String(event.url.searchParams.get("since") ?? "").trim();
-			const page = listPendingTypedNoticesPage(
+			const page = await listPendingTypedNoticesPage(
 				pendUid,
 				Number(sinceRaw) || 0,
 				Number(event.url.searchParams.get("limit") ?? 20) || 20
@@ -355,7 +355,7 @@ export async function GET(event: RequestEvent) {
 		// 无设备密钥 → 落到下面的用户会话分支（面板拉历史 / 查询进度）。
 	}
 
-	const g = guard(event);
+	const g = await guard(event);
 	if ("error" in g) return g.error;
 	const u = g.user;
 
@@ -364,14 +364,14 @@ export async function GET(event: RequestEvent) {
 	// 遮蔽它，导致 TDZ 报错（Block-scoped variable 'q' used before its declaration），
 	// 于是改成 kw —— 局部变量名不要与它同名。
 	const q = event.url.searchParams;
-	const scope = classScopeOf(u.role, u.id);
+	const scope = await classScopeOf(u.role, u.id);
 
 	switch (path) {
 		case "notices":
 			// 历史通知：「班级」过滤分班查看（不传 = 全部）；「since」增量拉取
 			// （被控端 catch-up 复用同一端点拉补课，面板轮询只看新的）。
 			return json(
-				listNotices(
+				await listNotices(
 					Number(q.get("limit") ?? 50) || 50,
 					q.get("class") || undefined,
 					q.get("since") || undefined
@@ -381,11 +381,11 @@ export async function GET(event: RequestEvent) {
 			// 类型化通知的逐台回执（面板「谁看了、谁没看」明细；viewConsole 即可，
 			// 与看历史同一权限档 —— 回执含设备 uid 属内部信息，不对外）。
 			// 行里带 reply 字段：老师在弹窗上打的那句话原样出网，操控端才叫「收到回应」。
-			const nid = Number(q.get("notice") ?? 0);
+			const nid = Number(await q.get("notice") ?? 0);
 			if (!nid) return json({ error: "缺少 notice 参数" }, { status: 400 });
-			const n = getNoticeById(nid);
+			const n = await getNoticeById(nid);
 			if (!n) return json({ error: "通知不存在" }, { status: 404 });
-			return json({ notice: n, deliveries: listNoticeDeliveries(nid) });
+			return json({ notice: n, deliveries: await listNoticeDeliveries(nid) });
 		}
 		case "capabilities": {
 			// 功能开关（能力位）——「按身份与权限决定开启或关闭某些功能」的裁决出口。
@@ -393,7 +393,7 @@ export async function GET(event: RequestEvent) {
 			// 只返回**结论**（每个功能 true/false），不返回规则：规则留在服务端，
 			// 前端改代码开不出任何功能。一并返回 defaults / overridden，
 			// 面板才能标出"这条是单独给你开的"，否则老师会以为全校老师都能发全屏通知。
-			const res = resolveUserFeatures(String(u.id), u.role);
+			const res = await resolveUserFeatures(String(u.id), u.role);
 			return json({
 				role: u.role,
 				features: res.features,
@@ -405,22 +405,22 @@ export async function GET(event: RequestEvent) {
 			// 任务级回执：按 task_id 查单个动作的结果，或按 uid 列这台机器最近的活。
 			// 每次查询顺手做一次超时判死 —— 设备掉线时没有这一步，
 			// 按钮会永远停在「等待回执」，老师只会看到转圈而不知道其实已经失败了。
-			timeoutTasks(5);
-			const tid = String(q.get("task_id") ?? "").trim();
+			await timeoutTasks(5);
+			const tid = String(await q.get("task_id") ?? "").trim();
 			if (tid) {
-				const t = getTask(tid);
+				const t = await getTask(tid);
 				// 查不到必须给明确 404：返回 ok:true + null 会让调用方以为"还没好"，
 				// 于是继续轮询一个根本不存在的任务（这类假象最难查）。
 				if (!t) return json({ error: "任务不存在（task_id 无效或已被清理）" }, { status: 404 });
 				return json({ task: t });
 			}
-			return json({ tasks: listTasks(q.get("uid") || undefined, Number(q.get("limit") ?? 50) || 50) });
+			return json({ tasks: await listTasks(q.get("uid") || undefined, Number(q.get("limit") ?? 50) || 50) });
 		}
 		case "notice-stale": {
 			// 消息错过提醒：发出去 [minutes] 分钟还是 pending 的，大概率没收到。
 			// 面板据此列出"这些机器可能没收到"，而不是让老师对着一片沉默猜。
 			return json({
-				stale: listStaleDeliveries(
+				stale: await listStaleDeliveries(
 					Number(q.get("minutes") ?? 10) || 10,
 					Number(q.get("limit") ?? 100) || 100
 				)
@@ -431,31 +431,31 @@ export async function GET(event: RequestEvent) {
 			// ⚠️ 必须用设备轴的 canDevice —— "manage" 根本不是内容轴 Action，
 			// 写成 userCan(u, "manage") 会恒为 false，把这条端点对所有人（含站长）永久 403 掉。
 			if (!canDevice(u.role, "manage")) return json({ error: "无权限（需要管理权限）" }, { status: 403 });
-			const uid = String(q.get("uid") ?? "").trim();
+			const uid = String(await q.get("uid") ?? "").trim();
 			if (!uid) return json({ error: "缺少 uid" }, { status: 400 });
-			return json({ uid, overrides: getUserFeatureOverrides(uid) });
+			return json({ uid, overrides: await getUserFeatureOverrides(uid) });
 		}
 		case "chat":
-			return json(listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100));
+			return json(await listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100));
 		case "audit":
-			return json(listAudit(Number(q.get("limit") ?? 100) || 100, q.get("action") || undefined));
+			return json(await listAudit(Number(q.get("limit") ?? 100) || 100, q.get("action") || undefined));
 		case "audit/verify":
 			// 审计链自检：走一遍哈希链，回报「从第几行起可校验 / 第一处断在哪 / 为什么」。
 			// 不给「可信/不可信」的二值结论 —— 历史裁剪与旧库迁移都会合法地让链不完整，
 			// 二值化会把「正常裁剪」和「有人改库」混为一谈。
-			return json({ verify: verifyAudit(), policy: auditPolicy() });
+			return json({ verify: await verifyAudit(), policy: await auditPolicy() });
 		case "summary":
-			return json(consoleSummary());
+			return json(await consoleSummary());
 		case "events": {
 			// 执行回执流水（面板「执行回执」页）。
 			// ?uid= 省略 = 全校总览（限 300 条，够看最近几天的动作）。
 			// 权限沿用 viewConsole：回执只含"设备把事情做成什么样"，不含教师身份等敏感信息。
-			const uidQ = (q.get("uid") ?? "").trim();
-			const hours = Number(q.get("hours"));
+			const uidQ = (await q.get("uid") ?? "").trim();
+			const hours = Number(await q.get("hours"));
 			const stats = uidQ
-				? deviceEventStats(uidQ, Number.isFinite(hours) && hours > 0 ? hours : 24)
+				? await deviceEventStats(uidQ, Number.isFinite(hours) && hours > 0 ? hours : 24)
 				: null;
-			return json({ events: listDeviceEvents(uidQ || undefined, Number(q.get("limit") ?? 100) || 100), stats });
+			return json({ events: await listDeviceEvents(uidQ || undefined, Number(q.get("limit") ?? 100) || 100), stats });
 		}
 		case "permissions":
 			// 「权限与分级」页的唯一数据源：等级轴 + 设备轴 + 管理分级轴 + 广播范围轴，
@@ -465,11 +465,11 @@ export async function GET(event: RequestEvent) {
 			return json(permissionMatrix(u));
 		case "friends": {
 			// ?q= 有值时走「找人」，否则列我的好友关系（含待处理请求）。
-			const kw = q.get("q");
+			const kw = await q.get("q");
 			if (kw !== null && kw.trim() !== "") {
-				return json({ results: searchUsers(u.id, kw) });
+				return json({ results: await searchUsers(u.id, kw) });
 			}
-			const list = listFriends(u.id);
+			const list = await listFriends(u.id);
 			return json({
 				friends: list.filter((f) => f.status === "accepted"),
 				incoming: list.filter((f) => f.status === "pending" && !f.outgoing),
@@ -516,7 +516,7 @@ export async function GET(event: RequestEvent) {
 			// 需要 watch 或 playback 动作；目标设备的班必须在调用者班级范围内
 			//（设备班解析不到 = 确定不了归属 → 不给，宁严勿泄）。
 			const histUid = uid || host;
-			if (q.get("history") === "1" || q.get("frame")) {
+			if (await q.get("history") === "1" || await q.get("frame")) {
 				if (!canDeviceAction(u.role, "watch") && !canDeviceAction(u.role, "playback")) {
 					return json({ error: "无权限（需要监控/回放能力）" }, { status: 403 });
 				}
@@ -526,17 +526,17 @@ export async function GET(event: RequestEvent) {
 						return json({ error: "目标设备不在你的班级范围内" }, { status: 403 });
 					}
 				}
-				const frameId = Number(q.get("frame") ?? 0);
+				const frameId = Number(await q.get("frame") ?? 0);
 				if (frameId > 0) {
-					const f = getDeviceCaptureById(frameId);
+					const f = await getDeviceCaptureById(frameId);
 					if (!f) return json({ capture: null, reason: "frame_gone" });
 					return json({
 						capture: { at: f.meta.at, bytes: f.meta.bytes, image_base64: f.png.toString("base64") },
 						reason: "ok"
 					});
 				}
-				const limit = Number(q.get("limit") ?? 60) || 60;
-				return json({ history: listDeviceCaptures(histUid, limit), reason: "ok" });
+				const limit = Number(await q.get("limit") ?? 60) || 60;
+				return json({ history: await listDeviceCaptures(histUid, limit), reason: "ok" });
 			}
 
 			// 实时最新一张：同样按班级范围收敛（班主任/站长看本班/全校）。
@@ -584,22 +584,22 @@ export async function GET(event: RequestEvent) {
 			return json({ sessions: listDeviceSessions() });
 		case "file-deliveries": {
 			// 传文件回执（发送方视角）：某次推送后，每台设备收到没有。
-			const fid = String(q.get("file") ?? "").trim();
+			const fid = String(await q.get("file") ?? "").trim();
 			if (!fid) return json({ error: "缺少 file 参数" }, { status: 400 });
-			const obj = getFileObject(fid);
+			const obj = await getFileObject(fid);
 			if (!obj) return json({ error: "文件不存在" }, { status: 404 });
 			// 非管理员只能看「推给自己范围内班级」的回执 —— 文件上传者本身可见自己的记录。
-			if (scope !== "*" && obj.uploader !== (u.displayName || u.username) && u.role !== "owner" && u.role !== "admin") {
+			if (scope !== "*" && (await obj).uploader !== (u.displayName || u.username) && u.role !== "owner" && u.role !== "admin") {
 				return json({ error: "无权限查看该文件的回执" }, { status: 403 });
 			}
-			return json({ file: { id: obj.id, name: obj.name, kind: obj.kind }, deliveries: listDeliveries(fid) });
+			return json({ file: { id: (await obj).id, name: (await obj).name, kind: (await obj).kind }, deliveries: listDeliveries(fid) });
 		}
 		case "my-classes":
 			// 我的班级绑定（老师/班主任/电教委员的面板按它渲染可选目标）。
-			return json({ classes: listBindings(u.id) });
+			return json({ classes: await listBindings(u.id) });
 		case "settings":
 			// 面板配置读取：任何能进面板的人都能读（只读不敏感，且前端要用它渲染当前策略）。
-			return json({ settings: getConsoleSettings() });
+			return json({ settings: await getConsoleSettings() });
 		default:
 			return json({ error: "unknown path" }, { status: 404 });
 	}
@@ -613,7 +613,7 @@ export async function POST(event: RequestEvent) {
 	// 之后调 file-push 把它推给目标班级/设备。这里只校验「能力」，
 	// 「班级范围」在 file-push 解析出目标设备后逐台判定。
 	if (path === "files" && !deviceSecretOk(event)) {
-		const g = guard(event, "viewConsole");
+		const g = await guard(event, "viewConsole");
 		if ("error" in g) return g.error;
 		const up = g.user;
 		if (!canDeviceAction(up.role, "file")) {
@@ -631,7 +631,7 @@ export async function POST(event: RequestEvent) {
 			}
 			const kind = String(form.get("kind") ?? "file") === "voice" ? "voice" : "file";
 			const buf = Buffer.from(await f.arrayBuffer());
-			const obj = saveUpload(f.name || "未命名文件", buf, kind, up.displayName || up.username);
+			const obj = await saveUpload(f.name || "未命名文件", buf, kind, up.displayName || up.username);
 			return json({ ok: true, file: obj }, { status: 201 });
 		} catch (e) {
 			return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
@@ -643,7 +643,7 @@ export async function POST(event: RequestEvent) {
 
 	// ── 生成设备接入码（面板，manage 档）。──────────────────────────────────
 	if (path === "device-activate") {
-		const g = guard(event, "viewConsole");
+		const g = await guard(event, "viewConsole");
 		if ("error" in g) return g.error;
 		const up = g.user;
 		if (!canDevice(up.role, "manage")) return json({ error: "需设备管理档" }, { status: 403 });
@@ -662,13 +662,13 @@ export async function POST(event: RequestEvent) {
 		if (knownClasses && knownClasses.length && !knownClasses.some((c) => c.class_id === classId)) {
 			return json({ error: `班级不存在：${classId}（请从真实班级列表中选择）` }, { status: 400 });
 		}
-		const item = generateActivationCode({ classId, className, hours });
-		addAudit({ actor: up.displayName || up.username, role: up.role, action: "device-activate", target: "console", detail: "生成接入码 " + item.code + " 绑 " + className });
+		const item = await generateActivationCode({ classId, className, hours });
+		await addAudit({ actor: up.displayName || up.username, role: up.role, action: "device-activate", target: "console", detail: "生成接入码 " + item.code + " 绑 " + className });
 		return json({ ok: true, code: item }, { status: 201 });
 	}
 
 	if (path === "monitor-config") {
-		const g = guard(event, "viewConsole");
+		const g = await guard(event, "viewConsole");
 		if ("error" in g) return g.error;
 		const up = g.user;
 		if (!canDevice(up.role, "manage")) {
@@ -687,9 +687,9 @@ export async function POST(event: RequestEvent) {
 		if (Object.keys(patch).length === 0) {
 			return json({ error: "没有可保存的监控字段" }, { status: 400 });
 		}
-		const merged = saveConsoleSettings(patch);
-		addAudit({ actor: up.displayName || up.username, role: up.role, action: "monitor-config", target: "console", detail: "更新监控参数: " + Object.keys(patch).join(",") });
-		return json({ ok: true, config: getMonitorConfig() });
+		const merged = await saveConsoleSettings(patch);
+		await addAudit({ actor: up.displayName || up.username, role: up.role, action: "monitor-config", target: "console", detail: "更新监控参数: " + Object.keys(patch).join(",") });
+		return json({ ok: true, config: await getMonitorConfig() });
 	}
 
 	const body = await readBody(event);
@@ -753,8 +753,8 @@ export async function POST(event: RequestEvent) {
 				if (raw.length < 64 || raw[0] !== 0x89 || raw[1] !== 0x50 || raw[2] !== 0x4e || raw[3] !== 0x47) {
 					return json({ error: "回传内容不是有效 PNG（<64B 或魔数不符）" }, { status: 400 });
 				}
-				const meta = putDeviceCapture(uid, raw);
-				addAudit({
+				const meta = await putDeviceCapture(uid, raw);
+				await addAudit({
 					actor: `device:${uid}`,
 					role: "device",
 					action: "capture.report",
@@ -771,8 +771,8 @@ export async function POST(event: RequestEvent) {
 				const duid = String(body.uid ?? "").trim();
 				if (!fid || !duid) return json({ error: "file_id/uid 不能为空" }, { status: 400 });
 				const state = body.state === "acked" ? "acked" : body.state === "failed" ? "failed" : "pending";
-				const okUp = updateDelivery(fid, duid, state, String(body.detail ?? ""));
-				addAudit({
+				const okUp = await updateDelivery(fid, duid, state, String(body.detail ?? ""));
+				await addAudit({
 					actor: `device:${duid}`,
 					role: "device",
 					action: "file.ack",
@@ -793,8 +793,8 @@ export async function POST(event: RequestEvent) {
 				const st = ["read", "replied", "rejected", "dismissed", "received"].includes(String(body.state))
 					? String(body.state)
 					: "read";
-				const okSt = markNoticeDelivery(nid, duid, st, st === "replied" ? String(body.action_result ?? "") : "");
-				addAudit({
+				const okSt = await markNoticeDelivery(nid, duid, st, st === "replied" ? String(body.action_result ?? "") : "");
+				await addAudit({
 					actor: `device:${duid}`,
 					role: "device",
 					action: "notice.ack",
@@ -817,7 +817,7 @@ export async function POST(event: RequestEvent) {
 				const text = String(body.text ?? body.body ?? "").trim();
 				if (!nid || !duid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
 				if (!text) return json({ error: "回复内容不能为空" }, { status: 400 });
-				const okRep = markNoticeReply(nid, duid, text);
+				const okRep = await markNoticeReply(nid, duid, text);
 				if (!okRep) {
 					// 命中不了不是错误，但要给原因 —— 「回 ok 但什么都没发生」
 					// 正是这类功能最难查的形态（调用方以为成功了，日志一片绿）。
@@ -826,7 +826,7 @@ export async function POST(event: RequestEvent) {
 						{ status: 404 }
 					);
 				}
-				addAudit({
+				await addAudit({
 					actor: `device:${duid}`,
 					role: "device",
 					action: "notice.reply",
@@ -836,7 +836,7 @@ export async function POST(event: RequestEvent) {
 				// ── 聚合（2026-09-26）：桌面端回复同步到 CIMS notice_replies ──
 				// 让操控端在 CIMS 回复收件箱也能看到桌面端（老师电脑）的回复。
 				// fire-and-forget：CIMS 暂时不可达不影响 ext 已落库的回复。
-				void syncReplyToCims(duid, nid, text)
+				void await syncReplyToCims(duid, nid, text)
 					.then((ok) => {
 						if (!ok) console.warn(`[console-ext] CIMS 回复同步失败 uid=${duid} nid=${nid}`);
 					})
@@ -859,7 +859,7 @@ export async function POST(event: RequestEvent) {
 						? (body.extra as Record<string, unknown>)
 						: undefined;
 				try {
-					const rec = addDeviceEvent({
+					const rec = await addDeviceEvent({
 						uid: duid,
 						event: ev,
 						ok: body.ok !== false,
@@ -887,13 +887,13 @@ export async function POST(event: RequestEvent) {
 					body.extra && typeof body.extra === "object" && !Array.isArray(body.extra)
 						? (body.extra as Record<string, unknown>)
 						: undefined;
-				const row = putTaskResult(tid, String(body.state ?? "done"), String(body.result ?? ""), rawExtra);
+				const row = await putTaskResult(tid, String(body.state ?? "done"), String(body.result ?? ""), rawExtra);
 				if (!row) {
 					// 同 notice-reply：命中不了不是错误，但要给原因。回 ok:true 而什么都没改，
 					// 会让设备以为回报成功了，面板那头却永远等不到结果。
 					return json({ ok: false, reason: "任务不存在（task_id 无效或已被清理）" }, { status: 404 });
 				}
-				addAudit({
+				await addAudit({
 					actor: `device:${row.uid}`,
 					role: "device",
 					action: "task.result",
@@ -910,7 +910,7 @@ export async function POST(event: RequestEvent) {
 			const stopped = body.state === "stopped" || body.state === "closed" || body.port === 0;
 			if (stopped) {
 				const removed = clearDeviceSession(proto, uid);
-				addAudit({
+				await addAudit({
 					actor: `device:${uid}`,
 					role: "device",
 					action: `${proto}.session.stop`,
@@ -926,7 +926,7 @@ export async function POST(event: RequestEvent) {
 				return json({ error: "ip/port 非法" }, { status: 400 });
 			}
 			const token = String(body.token ?? "").trim();
-			const requireToken = getConsoleSettings().vnc_require_token !== false;
+			const requireToken = await (await getConsoleSettings()).vnc_require_token !== false;
 			if (requireToken && !token) {
 				// 面板配置要求令牌时，无令牌会话视为不可用 —— 直接拒收，
 				// 好过登记下来让面板连一个裸端口。
@@ -940,7 +940,7 @@ export async function POST(event: RequestEvent) {
 				token,
 				extra: typeof body.extra === "object" && body.extra ? (body.extra as Record<string, unknown>) : undefined
 			});
-			addAudit({
+			await addAudit({
 				actor: `device:${uid}`,
 				role: "device",
 				action: `${proto}.session.report`,
@@ -970,7 +970,7 @@ export async function POST(event: RequestEvent) {
 		: path === "user-features" ? "manage"
 		: path === "chat" || path === "friends" ? "chatClass"
 		: "submitIssue";
-	const g = guard(event, need);
+	const g = await guard(event, need);
 	if ("error" in g) return g.error;
 	const u = g.user;
 	const actor = u.displayName || u.username;
@@ -987,7 +987,7 @@ export async function POST(event: RequestEvent) {
 			const kind = String(body.kind ?? "").trim();
 			if (!tuid || !kind) return json({ error: "uid/kind 不能为空" }, { status: 400 });
 			try {
-				const t = createTask({ uid: tuid, kind, actor });
+				const t = await createTask({ uid: tuid, kind, actor });
 				return json({ ok: true, task_id: t.task_id, task: t }, { status: 201 });
 			} catch (e) {
 				return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });
@@ -1003,8 +1003,8 @@ export async function POST(event: RequestEvent) {
 				body.flags && typeof body.flags === "object" && !Array.isArray(body.flags)
 					? (body.flags as Record<string, unknown>)
 					: {};
-			const saved = setUserFeatureOverrides(target, patch, actor);
-			addAudit({
+			const saved = await setUserFeatureOverrides(target, patch, actor);
+			await addAudit({
 				actor,
 				role: u.role,
 				action: "feature.set",
@@ -1044,20 +1044,20 @@ export async function POST(event: RequestEvent) {
 			// 现在：班级档（homeroom）只能发自己绑定的班 —— 未指定则默认全部绑定班，
 			// 指定了范围外的班则拒绝。没绑定 = 空范围 = 直接拒绝（必须先绑定）。
 			if (broadcastScope(u.role) === "class") {
-				const mine = listBindings(u.id);
-				if (mine.length === 0) {
+				const mine = await listBindings(u.id);
+				if ((await mine).length === 0) {
 					return json({ error: "请先让管理员为你绑定班级，之后才可向本班发通知" }, { status: 403 });
 				}
-				const inScope = (c: string) =>
-					mine.some((b) => b.class_id === c || (b.class_name && b.class_name === c));
-				const outside = classes.filter((c) => !inScope(c));
+				const inScope = async (c: string) =>
+					(await mine).some((b) => b.class_id === c || (b.class_name && b.class_name === c));
+				const outside = classes.filter(async (c) => !await inScope(c));
 				if (outside.length > 0) {
 					return json(
-						{ error: `只能向已绑定的班级（${mine.map((b) => b.class_name || b.class_id).join("、")}）发通知，不能指定：${outside.join("、")}` },
+						{ error: `只能向已绑定的班级（${(await mine).map((b) => b.class_name || b.class_id).join("、")}）发通知，不能指定：${outside.join("、")}` },
 						{ status: 403 }
 					);
 				}
-				if (classes.length === 0) classes = mine.map((b) => b.class_id);
+				if (classes.length === 0) classes = (await mine).map((b) => b.class_id);
 			}
 
 			// 显示时长（秒）：可选字段。非法值/越界一律当「未指定」—— 绝不因为一个坏字段
@@ -1151,7 +1151,7 @@ export async function POST(event: RequestEvent) {
 			// 纯留痕路径（显式 broadcast:false，例如补记一条历史）：此时才由路由层写。
 			const item =
 				broadcast?.notice ??
-				addNotice({
+				await addNotice({
 					title,
 					scope: body.scope || (classes.length ? classes.join("、") : "本班"),
 					account: body.account,
@@ -1167,12 +1167,12 @@ export async function POST(event: RequestEvent) {
 			// 幂等（ensureXxx），面板通过 GET notice-deliveries 轮询明细。
 			const targetUids = broadcast?.uids;
 			if (typed !== "notice" && targetUids && targetUids.length > 0) {
-				ensureNoticeDeliveries(item.id, targetUids);
+				await ensureNoticeDeliveries(item.id, targetUids);
 			}
 
 			// 审计也只在「没走 broadcast」时补（broadcast 内部已记，避免审计双份）。
 			if (!broadcast) {
-				addAudit({
+				await addAudit({
 					actor, role: u.role, action: "notice",
 					target: String(body.scope || "本班"),
 					detail: `${title}（仅留痕，未推送）`.slice(0, 200)
@@ -1189,11 +1189,11 @@ export async function POST(event: RequestEvent) {
 
 			// 一对一房间（dm:<idA>:<idB>）的发言权：必须是这条会话的参与者，且**互为好友**。
 			// 少了这道校验，任何人猜到 id 就能插进别人的私聊。
-			if (!canTalkInRoom(u.id, room)) {
+			if (!await canTalkInRoom(u.id, room)) {
 				return json({ error: "无权在该会话发言（需为该会话参与者且互为好友）" }, { status: 403 });
 			}
 
-			const item = addChat({ room, sender: body.from || actor, body: text });
+			const item = await addChat({ room, sender: body.from || actor, body: text });
 
 			// 重要消息自动升级为教室大屏广播：群里喊一句「@全体 投影坏了」，
 			// 相关教室的屏幕直接弹出来 —— 不必再切到「通知广播」页重敲一遍。
@@ -1247,28 +1247,28 @@ export async function POST(event: RequestEvent) {
 			if (peerId === u.id) return json({ error: "不能添加自己为好友" }, { status: 400 });
 
 			// 对端必须真实存在：否则会攒出一堆指向假 id 的孤儿关系
-			const peer = getUserBrief(peerId);
+			const peer = await getUserBrief(peerId);
 			if (!peer) return json({ error: "对方账号不存在" }, { status: 404 });
 
 			if (action === "request") {
-				const f = requestFriend(
+				const f = await requestFriend(
 					{ id: u.id, name: actor },
 					peerId,
 					peer.displayName || peer.username,
 					String(body.message || "")
 				);
-				addAudit({ actor, role: u.role, action: "friend_request", target: peer.displayName || peer.username, detail: "发起好友申请" });
+				await addAudit({ actor, role: u.role, action: "friend_request", target: peer.displayName || peer.username, detail: "发起好友申请" });
 				return json({ ok: true, friend: f }, { status: 201 });
 			}
 			if (action === "accept" || action === "reject") {
-				const ok = respondFriend(u.id, peerId, action === "accept");
+				const ok = await respondFriend(u.id, peerId, action === "accept");
 				if (!ok) return json({ error: "没有待处理的申请（或你不是收件人）" }, { status: 404 });
-				addAudit({ actor, role: u.role, action: "friend_" + action, target: peer.displayName || peer.username, detail: action === "accept" ? "接受好友" : "拒绝好友" });
+				await addAudit({ actor, role: u.role, action: "friend_" + action, target: peer.displayName || peer.username, detail: action === "accept" ? "接受好友" : "拒绝好友" });
 				return json({ ok: true });
 			}
 			if (action === "remove") {
-				const ok = removeFriend(u.id, peerId);
-				addAudit({ actor, role: u.role, action: "friend_remove", target: peer.displayName || peer.username, detail: "删除好友/撤回申请" });
+				const ok = await removeFriend(u.id, peerId);
+				await addAudit({ actor, role: u.role, action: "friend_remove", target: peer.displayName || peer.username, detail: "删除好友/撤回申请" });
 				return json({ ok });
 			}
 			return json({ error: "未知 action（request / accept / reject / remove）" }, { status: 400 });
@@ -1277,8 +1277,8 @@ export async function POST(event: RequestEvent) {
 			// 按保留期裁剪。**裁剪本身也要留痕** —— 否则「某天的记录去哪了」会成为
 			// 又一个无法自证的疑点，而这正是审计要消灭的东西。
 			const days = Number(body.days) || undefined;
-			const r = pruneAudit(days);
-			addAudit({
+			const r = await pruneAudit(days);
+			await addAudit({
 				actor,
 				role: u.role,
 				action: "audit.prune",
@@ -1289,7 +1289,7 @@ export async function POST(event: RequestEvent) {
 		}
 		case "audit": {
 			if (!body.action) return json({ error: "缺少 action" }, { status: 400 });
-			const item = addAudit({
+			const item = await addAudit({
 				actor: actor,
 				role: u.role,
 				action: body.action,
@@ -1307,9 +1307,9 @@ export async function POST(event: RequestEvent) {
 			}
 			// 调用者的班级范围（'*'=全校 / class_id[]）：POST 分支此前没算过，
 			// 直接用会在范围关处 ReferenceError（线上 500 实证）。
-			const scope = classScopeOf(u.role, u.id);
+			const scope = await classScopeOf(u.role, u.id);
 			const fid = String(body.file_id ?? "").trim();
-			const file = fid ? getFileObject(fid) : null;
+			const file = fid ? await getFileObject(fid) : null;
 			if (!file) return json({ error: "文件不存在（请先上传）" }, { status: 404 });
 
 			const wantClasses: string[] = Array.isArray(body.classes)
@@ -1369,14 +1369,14 @@ export async function POST(event: RequestEvent) {
 			const results = await pushFileToDevices(file, [...uids], (uid2) =>
 				map.uidToClass.get(uid2.toLowerCase()) ?? ""
 			);
-			addAudit({
+			await addAudit({
 				actor: u.displayName || u.username,
 				role: u.role,
 				action: "file_push",
 				target: targets.join("、") || uids.size + " 台设备",
-				detail: `推送「${file.name}」（${Math.round(file.size / 1024)}KB）到 ${uids.size} 台设备`
+				detail: `推送「${(await file).name}」（${Math.round((await file).size / 1024)}KB）到 ${uids.size} 台设备`
 			});
-			return json({ ok: true, file: { id: file.id, name: file.name }, targets, results }, { status: 201 });
+			return json({ ok: true, file: { id: (await file).id, name: (await file).name }, targets, results }, { status: 201 });
 		}
 		case "vnc-session":
 		case "media-session":
@@ -1394,8 +1394,8 @@ export async function POST(event: RequestEvent) {
 			// 等于给了一个"无害但无界"的写入面。
 			const patch: Record<string, unknown> = {};
 			for (const k of SETTINGS_KEYS) if (k in body) patch[k] = body[k];
-			const saved = saveConsoleSettings(patch);
-			addAudit({
+			const saved = await saveConsoleSettings(patch);
+			await addAudit({
 				actor,
 				role: u.role,
 				action: "settings.update",
@@ -1411,7 +1411,7 @@ export async function POST(event: RequestEvent) {
 
 export async function DELETE(event: RequestEvent) {
 	const path = (event.params.path ?? "").replace(/^\/+|\/+$/g, "");
-	const g = guard(event, path === "notices" ? "manage" : "submitIssue");
+	const g = await guard(event, path === "notices" ? "manage" : "submitIssue");
 	if ("error" in g) return g.error;
 
 	if (path === "vnc-session" || path === "media-session" || path === "captures") {
@@ -1424,6 +1424,6 @@ export async function DELETE(event: RequestEvent) {
 		clearDeviceSession(path === "vnc-session" ? "vnc" : "media", uid);
 		return json({ ok: true });
 	}
-	if (path === "notices") return json({ ok: true, cleared: clearNotices() });
+	if (path === "notices") return json({ ok: true, cleared: await clearNotices() });
 	return json({ error: "unknown path" }, { status: 404 });
 }

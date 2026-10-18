@@ -39,14 +39,14 @@ const ALLOWED = [
 	"p2p_ice_override"
 ];
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
-	return json({ config: getMonitorConfig() });
+	return json({ config: await getMonitorConfig() });
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 	const up = g.user;
 
@@ -61,13 +61,13 @@ export async function POST(event: RequestEvent) {
 		return json({ error: "没有可保存的监控字段" }, { status: 400 });
 	}
 
-	saveConsoleSettings(patch);
-	addAudit({
+	await saveConsoleSettings(patch);
+	await addAudit({
 		actor: up.displayName || up.username,
 		role: up.role,
 		action: "monitor-config",
 		target: "console",
 		detail: "更新监控参数: " + Object.keys(patch).join(",")
 	});
-	return json({ ok: true, config: getMonitorConfig() });
+	return json({ ok: true, config: await getMonitorConfig() });
 }

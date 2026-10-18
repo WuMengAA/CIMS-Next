@@ -23,24 +23,24 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { createTask, getTask, listTasks, timeoutTasks } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
 	// 每次查询顺手做一次超时判死（见文件头）。
-	timeoutTasks(5);
+	await timeoutTasks(5);
 	const q = event.url.searchParams;
-	const tid = String(q.get("task_id") ?? "").trim();
+	const tid = String(await q.get("task_id") ?? "").trim();
 	if (tid) {
-		const t = getTask(tid);
+		const t = await getTask(tid);
 		if (!t) return json({ error: "任务不存在（task_id 无效或已被清理）" }, { status: 404 });
 		return json({ task: t });
 	}
-	return json({ tasks: listTasks(q.get("uid") || undefined, Number(q.get("limit") ?? 50) || 50) });
+	return json({ tasks: await listTasks(q.get("uid") || undefined, Number(q.get("limit") ?? 50) || 50) });
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "submitIssue");
+	const g = await guardControl(event, "submitIssue");
 	if ("error" in g) return g.error;
 	const actor = g.user.displayName || g.user.username;
 
@@ -50,7 +50,7 @@ export async function POST(event: RequestEvent) {
 	if (!uid || !kind) return json({ error: "uid/kind 不能为空" }, { status: 400 });
 
 	try {
-		const t = createTask({ uid, kind, actor });
+		const t = await createTask({ uid, kind, actor });
 		return json({ ok: true, task_id: t.task_id, task: t }, { status: 201 });
 	} catch (e) {
 		return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });

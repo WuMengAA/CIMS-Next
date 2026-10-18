@@ -21,36 +21,36 @@ import { addAudit } from "$lib/server/console-ext.js";
  * 权限：GET viewConsole（看课表是基础）；POST manageDevices（调课改全校课表）；
  *      PATCH manageDevices（审批是管理操作）。
  */
-function authUser(event: RequestEvent) {
+async function authUser(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	return u;
 }
 
 export async function GET(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "viewConsole")) return json({ error: "无权限" }, { status: 403 });
 
 	const classId = String(event.url.searchParams.get("classId") ?? "").trim();
-	const timetable = listTimetable();
-	const schedule = classId ? listClassSchedule(classId) : [];
-	const swaps = listSwapRequests();
+	const timetable = await listTimetable();
+	const schedule = classId ? await listClassSchedule(classId) : [];
+	const swaps = await listSwapRequests();
 
 	return json({ timetable, schedule, swaps, classId });
 }
 
 export async function POST(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
 	const body = (await event.request.json().catch(() => ({}))) as Record<string, unknown>;
-	const r = createSwapRequest({
+	const r = await createSwapRequest({
 		classId: String(body.classId ?? ""),
 		fromWeekday: Number(body.fromWeekday),
 		fromPeriod: Number(body.fromPeriod),
@@ -61,7 +61,7 @@ export async function POST(event: RequestEvent) {
 	});
 	if (!r.ok) return json({ error: r.error }, { status: 400 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "schedule-swap-request",
@@ -72,7 +72,7 @@ export async function POST(event: RequestEvent) {
 }
 
 export async function PATCH(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -80,10 +80,10 @@ export async function PATCH(event: RequestEvent) {
 	const id = Number(event.url.searchParams.get("id") ?? 0);
 	if (!["approve", "reject"].includes(action) || !id) return json({ error: "缺少 action 或 id" }, { status: 400 });
 
-	const r = reviewSwap(id, action as "approve" | "reject", u.displayName || u.username);
+	const r = await reviewSwap(id, action as "approve" | "reject", u.displayName || u.username);
 	if (!r.ok) return json({ error: r.error }, { status: 400 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: action === "approve" ? "schedule-swap-approve" : "schedule-swap-reject",

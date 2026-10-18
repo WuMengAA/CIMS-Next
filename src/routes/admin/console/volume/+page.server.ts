@@ -9,7 +9,7 @@ import type { PageServerLoad } from "./$types";
 // 设备列表经 /api/console/cims/class/device-status（服务端代理，按角色收敛范围）；
 // 下发经 sign-task 签名 + send-notification 命令通道（stelarith_task: set_volume）。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	const account = await getCimsAccount();
 	return {

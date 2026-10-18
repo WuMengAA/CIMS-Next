@@ -35,15 +35,15 @@ import {
 } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
 	const q = event.url.searchParams;
 	// 历史通知：「班级」过滤分班查看（不传 = 全部）；「since」增量拉取
 	//（被控端 catch-up 复用同一端点拉补课，面板轮询只看新的）。
 	return json(
-		listNotices(
+		await listNotices(
 			Number(q.get("limit") ?? 50) || 50,
 			q.get("class") || undefined,
 			q.get("since") || undefined
@@ -52,7 +52,7 @@ export function GET(event: RequestEvent) {
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "broadcast");
+	const g = await guardControl(event, "broadcast");
 	if ("error" in g) return g.error;
 	const u = g.user;
 	const actor = u.displayName || u.username;
@@ -88,22 +88,22 @@ export async function POST(event: RequestEvent) {
 	// 现在：班级档只能发自己绑定的班；未指定则默认全部绑定班；指定范围外则拒绝。
 	// **没绑定 = 空范围 = 直接拒绝**（必须先绑定）。
 	if (broadcastScope(u.role) === "class") {
-		const mine = listBindings(u.id);
-		if (mine.length === 0) {
+		const mine = await listBindings(u.id);
+		if ((await mine).length === 0) {
 			return json({ error: "请先让管理员为你绑定班级，之后才可向本班发通知" }, { status: 403 });
 		}
-		const inScope = (c: string) =>
-			mine.some((b) => b.class_id === c || (b.class_name && b.class_name === c));
-		const outside = classes.filter((c) => !inScope(c));
+		const inScope = async (c: string) =>
+			(await mine).some((b) => b.class_id === c || (b.class_name && b.class_name === c));
+		const outside = classes.filter(async (c) => !await inScope(c));
 		if (outside.length > 0) {
 			return json(
 				{
-					error: `只能向已绑定的班级（${mine.map((b) => b.class_name || b.class_id).join("、")}）发通知，不能指定：${outside.join("、")}`
+					error: `只能向已绑定的班级（${(await mine).map((b) => b.class_name || b.class_id).join("、")}）发通知，不能指定：${outside.join("、")}`
 				},
 				{ status: 403 }
 			);
 		}
-		if (classes.length === 0) classes = mine.map((b) => b.class_id);
+		if (classes.length === 0) classes = (await mine).map((b) => b.class_id);
 	}
 
 	// 显示时长（秒）：可选。非法/越界一律当「未指定」——
@@ -198,7 +198,7 @@ export async function POST(event: RequestEvent) {
 	// 纯留痕路径（显式 broadcast:false，例如补记一条历史）：此时才由路由层写。
 	const item =
 		broadcast?.notice ??
-		addNotice({
+		await addNotice({
 			title,
 			scope: String(body.scope || (classes.length ? classes.join("、") : "本班")),
 			account: body.account as string | undefined,
@@ -214,12 +214,12 @@ export async function POST(event: RequestEvent) {
 	// 幂等（ensureXxx），面板通过 GET notice-deliveries 轮询明细。
 	const targetUids = broadcast?.uids;
 	if (typed !== "notice" && targetUids && targetUids.length > 0) {
-		ensureNoticeDeliveries(item.id, targetUids);
+		await ensureNoticeDeliveries(item.id, targetUids);
 	}
 
 	// 审计也只在「没走 broadcast」时补（broadcast 内部已记，避免审计双份）。
 	if (!broadcast) {
-		addAudit({
+		await addAudit({
 			actor,
 			role: u.role,
 			action: "notice",
@@ -243,16 +243,16 @@ export async function POST(event: RequestEvent) {
 	return json({ ...item, typed, broadcast: broadcastSafe }, { status: 201 });
 }
 
-export function DELETE(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+export async function DELETE(event: RequestEvent) {
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 	// 清空历史也要留痕：否则「某段时间的通知去哪了」会变成无法自证的疑点。
-	addAudit({
+	await addAudit({
 		actor: g.user.displayName || g.user.username,
 		role: g.user.role,
 		action: "notice.clear",
 		target: "console",
 		detail: "清空通知历史"
 	});
-	return json({ ok: true, cleared: clearNotices() });
+	return json({ ok: true, cleared: await clearNotices() });
 }

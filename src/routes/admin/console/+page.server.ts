@@ -13,7 +13,7 @@ import type { PageServerLoad } from "./$types";
 // 这里同时把「角色 + 已解算的权限位」下发给面板，使面板能按权限禁用/隐藏操作，
 // 而不是让只读账号也看到一屏可点但会被服务端拒绝的按钮。
 export const load: PageServerLoad = async ({ cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	// 班级绑定校验：进入集控面板前必须完成班级/年级绑定（集控是设备管理入口，
 	// 账号必须知道自己属于哪个班才能定位设备归属）。未绑定 → 引导到绑定页完成二次绑定。

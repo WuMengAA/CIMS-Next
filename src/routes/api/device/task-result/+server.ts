@@ -31,12 +31,12 @@ export async function POST(event: RequestEvent) {
 			? (body.extra as Record<string, unknown>)
 			: undefined;
 
-	const row = putTaskResult(tid, String(body.state ?? "done"), String(body.result ?? ""), rawExtra);
+	const row = await putTaskResult(tid, String(body.state ?? "done"), String(body.result ?? ""), rawExtra);
 	if (!row) {
 		return json({ ok: false, reason: "任务不存在（task_id 无效或已被清理）" }, { status: 404 });
 	}
 
-	addAudit({
+	await addAudit({
 		actor: `device:${row.uid}`,
 		role: "device",
 		action: "task.result",

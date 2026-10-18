@@ -33,14 +33,14 @@ import {
 } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
-	return json({ codes: listActivationCodes() });
+	return json({ codes: await listActivationCodes() });
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 	const up = g.user;
 
@@ -51,7 +51,7 @@ export async function POST(event: RequestEvent) {
 	if (!classId) return json({ error: "缺少 classId" }, { status: 400 });
 
 	// 班级真实性校验（见文件头）。2026-10-04：本地 stelarith_classes 优先，CIMS 兜底。
-	let knownClasses = listStelarithClasses();
+	let knownClasses = await listStelarithClasses();
 	if (!knownClasses.length) {
 		try {
 			const { fetchClassList } = await import("$lib/server/cims-client.js");
@@ -71,8 +71,8 @@ export async function POST(event: RequestEvent) {
 		return json({ error: `班级不存在：${classId}（请从真实班级列表中选择）` }, { status: 400 });
 	}
 
-	const item = generateActivationCode({ classId, className, hours });
-	addAudit({
+	const item = await generateActivationCode({ classId, className, hours });
+	await addAudit({
 		actor: up.displayName || up.username,
 		role: up.role,
 		action: "device-activate",
@@ -82,12 +82,12 @@ export async function POST(event: RequestEvent) {
 	return json({ ok: true, code: item }, { status: 201 });
 }
 
-export function DELETE(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+export async function DELETE(event: RequestEvent) {
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	const code = String(event.url.searchParams.get("code") ?? "").trim();
 	if (!code) return json({ error: "缺少 code" }, { status: 400 });
 	// 假 code（不存在）→ revoke 返回 false → `{ ok: false }`，不是 500。
-	return json({ ok: revokeActivationCode(code) });
+	return json({ ok: await revokeActivationCode(code) });
 }

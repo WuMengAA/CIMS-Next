@@ -23,7 +23,7 @@ import { saveUpload, MAX_FILE_BYTES } from "$lib/server/file-transfer.js";
 import { guardControlDeviceAction } from "$lib/server/guard-control.js";
 
 export async function POST(event: RequestEvent) {
-	const g = guardControlDeviceAction(event, "file");
+	const g = await guardControlDeviceAction(event, "file");
 	if ("error" in g) return g.error;
 	const up = g.user;
 
@@ -39,7 +39,7 @@ export async function POST(event: RequestEvent) {
 		}
 		const kind = String(form.get("kind") ?? "file") === "voice" ? "voice" : "file";
 		const buf = Buffer.from(await f.arrayBuffer());
-		const obj = saveUpload(f.name || "未命名文件", buf, kind, up.displayName || up.username);
+		const obj = await saveUpload(f.name || "未命名文件", buf, kind, up.displayName || up.username);
 		return json({ ok: true, file: obj }, { status: 201 });
 	} catch (e) {
 		return json({ error: String((e as Error)?.message ?? e) }, { status: 400 });

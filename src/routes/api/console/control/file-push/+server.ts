@@ -30,16 +30,16 @@ import { addAudit } from "$lib/server/console-ext.js";
 import { guardControlDeviceAction, readControlBody } from "$lib/server/guard-control.js";
 
 export async function POST(event: RequestEvent) {
-	const g = guardControlDeviceAction(event, "file");
+	const g = await guardControlDeviceAction(event, "file");
 	if ("error" in g) return g.error;
 	const u = g.user;
 
 	// ⚠️ 班级范围**在本分支内重算**（见文件头判据 1）。
-	const scope = classScopeOf(u.role, u.id);
+	const scope = await classScopeOf(u.role, u.id);
 
 	const body = await readControlBody(event);
 	const fid = String(body.file_id ?? "").trim();
-	const file = fid ? getFileObject(fid) : null;
+	const file = fid ? await getFileObject(fid) : null;
 	if (!file) return json({ error: "文件不存在（请先上传）" }, { status: 404 });
 
 	const wantClasses: string[] = Array.isArray(body.classes)
@@ -91,12 +91,12 @@ export async function POST(event: RequestEvent) {
 	const results = await pushFileToDevices(file, [...uids], (uid2) =>
 		map.uidToClass.get(uid2.toLowerCase()) ?? ""
 	);
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "file_push",
 		target: targets.join("、") || uids.size + " 台设备",
-		detail: `推送「${file.name}」（${Math.round(file.size / 1024)}KB）到 ${uids.size} 台设备`
+		detail: `推送「${(await file).name}」（${Math.round((await file).size / 1024)}KB）到 ${uids.size} 台设备`
 	});
-	return json({ ok: true, file: { id: file.id, name: file.name }, targets, results }, { status: 201 });
+	return json({ ok: true, file: { id: (await file).id, name: (await file).name }, targets, results }, { status: 201 });
 }

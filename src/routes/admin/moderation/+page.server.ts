@@ -15,7 +15,7 @@ import type { PageServerLoad } from "./$types";
 
 export const load: PageServerLoad = async ({ cookies, url }) => {
 	const t = cookies.get("admin_token") ?? "";
-	const u = t ? verifyToken(t) : null;
+	const u = t ? await verifyToken(t) : null;
 	if (!u || !userCan(u, "moderate")) throw redirect(303, "/admin/login");
 
 	// 权限申请门槛独立（reviewPermission L5）—— 不满足就不给 tab，避免点了必失败。

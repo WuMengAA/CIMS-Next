@@ -83,10 +83,10 @@ export function buildClassMap(rows: DeviceBinding[]): Pick<ClassMapResult, "uidT
  *   3) CIMS 不可达不抛错 —— 照常返回本地结果，但 `cimsReached:false` 让上层看得见。
  */
 export async function listDeviceLedger(): Promise<LedgerEntry[] & { source: ClassMapResult["source"]; cimsReached: boolean }> {
-	const rows = listDeviceBindings();
-	const entries: LedgerEntry[] = rows.map((r) => ({ ...r, lookupKey: uidLookupKey(r.uid) }));
+	const rows = await listDeviceBindings();
+	const entries: LedgerEntry[] = (await rows).map((r) => ({ ...r, lookupKey: uidLookupKey(r.uid) }));
 
-	if (rows.length === 0) {
+	if ((await rows).length === 0) {
 		try {
 			const { resolveDeviceClassMap } = await import("../device-bindings.js");
 			const m = await resolveDeviceClassMap();
@@ -103,14 +103,14 @@ export async function listDeviceLedger(): Promise<LedgerEntry[] & { source: Clas
 	}
 
 	return Object.assign(entries, {
-		source: rows.length ? ("local" as const) : ("cims" as const),
-		cimsReached: rows.length > 0
+		source: (await rows).length ? ("local" as const) : ("cims" as const),
+		cimsReached: (await rows).length > 0
 	});
 }
 
 /** 单台设备的本地归班（查不到返 null）。与 device-bindings 同名实现同语义，导出为域出口。 */
-export function deviceClassOf(uid: string): DeviceBinding | null {
-	return localClassOfDevice(uid);
+export async function deviceClassOf(uid: string): Promise<DeviceBinding | null> {
+	return await localClassOfDevice(uid);
 }
 
 /**
@@ -118,13 +118,13 @@ export function deviceClassOf(uid: string): DeviceBinding | null {
  * 形态与 device-bindings.resolveDeviceClassMap 完全对齐，多带 `cimsReached`。
  */
 export async function resolveDeviceClassMap(): Promise<ClassMapResult> {
-	const rows = listDeviceBindings();
+	const rows = await listDeviceBindings();
 	const { uidToClass, devices, classes } = buildClassMap(rows);
-	let source: ClassMapResult["source"] = rows.length ? "local" : "cims";
-	let cimsReached = rows.length > 0;
+	let source: ClassMapResult["source"] = (await rows).length ? "local" : "cims";
+	let cimsReached = (await rows).length > 0;
 
 	// 本地有登记就不再打扰 CIMS（"取代 CIMS"的本意：本地够用就不依赖它）。
-	if (rows.length === 0) {
+	if ((await rows).length === 0) {
 		try {
 			const { resolveDeviceClassMap: cimsMap } = await import("../device-bindings.js");
 			const m = await cimsMap();

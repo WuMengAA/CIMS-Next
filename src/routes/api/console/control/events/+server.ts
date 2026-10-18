@@ -14,19 +14,19 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { listDeviceEvents, deviceEventStats } from "$lib/server/console-ext.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const g = guardControl(event);
 	if ("error" in g) return g.error;
 
 	const q = event.url.searchParams;
-	const uid = String(q.get("uid") ?? "").trim();
-	const hours = Number(q.get("hours"));
+	const uid = String(await q.get("uid") ?? "").trim();
+	const hours = Number(await q.get("hours"));
 	const stats = uid
 		? deviceEventStats(uid, Number.isFinite(hours) && hours > 0 ? hours : 24)
 		: null;
 
 	return json({
-		events: listDeviceEvents(uid || undefined, Number(q.get("limit") ?? 100) || 100),
+		events: listDeviceEvents(uid || undefined, Number(await q.get("limit") ?? 100) || 100),
 		stats
 	});
 }

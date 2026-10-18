@@ -15,10 +15,10 @@ function paramId(event: RequestEvent): string {
 }
 
 export async function PATCH(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	const id = paramId(event);
-	if (!id || !getFile(user.id, id)) return json({ error: "附件不存在" }, { status: 404 });
+	if (!id || !await getFile(user.id, id)) return json({ error: "附件不存在" }, { status: 404 });
 
 	const body = (await event.request.json().catch(() => ({}))) as Record<string, unknown>;
 
@@ -29,21 +29,21 @@ export async function PATCH(event: RequestEvent) {
 	}
 	if ("folderId" in body) {
 		const fid = body.folderId == null || body.folderId === "" ? null : String(body.folderId);
-		moveFile(user.id, id, fid);
+		await moveFile(user.id, id, fid);
 	}
 	if ("watermark" in body) {
 		setFileWatermark(user.id, id, body.watermark === true || body.watermark === 1 || body.watermark === "1");
 	}
 
 	recordActivity({ userId: user.id, username: user.username, action: "other", target: `file-update:${id}` });
-	return json({ ok: true, file: getFile(user.id, id) });
+	return json({ ok: true, file: await getFile(user.id, id) });
 }
 
 export async function DELETE(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	const id = paramId(event);
-	if (!id || !getFile(user.id, id)) return json({ error: "附件不存在" }, { status: 404 });
+	if (!id || !await getFile(user.id, id)) return json({ error: "附件不存在" }, { status: 404 });
 	await deleteFile(user.id, id);
 	recordActivity({ userId: user.id, username: user.username, action: "other", target: `file-delete:${id}` });
 	return json({ ok: true });

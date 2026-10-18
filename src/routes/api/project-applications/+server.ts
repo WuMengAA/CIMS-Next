@@ -5,7 +5,7 @@ import { verifyToken } from "$lib/server/auth.js";
 import { can, userCan } from "$lib/permissions.js";
 
 export const GET: RequestHandler = async ({ cookies, url }) => {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 	const status = url.searchParams.get("status") || undefined;
 	return json(getProjectApplications(status));
@@ -17,7 +17,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
 	// 管理员操作：审核
 	if (body.action === "approve" || body.action === "reject") {
-		const u = verifyToken(cookies.get("admin_token"));
+		const u = await verifyToken(cookies.get("admin_token"));
 		if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 		const status = body.action === "approve" ? "approved" : "rejected";
 		const app = setProjectApplicationStatus(body.id, status, body.makePage === true);
@@ -26,7 +26,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 	}
 
 	// 普通登录用户：提交申请
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!body.name?.trim() || !body.summary?.trim()) return json({ error: "请填写名称与简介" }, { status: 400 });
 	const app = addProjectApplication({

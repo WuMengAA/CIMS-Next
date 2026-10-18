@@ -8,7 +8,7 @@ import type { PageServerLoad } from "./$types";
  * 重新解出 —— 与 hooks.server.ts 的守卫同一来源，客户端无法伪造。
  */
 export const load: PageServerLoad = async ({ cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	return {
 		user: u ? { username: u.username, role: u.role, displayName: u.displayName } : null
 	};

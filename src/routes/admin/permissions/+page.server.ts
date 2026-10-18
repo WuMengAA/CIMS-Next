@@ -17,7 +17,7 @@ import type { PageServerLoad } from "./$types";
  * 才需要站长身份 —— 而本页是只读展示，没有写操作。
  */
 export const load: PageServerLoad = async ({ cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	// 有效称号：显式授予集合优先，否则回退角色预设
 	const effectiveTitles: TitleKey[] = u && u.titles && u.titles.length ? u.titles : titlesOf(u?.role ?? null);
 	return {

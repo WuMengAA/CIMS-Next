@@ -6,14 +6,14 @@ import { can, userCan } from "$lib/permissions.js";
 
 // GET  → 读取订阅源配置（需 manageSettings）
 // POST → 保存订阅源配置（增删改源 + 播报设置），合并默认值，避免字段丢失
-export const GET: RequestHandler = ({ request }) => {
-	const user = getApiUser(request);
+export const GET: RequestHandler = async ({ request }) => {
+	const user = await getApiUser(request);
 	if (!user || !userCan(user, "manageSettings")) return json({ error: "无权限" }, { status: 403 });
 	return json(getFeedConfig());
 };
 
 export const POST: RequestHandler = async ({ request }) => {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user || !userCan(user, "manageSettings")) return json({ error: "无权限" }, { status: 403 });
 	let body: any;
 	try {

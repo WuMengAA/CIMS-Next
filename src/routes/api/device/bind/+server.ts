@@ -41,11 +41,11 @@ function signDeviceTicket(devUid: string, fp: string, owner: string): string | n
 	return `${payload}.${sig}`;
 }
 
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const auth = event.request.headers.get("authorization") ?? "";
 	const m = /^Bearer\s+(.+)$/i.exec(auth);
 	if (!m) return json({ error: "需要 Bearer 网站会话令牌（先走 OAuth 授权）" }, { status: 401 });
-	const user = verifyToken(m[1].trim());
+	const user = await verifyToken(m[1].trim());
 	if (!user) return json({ error: "登录会话无效或已过期，请重新登录" }, { status: 401 });
 
 	const fp = String(event.url.searchParams.get("fp") ?? "").trim().toLowerCase();
@@ -54,8 +54,8 @@ export function GET(event: RequestEvent) {
 
 	const rawUid = String(event.url.searchParams.get("uid") ?? "").trim();
 	// 设备名：优先调用方给的名字，不给则站点生成（稳定、可预期）
-	const devUid = rawUid || `user${user.id}-dev${fp.replace(/[^a-z0-9]/g, "").slice(0, 8)}`;
-	const owner = String(user.username || user.displayName || `user#${user.id ?? "?"}`);
+	const devUid = rawUid || `user${(await user).id}-dev${fp.replace(/[^a-z0-9]/g, "").slice(0, 8)}`;
+	const owner = String((await user).username || (await user).displayName || `user#${(await user).id ?? "?"}`);
 
 	const ticket = signDeviceTicket(devUid, fp, owner);
 	if (!ticket)

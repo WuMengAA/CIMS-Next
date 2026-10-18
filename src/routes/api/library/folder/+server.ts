@@ -6,7 +6,7 @@ import { recordActivity } from "$lib/server/activity.js";
 import { listFolders, createFolder } from "$lib/server/attachment-library.js";
 
 export async function POST(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 
 	const form = await event.request.formData().catch(() => null);
@@ -15,11 +15,11 @@ export async function POST(event: RequestEvent) {
 	const parentRaw = form.get("parentId");
 	const parentId = parentRaw ? String(parentRaw) : null;
 	if (parentId) {
-		const mine = listFolders(user.id).some((f) => f.id === parentId);
+		const mine = await (await listFolders(user.id)).some((f) => f.id === parentId);
 		if (!mine) return json({ error: "目标目录不存在" }, { status: 400 });
 	}
 
-	const folder = createFolder(user.id, String(form.get("name") ?? ""), parentId);
+	const folder = await createFolder(user.id, String(form.get("name") ?? ""), parentId);
 	recordActivity({ userId: user.id, username: user.username, action: "other", target: `folder:${folder.name}` });
 	return json({ ok: true, folder });
 }

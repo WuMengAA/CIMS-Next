@@ -37,18 +37,18 @@ import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 /** @全体 / @all 口令。见文件头两个坑。 */
 const AT_ALL = /(?<![A-Za-z0-9._%+-])(?:@全体|@all\b)/i;
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
 	const q = event.url.searchParams;
 	return json(
-		listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100)
+		await listChat(q.get("room") || "techrep-global", Number(q.get("limit") ?? 100) || 100)
 	);
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "chatClass");
+	const g = await guardControl(event, "chatClass");
 	if ("error" in g) return g.error;
 	const u = g.user;
 	const actor = u.displayName || u.username;
@@ -60,11 +60,11 @@ export async function POST(event: RequestEvent) {
 
 	// 一对一房间（`dm:<idA>:<idB>`）的发言权：必须是参与者，且**互为好友**。
 	// 少了这道校验，任何人猜到 id 就能插进别人的私聊。
-	if (!canTalkInRoom(u.id, room)) {
+	if (!await canTalkInRoom(u.id, room)) {
 		return json({ error: "无权在该会话发言（需为该会话参与者且互为好友）" }, { status: 403 });
 	}
 
-	const item = addChat({ room, sender: body.from ? String(body.from) : actor, body: text });
+	const item = await addChat({ room, sender: body.from ? String(body.from) : actor, body: text });
 
 	const wantBroadcast = body.broadcast === true || body.level === "urgent" || AT_ALL.test(text);
 	let broadcast: Awaited<ReturnType<typeof broadcastToClassrooms>> | null = null;

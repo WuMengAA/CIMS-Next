@@ -46,15 +46,15 @@ function buildQuery(clientId: string, redirectUri: string, state: string, scope 
  * 停用单独一道：站长能在不删配置的前提下掐断某个第三方登录，
  * 且卡片上会明说「已停用」，不用去翻日志。
  */
-function inspect(
+async function inspect(
 	clientId: string,
 	redirectUri: string,
 	scope: string
-): { error: string } | { client: OAuthClientRecord; scope: string } {
-	const client = getClient(clientId);
+): Promise<{ error: string } | { client: OAuthClientRecord; scope: string }> {
+	const client = await getClient(clientId);
 	if (!client) return { error: "unauthorized_client" };
 	if (client.enabled === false) return { error: "client_disabled" };
-	if (!validateRedirectUri(client, redirectUri)) return { error: "invalid_redirect_uri" };
+	if (!await validateRedirectUri(client, redirectUri)) return { error: "invalid_redirect_uri" };
 	if (!hasSecret(client)) return { error: "client_not_configured" };
 	return { client, scope: resolveScope(client, scope) };
 }
@@ -84,11 +84,11 @@ export const load: PageServerLoad = async ({ url, cookies }) => {
 		return { ...base, authed: false, user: null, error: "unsupported_response_type" };
 	}
 
-	const probed = inspect(client_id, redirect_uri, scope);
+	const probed = await inspect(client_id, redirect_uri, scope);
 	if ("error" in probed) return { ...base, authed: false, user: null, error: probed.error };
 	const { client } = probed;
 
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u) return { ...base, client, authed: false, user: null, error: null };
 
 	return {
@@ -116,12 +116,12 @@ export const actions: Actions = {
 		const state = String(form.get("state") ?? "");
 		const scope = String(form.get("scope") ?? "");
 
-		const probed = inspect(client_id, redirect_uri, scope);
+		const probed = await inspect(client_id, redirect_uri, scope);
 		if ("error" in probed) {
 			return fail(400, { error: "invalid_client", client_id, redirect_uri, state, scope });
 		}
 
-		const user = verifyLogin(username, password);
+		const user = await verifyLogin(username, password);
 		if (!user) {
 			return fail(401, { error: "用户名或密码错误", client_id, redirect_uri, state, scope });
 		}
@@ -133,8 +133,8 @@ export const actions: Actions = {
 			/* noop */
 		}
 		const ua = request.headers.get("user-agent") || "";
-		cookies.set("admin_token", makeToken(user, { ip, userAgent: ua }), cookieOptions());
-		markLogin(user.username, ip);
+		cookies.set("admin_token", await makeToken(user, { ip, userAgent: ua }), cookieOptions());
+		await markLogin(user.username, ip);
 
 		// 回到 authorize（GET），load 将看到已登录 → 展示同意页
 		throw redirect(303, `/oauth/authorize?${buildQuery(client_id, redirect_uri, state, probed.scope)}`);
@@ -149,12 +149,12 @@ export const actions: Actions = {
 		const scope = String(form.get("scope") ?? "");
 
 		// 登录态丢失 → 回到登录步骤
-		const u = verifyToken(cookies.get("admin_token"));
+		const u = await verifyToken(cookies.get("admin_token"));
 		if (!u) {
 			throw redirect(303, `/oauth/authorize?${buildQuery(client_id, redirect_uri, state, scope)}`);
 		}
 
-		const probed = inspect(client_id, redirect_uri, scope);
+		const probed = await inspect(client_id, redirect_uri, scope);
 		if ("error" in probed) return fail(400, { error: probed.error });
 
 		const code = issueCode(u.id ?? -1, client_id, redirect_uri, state, probed.scope);

@@ -25,17 +25,17 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { getUserFeatureOverrides, setUserFeatureOverrides, addAudit } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	const uid = String(event.url.searchParams.get("uid") ?? "").trim();
 	if (!uid) return json({ error: "缺少 uid" }, { status: 400 });
-	return json({ uid, overrides: getUserFeatureOverrides(uid) });
+	return json({ uid, overrides: await getUserFeatureOverrides(uid) });
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 	const actor = g.user.displayName || g.user.username;
 
@@ -48,8 +48,8 @@ export async function POST(event: RequestEvent) {
 			? (body.flags as Record<string, unknown>)
 			: {};
 
-	const saved = setUserFeatureOverrides(target, patch, actor);
-	addAudit({
+	const saved = await setUserFeatureOverrides(target, patch, actor);
+	await addAudit({
 		actor,
 		role: g.user.role,
 		action: "feature.set",

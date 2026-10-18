@@ -38,7 +38,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 		return unauthorized("缺少 access_token");
 	}
 
-	const u = userFromWebsiteToken(token);
+	const u = await userFromWebsiteToken(token);
 	if (!u) {
 		console.log("[oauth/userinfo] 拒绝：access_token 无效或已过期");
 		return unauthorized("令牌无效或已过期");
@@ -46,7 +46,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 
 	const base = publicBaseUrl();
 	const fallback = defaultAvatarUrl();
-	const rawAvatar = (u.avatar ?? "").trim();
+	const rawAvatar = ((await u).avatar ?? "").trim();
 	// 头像取值规整一律走 sanitizeAvatar 三段式标准（http(s) 原样 / 站内绝对路径原样 /
 	// 脏值归空串，见 auth.ts）。此处额外补充两点：
 	//   1. 站内绝对路径（/...）必须补上站点域名，否则客户端会以「自己的域名」为基准解析，必然 404；
@@ -59,25 +59,25 @@ export const GET: RequestHandler = async ({ request, url }) => {
 				? `${base}${rawAvatar}`
 				: rawAvatar;
 
-	const name = u.displayName || u.username;
-	const id = String(u.id ?? "");
+	const name = (await u).displayName || (await u).username;
+	const id = String((await u).id ?? "");
 
 	console.log(
-		`[oauth/userinfo] 成功：用户=${u.username} 头像=${avatar === fallback ? "默认" : avatar ? "有" : "空"}`
+		`[oauth/userinfo] 成功：用户=${(await u).username} 头像=${avatar === fallback ? "默认" : avatar ? "有" : "空"}`
 	);
 
 	return json({
 		sub: id,
 		id,
-		username: u.username,
-		preferred_username: u.username,
+		username: (await u).username,
+		preferred_username: (await u).username,
 		name,
 		display_name: name,
 		nickname: name,
-		email: u.email || "",
+		email: (await u).email || "",
 		avatar,
 		picture: avatar,
-		role: u.role,
+		role: (await u).role,
 		issuer: base
 	});
 };

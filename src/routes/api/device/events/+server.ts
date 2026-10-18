@@ -36,7 +36,7 @@ export async function POST(event: RequestEvent) {
 			: undefined;
 
 	try {
-		const rec = addDeviceEvent({
+		const rec = await addDeviceEvent({
 			uid,
 			event: ev,
 			ok: body.ok !== false,

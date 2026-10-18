@@ -23,26 +23,26 @@ import { listDeviceBindings } from "$lib/server/device-bindings.js";
  *
  * 权限：manageDevices。fire-now 向目标班级设备推大屏通知（云端指令通道）。
  */
-function authUser(event: RequestEvent) {
+async function authUser(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	return u;
 }
 
 /** fire-now：向目标班级的设备推 notify（复用广播通道）。 */
-async function fireNow(u: NonNullable<ReturnType<typeof authUser>>, id: number) {
-	const items = listScheduledBroadcasts();
+async function fireNow(u: NonNullable<Awaited<ReturnType<typeof authUser>>>, id: number) {
+	const items = await listScheduledBroadcasts();
 	const it = items.find((x) => x.id === id);
 	if (!it) return { ok: false, error: "不存在" };
 	const base = cloudHttpBase();
 	const token = cloudViewerToken();
 	if (!base || !token) return { ok: false, error: "云端未配置" };
 	// 目标班级的设备
-	const bindings = listDeviceBindings().filter((b) => b.class_id === it.target_class_id && b.status === "active");
+	const bindings = await (await listDeviceBindings()).filter((b) => b.class_id === it.target_class_id && b.status === "active");
 	if (!bindings.length) return { ok: false, error: "该班级没有已登记设备" };
 	let sent = 0;
 	for (const b of bindings) {
@@ -56,19 +56,19 @@ async function fireNow(u: NonNullable<ReturnType<typeof authUser>>, id: number) 
 			if (r.ok) sent++;
 		} catch { /* 单台失败跳过 */ }
 	}
-	addAudit({ actor: u.displayName || u.username, role: u.role, action: "scheduled-fire-now", target: "console", detail: `立即触发定时广播 #${id}，${sent}/${bindings.length} 台收到` });
+	await addAudit({ actor: u.displayName || u.username, role: u.role, action: "scheduled-fire-now", target: "console", detail: `立即触发定时广播 #${id}，${sent}/${bindings.length} 台收到` });
 	return { ok: true, sent, total: bindings.length };
 }
 
 export async function GET(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "viewConsole")) return json({ error: "无权限" }, { status: 403 });
-	return json({ items: listScheduledBroadcasts() });
+	return json({ items: await listScheduledBroadcasts() });
 }
 
 export async function POST(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -77,8 +77,8 @@ export async function POST(event: RequestEvent) {
 		const id = Number(event.url.searchParams.get("id") ?? 0);
 		const enabled = event.url.searchParams.get("enabled") === "1";
 		if (!id) return json({ error: "缺少 id" }, { status: 400 });
-		toggleScheduledBroadcast(id, enabled);
-		addAudit({ actor: u.displayName || u.username, role: u.role, action: "scheduled-toggle", target: "console", detail: `${enabled ? "启用" : "停用"}定时广播 #${id}` });
+		await toggleScheduledBroadcast(id, enabled);
+		await addAudit({ actor: u.displayName || u.username, role: u.role, action: "scheduled-toggle", target: "console", detail: `${enabled ? "启用" : "停用"}定时广播 #${id}` });
 		return json({ ok: true });
 	}
 	if (action === "fire-now") {
@@ -91,7 +91,7 @@ export async function POST(event: RequestEvent) {
 
 	const body = (await event.request.json().catch(() => ({}))) as Record<string, unknown>;
 	const id = Number(body.id ?? 0);
-	const r = saveScheduledBroadcast(id, {
+	const r = await saveScheduledBroadcast(id, {
 		name: body.name ? String(body.name) : "",
 		schedule_type: body.schedule_type ? String(body.schedule_type) : "once",
 		weekday: body.weekday !== undefined && body.weekday !== null ? Number(body.weekday) : null,
@@ -102,17 +102,17 @@ export async function POST(event: RequestEvent) {
 		enabled: body.enabled !== false
 	});
 	if (!r.ok) return json({ error: r.error }, { status: 400 });
-	addAudit({ actor: u.displayName || u.username, role: u.role, action: id > 0 ? "scheduled-update" : "scheduled-create", target: "console", detail: `${id > 0 ? "改" : "建"}定时广播 #${r.item!.id}` });
+	await addAudit({ actor: u.displayName || u.username, role: u.role, action: id > 0 ? "scheduled-update" : "scheduled-create", target: "console", detail: `${id > 0 ? "改" : "建"}定时广播 #${r.item!.id}` });
 	return json({ ok: true, item: r.item }, { status: id > 0 ? 200 : 201 });
 }
 
 export async function DELETE(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 	const id = Number(event.url.searchParams.get("id") ?? 0);
 	if (!id) return json({ error: "缺少 id" }, { status: 400 });
-	deleteScheduledBroadcast(id);
-	addAudit({ actor: u.displayName || u.username, role: u.role, action: "scheduled-delete", target: "console", detail: `删除定时广播 #${id}` });
+	await deleteScheduledBroadcast(id);
+	await addAudit({ actor: u.displayName || u.username, role: u.role, action: "scheduled-delete", target: "console", detail: `删除定时广播 #${id}` });
 	return json({ ok: true });
 }

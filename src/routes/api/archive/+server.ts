@@ -51,7 +51,7 @@ export const GET: RequestHandler = async ({ url }) => {
 };
 
 export const POST: RequestHandler = async ({ request }) => {
-	const u = verifyToken(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
+	const u = await verifyToken(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
 	if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	const { section, slug, version } = body;

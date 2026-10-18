@@ -35,8 +35,8 @@ export async function POST(event: RequestEvent) {
 	// 只接受两个终态；其它一律视为 pending（不是失败）。
 	const state = body.state === "acked" ? "acked" : body.state === "failed" ? "failed" : "pending";
 
-	const okUp = updateDelivery(fid, uid, state, String(body.detail ?? ""));
-	addAudit({
+	const okUp = await updateDelivery(fid, uid, state, String(body.detail ?? ""));
+	await addAudit({
 		actor: `device:${uid}`,
 		role: "device",
 		action: "file.ack",

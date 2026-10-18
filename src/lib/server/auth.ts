@@ -86,7 +86,7 @@ interface UserRow {
 	xp: number;
 }
 
-function rowToUser(r: UserRow): User {
+async function rowToUser(r: UserRow): Promise<User> {
 	return {
 		id: r.id,
 		username: r.username,
@@ -109,7 +109,7 @@ function rowToUser(r: UserRow): User {
 		className: r.class_name || "",
 		gradeName: r.grade_name || "",
 		xp: r.xp ?? 0,
-		titles: r.id != null ? getUserTitles(r.id) : null
+		titles: r.id != null ? await getUserTitles(r.id) : null
 	};
 }
 
@@ -119,11 +119,11 @@ function rowToUser(r: UserRow): User {
  * - 无行 → 返回 null，调用方（userCan）回退到角色预设。
  * 表不存在等异常 → 返回 null（不阻断登录）。
  */
-export function getUserTitles(userId: number): TitleKey[] | null {
+export async function getUserTitles(userId: number): Promise<TitleKey[] | null> {
 	if (userId == null || Number.isNaN(userId)) return null;
 	try {
 		const valid = new Set<string>(TITLE_KEYS);
-		const rows = getDb()
+		const rows = await getDb()
 			.prepare("SELECT title_key FROM user_titles WHERE user_id = ?")
 			.all(userId) as unknown as { title_key: string }[];
 		if (!rows || rows.length === 0) return null;
@@ -135,68 +135,68 @@ export function getUserTitles(userId: number): TitleKey[] | null {
 }
 
 /** 设置某用户的称号集合（完整覆盖写：先清后插）。传空数组 = 清空所有显式称号（回退角色预设）。 */
-export function setUserTitles(userId: number, titles: TitleKey[]): void {
+export async function setUserTitles(userId: number, titles: TitleKey[]): Promise<void> {
 	const valid = new Set<string>(TITLE_KEYS);
-	const clean = Array.from(new Set(titles.filter((t) => valid.has(t))));
+	const clean = Array.from(new Set(titles.filter(async (t) => valid.has(t))));
 	const db = getDb();
 	// node:sqlite 的 DatabaseSync 没有 better-sqlite3 的 .transaction()，
 	// 用显式事务保证「清空 + 重插」的原子性。
-	db.exec("BEGIN");
+	await db.exec("BEGIN");
 	try {
-		db.prepare("DELETE FROM user_titles WHERE user_id = ?").run(userId);
-		const ins = db.prepare("INSERT OR IGNORE INTO user_titles (user_id, title_key) VALUES (?, ?)");
-		for (const t of clean) ins.run(userId, t);
-		db.exec("COMMIT");
+		await db.prepare("DELETE FROM user_titles WHERE user_id = ?").run(userId);
+		const ins = await db.prepare("INSERT OR IGNORE INTO user_titles (user_id, title_key) VALUES (?, ?)");
+		for (const t of clean) await ins.run(userId, t);
+		await db.exec("COMMIT");
 	} catch (e) {
-		db.exec("ROLLBACK");
+		await db.exec("ROLLBACK");
 		throw e;
 	}
 }
 
 /** 在现有集合上追加/撤回单个称号（幂等）。 */
-export function addUserTitle(userId: number, title: TitleKey): void {
+export async function addUserTitle(userId: number, title: TitleKey): Promise<void> {
 	if (!TITLE_KEYS.includes(title)) return;
-	getDb().prepare("INSERT OR IGNORE INTO user_titles (user_id, title_key) VALUES (?, ?)").run(userId, title);
+	await getDb().prepare("INSERT OR IGNORE INTO user_titles (user_id, title_key) VALUES (?, ?)").run(userId, title);
 }
-export function removeUserTitle(userId: number, title: TitleKey): void {
-	getDb().prepare("DELETE FROM user_titles WHERE user_id = ? AND title_key = ?").run(userId, title);
+export async function removeUserTitle(userId: number, title: TitleKey): Promise<void> {
+	await getDb().prepare("DELETE FROM user_titles WHERE user_id = ? AND title_key = ?").run(userId, title);
 }
 
 const SELECT_USER = `SELECT id, username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires,
 	password_hash, salt, created_at, updated_at, last_login_at, last_login_ip, login_count, class_name, grade_name, xp FROM users`;
 
-export function getUsers(): User[] {
-	reconcileAdmin();
-	const rows = getDb().prepare(`${SELECT_USER} ORDER BY created_at ASC`).all() as unknown as UserRow[];
-	return rows.map(rowToUser);
+export async function getUsers(): Promise<User[]> {
+	await reconcileAdmin();
+	const rows = await getDb().prepare(`${SELECT_USER} ORDER BY created_at ASC`).all() as unknown as UserRow[];
+	return await Promise.all(rows.map(rowToUser));
 }
 
 /** 内置 admin 的口令以环境变量 ADMIN_PASSWORD 为权威来源（沿用旧行为）。 */
 let adminReconciled = false;
-function reconcileAdmin() {
+async function reconcileAdmin() {
 	if (adminReconciled) return;
 	adminReconciled = true;
 	const envPw = process.env.ADMIN_PASSWORD;
 	if (!envPw) return;
 	const db = getDb();
-	const admin = db.prepare(`${SELECT_USER} WHERE username = 'admin'`).get() as unknown as UserRow | undefined;
+	const admin = await db.prepare(`${SELECT_USER} WHERE username = 'admin'`).get() as unknown as UserRow | undefined;
 	if (!admin) return;
 	const expected = hashPassword(envPw, admin.salt);
 	if (expected !== admin.password_hash) {
-		db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE username = 'admin'").run(expected, nowIso());
+		await db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE username = 'admin'").run(expected, nowIso());
 	}
 }
 
-export function getUser(username: string): User | null {
-	const row = getDb().prepare(`${SELECT_USER} WHERE username = ?`).get(username) as unknown as UserRow | undefined;
-	return row ? rowToUser(row) : null;
+export async function getUser(username: string): Promise<User | null> {
+	const row = await getDb().prepare(`${SELECT_USER} WHERE username = ?`).get(username) as unknown as UserRow | undefined;
+	return row ? await rowToUser(row) : null;
 }
 
 /** 按数据库主键取用户（OAuth token 端点用）。 */
-export function getUserById(id: number): User | null {
+export async function getUserById(id: number): Promise<User | null> {
 	if (id == null || Number.isNaN(id)) return null;
-	const row = getDb().prepare(`${SELECT_USER} WHERE id = ?`).get(id) as unknown as UserRow | undefined;
-	return row ? rowToUser(row) : null;
+	const row = await getDb().prepare(`${SELECT_USER} WHERE id = ?`).get(id) as unknown as UserRow | undefined;
+	return row ? await rowToUser(row) : null;
 }
 
 /**
@@ -206,25 +206,25 @@ export function getUserById(id: number): User | null {
  *    重复邮箱，返回 null（fail-closed）—— 宁可让用户用精确用户名，也不能登错账号。
  *    这条防线**必须**和注册端的大小写查重配套（注册禁止产生 WuMengAA/wumengaa 并存）。
  */
-function findUserByIdentifier(identifier: string): User | null {
-	const exact = getUser(identifier);
+async function findUserByIdentifier(identifier: string): Promise<User | null> {
+	const exact = await getUser(identifier);
 	if (exact) return exact;
-	const nameRows = getDb()
+	const nameRows = await getDb()
 		.prepare(`${SELECT_USER} WHERE lower(username) = lower(?)`)
 		.all(identifier) as unknown as UserRow[];
-	if (nameRows.length === 1) return rowToUser(nameRows[0]);
-	const mailRows = getDb()
+	if (nameRows.length === 1) return await rowToUser(nameRows[0]);
+	const mailRows = await getDb()
 		.prepare(`${SELECT_USER} WHERE lower(email) = lower(?)`)
 		.all(identifier) as unknown as UserRow[];
-	if (mailRows.length === 1) return rowToUser(mailRows[0]);
+	if (mailRows.length === 1) return await rowToUser(mailRows[0]);
 	return null;
 }
 
-export function verifyLogin(identifier: string, password: string): User | null {
+export async function verifyLogin(identifier: string, password: string): Promise<User | null> {
 	// 2026-10-04：识别放宽为「精确用户名 → 忽略大小写的用户名 → 邮箱」三连查，
 	// 修 WuMengAA 这类大小写账号：填 wumengaa / 2498517208@qq.com 都该能登录。
 	// 歧义防线见 findUserByIdentifier —— 模糊查询命中多条时拒绝，绝不静默二选一。
-	const user = findUserByIdentifier(identifier);
+	const user = await findUserByIdentifier(identifier);
 	if (!user) return null;
 	const hash = hashPassword(password, user.salt);
 	if (hash !== user.passwordHash) return null;
@@ -232,23 +232,23 @@ export function verifyLogin(identifier: string, password: string): User | null {
 	return user;
 }
 
-export function createUser(
+export async function createUser(
 	username: string,
 	password: string,
 	displayName: string,
 	role: Role = "editor",
 	extra: { email?: string; bio?: string } = {}
-): { ok: boolean; error?: string } {
+): Promise<{ ok: boolean; error?: string }> {
 	const name = username.trim();
 	if (!name || !password || password.length < 6) {
 		return { ok: false, error: "用户名不能为空，密码至少 6 位" };
 	}
-	if (getUser(name)) {
+	if (await getUser(name)) {
 		return { ok: false, error: "用户名已存在" };
 	}
 	const salt = crypto.randomBytes(16).toString("hex");
 	const ts = nowIso();
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO users (username, display_name, email, avatar, bio, role, status, verified, password_hash, salt, created_at, updated_at, login_count)
 			 VALUES (?, ?, ?, '', ?, ?, 'active', 1, ?, ?, ?, ?, 0)`
@@ -258,17 +258,17 @@ export function createUser(
 }
 
 /** 按邮箱查重（仅返回是否存在，不泄露明细）。 */
-export function isEmailTaken(email: string): boolean {
+export async function isEmailTaken(email: string): Promise<boolean> {
 	if (!email) return false;
-	const row = getDb().prepare("SELECT id FROM users WHERE email = ?").get(email);
+	const row = await getDb().prepare("SELECT id FROM users WHERE email = ?").get(email);
 	return !!row;
 }
 
 /** 按邮箱取用户（用于重发验证）。 */
-export function getUserByEmail(email: string): User | null {
+export async function getUserByEmail(email: string): Promise<User | null> {
 	if (!email) return null;
-	const row = getDb().prepare(`${SELECT_USER} WHERE email = ?`).get(email) as unknown as UserRow | undefined;
-	return row ? rowToUser(row) : null;
+	const row = await getDb().prepare(`${SELECT_USER} WHERE email = ?`).get(email) as unknown as UserRow | undefined;
+	return row ? await rowToUser(row) : null;
 }
 
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
@@ -327,13 +327,13 @@ export function validatePasswordStrength(password: string, username = ""): strin
  *    激活钥匙直接回给客户端 → 「注册即自激活」，任何人可批量注册有效账号。
  *    现在无邮件渠道时注册成功但账号保持 pending，需管理员在后台激活，杜绝自激活。
  */
-export function registerUser(
+export async function registerUser(
 	username: string,
 	email: string,
 	password: string,
 	displayName?: string,
 	opts?: { inviteCode?: string }
-): { ok: boolean; error?: string; verifyToken?: string; username?: string; email?: string; mailAvailable?: boolean } {
+): Promise<{ ok: boolean; error?: string; verifyToken?: string; username?: string; email?: string; mailAvailable?: boolean }> {
 	const name = (username || "").trim();
 	const mail = (email || "").trim();
 	const nick = (displayName || "").trim();
@@ -362,12 +362,12 @@ export function registerUser(
 	// 2026-10-04：用户名/邮箱查重一律**忽略大小写**（lower 归一），
 	// 否则已存在 WuMengAA 时还能再注册 wumengaa —— 登录识别放宽后就产生歧义（见 verifyLogin 注释）。
 	// 邮箱同理：Foo@Bar.com 与 foo@bar.com 是同一个人家，不该各占一个号。
-	const nameDup = getDb()
+	const nameDup = await getDb()
 		.prepare("SELECT id FROM users WHERE lower(username) = lower(?) LIMIT 1")
 		.get(name);
 	if (nameDup) return { ok: false, error: "用户名已存在" };
 	if (mail) {
-		const mailDup = getDb()
+		const mailDup = await getDb()
 			.prepare("SELECT id FROM users WHERE lower(email) = lower(?) LIMIT 1")
 			.get(mail);
 		if (mailDup) return { ok: false, error: "该邮箱已被注册" };
@@ -377,7 +377,7 @@ export function registerUser(
 	const token = crypto.randomBytes(32).toString("base64url");
 	const ts = nowIso();
 	const exp = new Date(Date.now() + VERIFY_TTL_MS).toISOString();
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO users
 			  (username, display_name, email, avatar, bio, role, status, verified, verify_token, verify_token_expires, password_hash, salt, created_at, updated_at, login_count)
@@ -387,7 +387,7 @@ export function registerUser(
 	// 邮件渠道可用时立即发验证邮件（未配置 SMTP 则静默跳过，前端回显链接兜底）
 	const mailOk = mailEnabled();
 	if (mail && mailOk) {
-		sendVerificationMail(mail, token).catch((e) => {
+		await sendVerificationMail(mail, token).catch((e) => {
 			console.error("[mailer] 注册验证邮件发送失败：", e);
 		});
 	}
@@ -416,10 +416,10 @@ async function sendVerificationMail(email: string, token: string): Promise<void>
 }
 
 /** 消费验证令牌：激活账号（status=active, verified=1）。 */
-export function verifyEmail(token: string): { ok: boolean; error?: string } {
+export async function verifyEmail(token: string): Promise<{ ok: boolean; error?: string }> {
 	if (!token) return { ok: false, error: "缺少验证令牌" };
 	const db = getDb();
-	const row = db.prepare("SELECT id, status, verify_token_expires FROM users WHERE verify_token = ?").get(token) as
+	const row = await db.prepare("SELECT id, status, verify_token_expires FROM users WHERE verify_token = ?").get(token) as
 		| { id: number; status: string; verify_token_expires: string }
 		| undefined;
 	if (!row) return { ok: false, error: "验证链接无效或已使用" };
@@ -428,7 +428,7 @@ export function verifyEmail(token: string): { ok: boolean; error?: string } {
 	if (!Number.isFinite(exp) || exp < Date.now()) {
 		return { ok: false, error: "验证链接已过期，请重新获取" };
 	}
-	db.prepare("UPDATE users SET status = 'active', verified = 1, verify_token = '', verify_token_expires = '', updated_at = ? WHERE id = ?").run(
+	await db.prepare("UPDATE users SET status = 'active', verified = 1, verify_token = '', verify_token_expires = '', updated_at = ? WHERE id = ?").run(
 		nowIso(),
 		row.id
 	);
@@ -438,18 +438,18 @@ export function verifyEmail(token: string): { ok: boolean; error?: string } {
 /** 重发验证令牌（按用户名或邮箱；复用同一套歧义安全识别，见 findUserByIdentifier）。
  * 2026-10-04 安全修复：与 registerUser 同规 —— 只有邮件渠道可用（mailEnabled）才回传
  * verifyToken；无 SMTP 时绝不把激活令牌交给客户端（否则 resend 就是第二条自激活通道）。 */
-export function resendVerification(identifier: string): { ok: boolean; error?: string; verifyToken?: string; email?: string; mailAvailable?: boolean } {
-	const user = findUserByIdentifier(identifier || "");
+export async function resendVerification(identifier: string): Promise<{ ok: boolean; error?: string; verifyToken?: string; email?: string; mailAvailable?: boolean }> {
+	const user = await findUserByIdentifier(identifier || "");
 	if (!user) return { ok: false, error: "账号不存在" };
 	if (user.status === "active" && user.verified) return { ok: false, error: "账号已激活" };
 	const mailOk = mailEnabled();
 	const token = crypto.randomBytes(32).toString("base64url");
 	const exp = new Date(Date.now() + VERIFY_TTL_MS).toISOString();
-	getDb()
+	await getDb()
 		.prepare("UPDATE users SET verify_token = ?, verify_token_expires = ?, updated_at = ? WHERE id = ?")
 		.run(token, exp, nowIso(), user.id ?? -1);
 	if (user.email && mailOk) {
-		sendVerificationMail(user.email, token).catch((e) => {
+		await sendVerificationMail(user.email, token).catch((e) => {
 			console.error("[mailer] 重发验证邮件失败：", e);
 		});
 	}
@@ -458,47 +458,47 @@ export function resendVerification(identifier: string): { ok: boolean; error?: s
 		: { ok: true, verifyToken: "", email: user.email, mailAvailable: false };
 }
 
-export function deleteUser(username: string): { ok: boolean; error?: string } {
+export async function deleteUser(username: string): Promise<{ ok: boolean; error?: string }> {
 	if (username === "admin") {
 		return { ok: false, error: "不能删除内置管理员" };
 	}
-	const user = getUser(username);
+	const user = await getUser(username);
 	if (!user) {
 		return { ok: false, error: "用户不存在" };
 	}
 	const db = getDb();
-	db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id ?? -1);
-	db.prepare("DELETE FROM users WHERE id = ?").run(user.id ?? -1);
+	await db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id ?? -1);
+	await db.prepare("DELETE FROM users WHERE id = ?").run(user.id ?? -1);
 	return { ok: true };
 }
 
-export function changePassword(username: string, newPassword: string): { ok: boolean; error?: string } {
+export async function changePassword(username: string, newPassword: string): Promise<{ ok: boolean; error?: string }> {
 	const pwErr = validatePasswordStrength(newPassword, username);
 	if (pwErr) return { ok: false, error: pwErr };
-	const user = getUser(username);
+	const user = await getUser(username);
 	if (!user) return { ok: false, error: "用户不存在" };
 	const salt = crypto.randomBytes(16).toString("hex");
 	const db = getDb();
-	db.prepare("UPDATE users SET salt = ?, password_hash = ?, updated_at = ? WHERE id = ?").run(
+	await db.prepare("UPDATE users SET salt = ?, password_hash = ?, updated_at = ? WHERE id = ?").run(
 		salt,
 		hashPassword(newPassword, salt),
 		nowIso(),
 		user.id ?? -1
 	);
 	// 改密后吊销该用户全部会话（旧令牌立即失效）。
-	revokeSessions(username);
+	await revokeSessions(username);
 	return { ok: true };
 }
 
 /** 更新资料（本人可改：昵称 / 邮箱 / 简介 / 头像 / 显示名）。 */
-export function updateProfile(
+export async function updateProfile(
 	username: string,
 	patch: { displayName?: string; email?: string; bio?: string; avatar?: string; className?: string; gradeName?: string }
-): { ok: boolean; error?: string } {
-	const user = getUser(username);
+): Promise<{ ok: boolean; error?: string }> {
+	const user = await getUser(username);
 	if (!user) return { ok: false, error: "用户不存在" };
 	const db = getDb();
-	db.prepare(
+	await db.prepare(
 		`UPDATE users SET display_name = ?, email = ?, bio = ?, avatar = ?, class_name = ?, grade_name = ?, updated_at = ? WHERE id = ?`
 	).run(
 		(patch.displayName ?? user.displayName ?? "").trim() || user.username,
@@ -514,11 +514,11 @@ export function updateProfile(
 }
 
 /** 管理端更新（角色 / 状态 / 资料）。 */
-export function adminUpdateUser(
+export async function adminUpdateUser(
 	username: string,
 	patch: { displayName?: string; email?: string; bio?: string; role?: Role; status?: "active" | "disabled"; className?: string; gradeName?: string }
-): { ok: boolean; error?: string } {
-	const user = getUser(username);
+): Promise<{ ok: boolean; error?: string }> {
+	const user = await getUser(username);
 	if (!user) return { ok: false, error: "用户不存在" };
 	if (username === "admin" && patch.role && patch.role !== "admin") {
 		return { ok: false, error: "不能降级内置管理员" };
@@ -527,7 +527,7 @@ export function adminUpdateUser(
 		return { ok: false, error: "不能停用内置管理员" };
 	}
 	const db = getDb();
-	db.prepare(
+	await db.prepare(
 		`UPDATE users SET display_name = ?, email = ?, bio = ?, role = ?, status = ?, class_name = ?, grade_name = ?, updated_at = ? WHERE id = ?`
 	).run(
 		(patch.displayName ?? user.displayName ?? "").trim() || user.username,
@@ -540,19 +540,19 @@ export function adminUpdateUser(
 		nowIso(),
 		user.id ?? -1
 	);
-	if (patch.status === "disabled") revokeSessions(username);
+	if (patch.status === "disabled") await revokeSessions(username);
 	// 管理员批准（置 active）等价于完成验证。
 	if (patch.status === "active") {
-		getDb().prepare("UPDATE users SET verified = 1 WHERE id = ?").run(user.id ?? -1);
+		await getDb().prepare("UPDATE users SET verified = 1 WHERE id = ?").run(user.id ?? -1);
 	}
 	return { ok: true };
 }
 
 /** 吊销某用户全部会话（不删账号）。 */
-export function revokeSessions(username: string): number {
-	const user = getUser(username);
+export async function revokeSessions(username: string): Promise<number> {
+	const user = await getUser(username);
 	if (!user) return 0;
-	const info = getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id ?? -1);
+	const info = await getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id ?? -1);
 	return Number(info.changes ?? 0);
 }
 
@@ -566,13 +566,13 @@ export interface SessionMeta {
 }
 
 /** 建立登录会话，返回随机会话令牌。 */
-export function makeToken(user: User, meta: SessionMeta = {}): string {
+export async function makeToken(user: User, meta: SessionMeta = {}): Promise<string> {
 	const token = crypto.randomBytes(32).toString("base64url");
 	const now = Date.now();
 	const ttlDays = Math.min(Math.max(meta.ttlDays ?? 30, 1), 365);
 	const ttlMs = ttlDays * 24 * 60 * 60 * 1000;
 	const db = getDb();
-	db.prepare(
+	await db.prepare(
 		`INSERT INTO sessions (token, user_id, created_at, last_seen_at, expires_at, deadline, ip, user_agent)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	).run(
@@ -589,19 +589,19 @@ export function makeToken(user: User, meta: SessionMeta = {}): string {
 }
 
 /** 记录一次成功登录（用于 last_login 与活动流）。 */
-export function markLogin(username: string, ip = ""): void {
-	const user = getUser(username);
+export async function markLogin(username: string, ip = ""): Promise<void> {
+	const user = await getUser(username);
 	if (!user) return;
-	getDb()
+	await getDb()
 		.prepare("UPDATE users SET last_login_at = ?, last_login_ip = ?, login_count = login_count + 1 WHERE id = ?")
 		.run(nowIso(), ip.slice(0, 64), user.id ?? -1);
 }
 
 /** 销毁单个会话（登出）。 */
-export function destroySession(token: string | undefined | null): void {
+export async function destroySession(token: string | undefined | null): Promise<void> {
 	if (!token) return;
 	try {
-		getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
+		await getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
 	} catch { /* noop */ }
 }
 
@@ -649,11 +649,11 @@ function uaFamily(ua: string): string | null {
 	return platform ? browser + "|" + platform + "|" + m[2] : browser + "|" + m[2];
 }
 
-export function verifyToken(token: string | undefined | null, ua?: string | null): User | null {
+export async function verifyToken(token: string | undefined | null, ua?: string | null): Promise<User | null> {
 	if (!token) return null;
 	try {
 		const db = getDb();
-		const row = db
+		const row = await db
 			.prepare(
 				`SELECT s.last_seen_at AS s_seen, s.expires_at AS s_exp, s.deadline AS s_deadline, s.user_agent AS s_ua,
 				        u.id, u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status,
@@ -671,7 +671,7 @@ export function verifyToken(token: string | undefined | null, ua?: string | null
 			const fam = uaFamily(ua);
 			const storedFam = uaFamily(row.s_ua);
 			if (fam && storedFam && fam !== storedFam) {
-				db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+				await db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
 				return null;
 			}
 		}
@@ -679,7 +679,7 @@ export function verifyToken(token: string | undefined | null, ua?: string | null
 		const now = Date.now();
 		const exp = Date.parse(row.s_exp);
 		if (!Number.isFinite(exp) || exp < now) {
-			db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+			await db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
 			return null;
 		}
 		if (row.status === "disabled") return null;
@@ -694,13 +694,13 @@ export function verifyToken(token: string | undefined | null, ua?: string | null
 			const nextExp = Number.isFinite(deadline)
 				? Math.min(now + SESSION_TTL_MS, deadline)
 				: now + SESSION_TTL_MS;
-			db.prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token = ?").run(
+			await db.prepare("UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token = ?").run(
 				new Date(now).toISOString(),
 				new Date(nextExp).toISOString(),
 				token
 			);
 		}
-		return rowToUser(row);
+		return await rowToUser(row);
 	} catch {
 		return null;
 	}

@@ -23,7 +23,7 @@ import { listCaptureReadyEvents } from "$lib/server/console-ext.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
 export async function GET(event: RequestEvent) {
-	const g = guardControl(event);
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 	const u = g.user;
 
@@ -32,7 +32,7 @@ export async function GET(event: RequestEvent) {
 	}
 
 	const events = await listCaptureReadyEvents();
-	const scope = classScopeOf(u.role, u.id);
+	const scope = await classScopeOf(u.role, u.id);
 	if (scope === "*") return json({ events, reason: "ok" });
 
 	const filtered: typeof events = [];

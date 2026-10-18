@@ -71,7 +71,7 @@ export async function cimsGet<T>(path: string): Promise<T | null> {
 	const t = await cimsToken();
 	if (!t) return null;
 	const doFetch = async (tk: string) =>
-		fetch(`${MGMT}${path}`, {
+		await fetch(`${MGMT}${path}`, {
 			headers: { Authorization: `Bearer ${tk}` },
 			signal: AbortSignal.timeout(5000)
 		});
@@ -101,7 +101,7 @@ export async function cimsPost<T>(
 	const t = await cimsToken();
 	if (!t) return null;
 	const doFetch = async (tk: string) =>
-		fetch(`${MGMT}${path}`, {
+		await fetch(`${MGMT}${path}`, {
 			method: "POST",
 			headers: {
 				Authorization: `Bearer ${tk}`,

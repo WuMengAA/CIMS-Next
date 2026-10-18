@@ -4,7 +4,7 @@ import { listItems, getComments } from "$lib/server/content-store.js";
 import { getApiUser, canManage } from "$lib/server/api-auth.js";
 
 export async function GET({ request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 
 	// Collect all content this user can access

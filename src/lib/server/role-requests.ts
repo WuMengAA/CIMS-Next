@@ -191,8 +191,8 @@ export interface SubmitInput {
 	evidence?: string;
 }
 
-export function submitRoleRequest(input: SubmitInput): { ok: true; request: RoleRequest } | { ok: false; error: string } {
-	const user = getUser(input.username);
+export async function submitRoleRequest(input: SubmitInput): Promise<{ ok: true; request: RoleRequest } | { ok: false; error: string }> {
+	const user = await getUser(input.username);
 	if (!user) return { ok: false, error: "用户不存在" };
 
 	const fromRole = user.role as Role;
@@ -236,14 +236,14 @@ export function submitRoleRequest(input: SubmitInput): { ok: true; request: Role
 
 	// 同一时刻只允许一张待审申请：否则同一人可堆多张，审批人重复劳动，
 	// 且批准顺序不同会得到不同结果（第二张变陈旧申请）。
-	const dup = getDb()
+	const dup = await getDb()
 		.prepare("SELECT id FROM role_requests WHERE user_id = ? AND status = 'pending'")
 		.get(user.id ?? -1) as unknown as { id: string } | undefined;
 	if (dup) return { ok: false, error: "你已有一张待审核的申请，请等待处理或先撤回" };
 
 	const id = genId();
 	const ts = nowIso();
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO role_requests
 			 (id, user_id, username, from_role, from_level, target_role, target_level,
@@ -270,39 +270,39 @@ export function submitRoleRequest(input: SubmitInput): { ok: true; request: Role
 			ts
 		);
 
-	const row = getDb().prepare("SELECT * FROM role_requests WHERE id = ?").get(id) as unknown as Row;
+	const row = await getDb().prepare("SELECT * FROM role_requests WHERE id = ?").get(id) as unknown as Row;
 	return { ok: true, request: toRequest(row) };
 }
 
 // ── 查询 ────────────────────────────────────────────────────────────────────
 
-export function listRoleRequests(status?: string): RoleRequest[] {
+export async function listRoleRequests(status?: string): Promise<RoleRequest[]> {
 	const db = getDb();
 	const rows = status
-		? (db.prepare("SELECT * FROM role_requests WHERE status = ? ORDER BY created_at DESC").all(status) as unknown as Row[])
-		: (db.prepare("SELECT * FROM role_requests ORDER BY created_at DESC").all() as unknown as Row[]);
+		? (await db.prepare("SELECT * FROM role_requests WHERE status = ? ORDER BY created_at DESC").all(status) as unknown as Row[])
+		: (await db.prepare("SELECT * FROM role_requests ORDER BY created_at DESC").all() as unknown as Row[]);
 	return rows.map(toRequest);
 }
 
-export function listMyRoleRequests(username: string): RoleRequest[] {
-	const rows = getDb()
+export async function listMyRoleRequests(username: string): Promise<RoleRequest[]> {
+	const rows = await getDb()
 		.prepare("SELECT * FROM role_requests WHERE username = ? ORDER BY created_at DESC LIMIT 20")
 		.all(username) as unknown as Row[];
 	return rows.map(toRequest);
 }
 
-export function getRoleRequest(id: string): RoleRequest | null {
-	const row = getDb().prepare("SELECT * FROM role_requests WHERE id = ?").get(id) as unknown as Row | undefined;
+export async function getRoleRequest(id: string): Promise<RoleRequest | null> {
+	const row = await getDb().prepare("SELECT * FROM role_requests WHERE id = ?").get(id) as unknown as Row | undefined;
 	return row ? toRequest(row) : null;
 }
 
 /** 撤回自己的待审申请。 */
-export function cancelRoleRequest(id: string, username: string): { ok: boolean; error?: string } {
-	const req = getRoleRequest(id);
+export async function cancelRoleRequest(id: string, username: string): Promise<{ ok: boolean; error?: string }> {
+	const req = await getRoleRequest(id);
 	if (!req) return { ok: false, error: "申请不存在" };
 	if (req.username !== username) return { ok: false, error: "只能撤回自己的申请" };
 	if (req.status !== "pending") return { ok: false, error: "只有待审核的申请可以撤回" };
-	getDb()
+	await getDb()
 		.prepare("UPDATE role_requests SET status = 'cancelled', reviewed_at = ? WHERE id = ?")
 		.run(nowIso(), id);
 	return { ok: true };
@@ -315,17 +315,17 @@ export function cancelRoleRequest(id: string, username: string): { ok: boolean; 
  *
  * @param reviewer 审批人（username）—— 其等级会被重新读库校验，不信任调用方传来的等级
  */
-export function reviewRoleRequest(
+export async function reviewRoleRequest(
 	id: string,
 	action: "approve" | "reject",
 	reviewer: string,
 	note = ""
-): { ok: boolean; error?: string; request?: RoleRequest } {
-	const req = getRoleRequest(id);
+): Promise<{ ok: boolean; error?: string; request?: RoleRequest }> {
+	const req = await getRoleRequest(id);
 	if (!req) return { ok: false, error: "申请不存在" };
 	if (req.status !== "pending") return { ok: false, error: "该申请已处理过（当前状态：" + req.status + "）" };
 
-	const rv = getUser(reviewer);
+	const rv = await getUser(reviewer);
 	if (!rv) return { ok: false, error: "审批人不存在" };
 
 	// 规则 2：审批人须持 reviewPermission，且**严格高于**目标角色秩。
@@ -346,17 +346,17 @@ export function reviewRoleRequest(
 	const ts = nowIso();
 
 	if (action === "reject") {
-		db.prepare(
+		await db.prepare(
 			"UPDATE role_requests SET status = 'rejected', reviewer = ?, review_note = ?, reviewed_at = ? WHERE id = ?"
 		).run(rv.username, String(note || "").slice(0, 500), ts, id);
-		return { ok: true, request: getRoleRequest(id) as RoleRequest };
+		return { ok: true, request: await getRoleRequest(id) as RoleRequest };
 	}
 
 	// 规则 3：陈旧申请不执行。
-	const applicant = getUser(req.username);
+	const applicant = await getUser(req.username);
 	if (!applicant) return { ok: false, error: "申请人账号已不存在" };
 	if ((applicant.role as string) !== req.fromRole) {
-		db.prepare(
+		await db.prepare(
 			"UPDATE role_requests SET status = 'rejected', reviewer = ?, review_note = ?, reviewed_at = ? WHERE id = ?"
 		).run(
 			rv.username,
@@ -368,19 +368,19 @@ export function reviewRoleRequest(
 	}
 
 	// 改角色走既有的 adminUpdateUser（它内含「内置 admin 不可降级」等保护）。
-	const res = adminUpdateUser(req.username, { role: req.targetRole as Role });
+	const res = await adminUpdateUser(req.username, { role: req.targetRole as Role });
 	if (!res.ok) return { ok: false, error: res.error || "角色更新失败" };
 
-	db.prepare(
+	await db.prepare(
 		"UPDATE role_requests SET status = 'approved', reviewer = ?, review_note = ?, reviewed_at = ? WHERE id = ?"
 	).run(rv.username, String(note || "").slice(0, 500), ts, id);
 
-	return { ok: true, request: getRoleRequest(id) as RoleRequest };
+	return { ok: true, request: await getRoleRequest(id) as RoleRequest };
 }
 
 /** 待审数量（后台侧栏角标用）。 */
-export function pendingRoleRequestCount(): number {
-	const row = getDb().prepare("SELECT COUNT(*) AS n FROM role_requests WHERE status = 'pending'").get() as
+export async function pendingRoleRequestCount(): Promise<number> {
+	const row = await getDb().prepare("SELECT COUNT(*) AS n FROM role_requests WHERE status = 'pending'").get() as
 		| { n: number }
 		| undefined;
 	return Number(row?.n ?? 0);

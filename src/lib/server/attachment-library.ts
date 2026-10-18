@@ -67,9 +67,9 @@ export interface UsageInfo {
 }
 
 /** 某用户已用空间。软删除的行不计入（删了就该立刻还回去）。 */
-export function usageOf(userId: number): UsageInfo {
+export async function usageOf(userId: number): Promise<UsageInfo> {
 	const db = getDb();
-	const row = db
+	const row = await db
 		.prepare(
 			`SELECT COALESCE(SUM(bytes),0) AS used, COUNT(*) AS n,
 			        COALESCE(SUM(is_image),0) AS imgs
@@ -77,17 +77,17 @@ export function usageOf(userId: number): UsageInfo {
 		)
 		.get(userId) as { used: number; n: number; imgs: number };
 
-	const bonus = (db.prepare("SELECT COALESCE(quota_bonus_bytes,0) AS b FROM users WHERE id = ?").get(userId) as
+	const bonus = (await db.prepare("SELECT COALESCE(quota_bonus_bytes,0) AS b FROM users WHERE id = ?").get(userId) as
 		| { b: number }
 		| undefined)?.b;
 	const bonusBytes = Math.max(0, bonus ?? 0);
 
 	// xp 可能没在缓存里，兜底查一次；查不到按 0（Lv.1 = 100M 起配，不会把人锁死）。
 	let xp = 0;
-	const u = db.prepare("SELECT xp FROM users WHERE id = ?").get(userId) as { xp: number } | undefined;
+	const u = await db.prepare("SELECT xp FROM users WHERE id = ?").get(userId) as { xp: number } | undefined;
 	if (u) xp = u.xp ?? 0;
 	else {
-		const legacy = getUsers().find((x) => x.id === userId);
+		const legacy = await (await getUsers()).find((x) => x.id === userId);
 		xp = legacy?.xp ?? 0;
 	}
 
@@ -111,26 +111,26 @@ function newId(prefix: string): string {
 }
 
 /** 懒创建「我的附件库 / 图床」两个内置目录。首次用Attachment库时自动出现，不用手动建。 */
-export function ensureRootFolders(userId: number): { root: Folder; hub: Folder } {
+export async function ensureRootFolders(userId: number): Promise<{ root: Folder; hub: Folder }> {
 	const db = getDb();
 	const now = nowIso();
-	const existing = db
+	const existing = await db
 		.prepare("SELECT id, name, parent_id, purpose, created_at FROM attachment_folders WHERE owner_id = ? ORDER BY created_at")
 		.all(userId) as unknown as FolderRow[];
 
-	let root = existing.find((f) => f.parent_id == null && f.purpose === "general");
+	let root = existing.find(async (f) => f.parent_id == null && f.purpose === "general");
 	if (!root) {
 		const id = newId("fd");
-		db.prepare(
+		await db.prepare(
 			`INSERT INTO attachment_folders (id, owner_id, parent_id, name, purpose, created_at, updated_at)
 			 VALUES (?, ?, NULL, ?, 'general', ?, ?)`
 		).run(id, userId, "我的附件库", now, now);
 		root = { id, name: "我的附件库", parent_id: null, purpose: "general", created_at: now };
 	}
-	let hub = existing.find((f) => f.parent_id === root.id && f.purpose === "imagehub");
+	let hub = existing.find(async (f) => f.parent_id === root.id && f.purpose === "imagehub");
 	if (!hub) {
 		const id = newId("fd");
-		db.prepare(
+		await db.prepare(
 			`INSERT INTO attachment_folders (id, owner_id, parent_id, name, purpose, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, 'imagehub', ?, ?)`
 		).run(id, userId, root?.id ?? "", "图床", now, now);
@@ -139,9 +139,9 @@ export function ensureRootFolders(userId: number): { root: Folder; hub: Folder }
 	return { root: toFolder(root), hub: toFolder(hub) };
 }
 
-export function listFolders(userId: number): Folder[] {
-	ensureRootFolders(userId);
-	const rows = getDb()
+export async function listFolders(userId: number): Promise<Folder[]> {
+	await ensureRootFolders(userId);
+	const rows = await getDb()
 		.prepare(
 			`SELECT id, name, parent_id, purpose, created_at FROM attachment_folders
 			  WHERE owner_id = ? ORDER BY purpose = 'imagehub' DESC, created_at ASC`
@@ -150,7 +150,7 @@ export function listFolders(userId: number): Folder[] {
 	return rows.map(toFolder);
 }
 
-export function createFolder(userId: number, name: string, parentId: string | null): Folder {
+export async function createFolder(userId: number, name: string, parentId: string | null): Promise<Folder> {
 	const db = getDb();
 	const now = nowIso();
 	const clean = (name || "").trim().slice(0, 60) || "新建文件夹";
@@ -160,22 +160,22 @@ export function createFolder(userId: number, name: string, parentId: string | nu
 	while (true) {
 		// node:sqlite 只接受 SQLInputValue（number/string/Buffer/null/bigint），
 		// 所以这里显式标成这几种而不是 unknown——parentId 为 null 的分支正是要靠它。
-		const dup = db
+		const dup = await db
 			.prepare("SELECT 1 FROM attachment_folders WHERE owner_id = ? AND parent_id IS ? AND name = ?")
 			.get(userId, parentId, finalName);
 		if (!dup) break;
 		finalName = `${clean} (${i++})`;
 	}
 	const id = newId("fd");
-	db.prepare(
+	await db.prepare(
 		`INSERT INTO attachment_folders (id, owner_id, parent_id, name, purpose, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, 'general', ?, ?)`
 	).run(id, userId, parentId, finalName, now, now);
 	return { id, name: finalName, parentId, purpose: "general", createdAt: now };
 }
 
-export function renameFolder(userId: number, folderId: string, name: string): void {
-	getDb()
+export async function renameFolder(userId: number, folderId: string, name: string): Promise<void> {
+	await getDb()
 		.prepare("UPDATE attachment_folders SET name = ?, updated_at = ? WHERE id = ? AND owner_id = ?")
 		.run((name || "").trim().slice(0, 60) || "未命名", nowIso(), folderId, userId);
 }
@@ -183,7 +183,7 @@ export function renameFolder(userId: number, folderId: string, name: string): vo
 /** 删除文件夹：子文件夹与里面所有文件一并删除（R2 对象也会一起清）。 */
 export async function deleteFolderDeep(userId: number, folderId: string): Promise<number> {
 	const db = getDb();
-	const all = db
+	const all = await db
 		.prepare("SELECT id, parent_id FROM attachment_folders WHERE owner_id = ?")
 		.all(userId) as unknown as { id: string; parent_id: string | null }[];
 	// 就地收集整棵子树（深度不大，递归够了）
@@ -201,7 +201,7 @@ export async function deleteFolderDeep(userId: number, folderId: string): Promis
 	const ids = [folderId, ...children];
 	const placeholders = ids.map(() => "?").join(",");
 
-	const files = db
+	const files = await db
 		.prepare(
 			`SELECT id, storage_key, original_key FROM attachments
 			  WHERE owner_id = ? AND folder_id IN (${placeholders})`
@@ -212,8 +212,8 @@ export async function deleteFolderDeep(userId: number, folderId: string): Promis
 		await safeDeleteObject(f.storage_key);
 		if (f.original_key) await safeDeleteObject(f.original_key);
 	}
-	db.prepare(`DELETE FROM attachments WHERE owner_id = ? AND folder_id IN (${placeholders})`).run(userId, ...ids);
-	db.prepare(`DELETE FROM attachment_folders WHERE owner_id = ? AND id IN (${placeholders})`).run(userId, ...ids);
+	await db.prepare(`DELETE FROM attachments WHERE owner_id = ? AND folder_id IN (${placeholders})`).run(userId, ...ids);
+	await db.prepare(`DELETE FROM attachment_folders WHERE owner_id = ? AND id IN (${placeholders})`).run(userId, ...ids);
 	return files.length;
 }
 
@@ -285,7 +285,7 @@ export interface ListFilesOptions {
 	limit?: number;
 }
 
-export function listFiles(userId: number, opts: ListFilesOptions = {}): LibraryFile[] {
+export async function listFiles(userId: number, opts: ListFilesOptions = {}): Promise<LibraryFile[]> {
 	const where: string[] = ["owner_id = ?"];
 	const params: unknown[] = [userId];
 	if (opts.folderId) {
@@ -302,7 +302,7 @@ export function listFiles(userId: number, opts: ListFilesOptions = {}): LibraryF
 		params.push(like, like);
 	}
 	const limit = Math.min(500, Math.max(1, opts.limit ?? 200));
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT * FROM attachments WHERE ${where.join(" AND ")} ORDER BY created_at DESC LIMIT ${limit}`
 		)
@@ -310,8 +310,8 @@ export function listFiles(userId: number, opts: ListFilesOptions = {}): LibraryF
 	return rows.map(toFile);
 }
 
-export function getFile(userId: number, id: string): LibraryFile | null {
-	const r = getDb().prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ?").get(id, userId) as
+export async function getFile(userId: number, id: string): Promise<LibraryFile | null> {
+	const r = await getDb().prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ?").get(id, userId) as
 		| FileRow
 		| undefined;
 	return r ? toFile(r) : null;
@@ -354,7 +354,7 @@ export async function saveUpload(input: SaveUploadInput): Promise<SaveUploadResu
 	const isImage = (input.mime || "").startsWith("image/") || /\.(jpe?g|png|webp|avif|gif)$/i.test(input.filename);
 
 	// 1) 配额预检：先算「加上这个文件会是多少」
-	const usage = usageOf(input.userId);
+	const usage = await usageOf(input.userId);
 	const incoming = input.data.byteLength;
 	if (usage.usedBytes + incoming > usage.quotaBytes) {
 		throw new QuotaExceededError(usage, incoming);
@@ -421,7 +421,7 @@ export async function saveUpload(input: SaveUploadInput): Promise<SaveUploadResu
 	// 5) 落元数据（真源），顺序不能倒：对象先到位，元数据后写，写失败还能手动补。
 	const id = newId("at");
 	const filename = safeFilename(input.filename);
-	db.prepare(
+	await db.prepare(
 		`INSERT INTO attachments
 		   (id, owner_id, folder_id, filename, storage_key, url, mime, bytes, sha256,
 		    width, height, is_image, watermark, variant, original_key, original_bytes, purpose, created_at)
@@ -447,7 +447,7 @@ export async function saveUpload(input: SaveUploadInput): Promise<SaveUploadResu
 		nowIso()
 	);
 
-	const row = db.prepare("SELECT * FROM attachments WHERE id = ?").get(id) as unknown as FileRow;
+	const row = await db.prepare("SELECT * FROM attachments WHERE id = ?").get(id) as unknown as FileRow;
 	return {
 		file: toFile(row),
 		processed,
@@ -493,32 +493,32 @@ async function safeDeleteObject(key: string): Promise<void> {
 
 // ── 编辑 / 删除 ─────────────────────────────────────────────────────────────
 
-export function renameFile(userId: number, id: string, filename: string): void {
-	getDb()
+export async function renameFile(userId: number, id: string, filename: string): Promise<void> {
+	await getDb()
 		.prepare("UPDATE attachments SET filename = ? WHERE id = ? AND owner_id = ?")
 		.run(safeFilename(filename), id, userId);
 }
 
-export function moveFile(userId: number, id: string, folderId: string | null): void {
-	getDb().prepare("UPDATE attachments SET folder_id = ? WHERE id = ? AND owner_id = ?").run(folderId, id, userId);
+export async function moveFile(userId: number, id: string, folderId: string | null): Promise<void> {
+	await getDb().prepare("UPDATE attachments SET folder_id = ? WHERE id = ? AND owner_id = ?").run(folderId, id, userId);
 }
 
-export function setFileWatermark(userId: number, id: string, on: boolean): void {
+export async function setFileWatermark(userId: number, id: string, on: boolean): Promise<void> {
 	// 只有图片才谈得上"关水印"；给非图片开没有意义
-	getDb()
+	await getDb()
 		.prepare("UPDATE attachments SET watermark = ? WHERE id = ? AND owner_id = ? AND is_image = 1")
 		.run(on ? 1 : 0, id, userId);
 }
 
 export async function deleteFile(userId: number, id: string): Promise<void> {
 	const db = getDb();
-	const row = db.prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ?").get(id, userId) as
+	const row = await db.prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ?").get(id, userId) as
 		| FileRow
 		| undefined;
 	if (!row) return;
 	// 先删元数据（真源），再清对象：元数据先没了，对象就成孤儿；
 	// 反过来若对象删失败，元数据还在，下次清理还能兜到。
-	db.prepare("DELETE FROM attachments WHERE id = ? AND owner_id = ?").run(id, userId);
+	await db.prepare("DELETE FROM attachments WHERE id = ? AND owner_id = ?").run(id, userId);
 	await safeDeleteObject(row.storage_key);
 	if (row.original_key) await safeDeleteObject(row.original_key);
 }
@@ -545,7 +545,7 @@ export async function recompressFile(
 	opts: { watermark?: boolean; keepOriginal?: boolean; quality?: number } = {}
 ): Promise<RecompressResult> {
 	const db = getDb();
-	const row = db.prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ? AND is_image = 1").get(id, userId) as
+	const row = await db.prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ? AND is_image = 1").get(id, userId) as
 		| FileRow
 		| undefined;
 	if (!row) throw new Error("图片不存在或无权操作");
@@ -587,7 +587,7 @@ export async function recompressFile(
 		originalBytes = before;
 	}
 
-	db.prepare(
+	await db.prepare(
 		`UPDATE attachments SET storage_key = ?, url = ?, mime = ?, bytes = ?, variant = ?,
 		        original_key = ?, original_bytes = ?
 		  WHERE id = ? AND owner_id = ?`
@@ -619,7 +619,7 @@ export async function recompressFile(
 /** 还原到用户上传的原始版本（需要 original_key 存在）。 */
 export async function restoreOriginal(userId: number, id: string): Promise<RecompressResult> {
 	const db = getDb();
-	const row = db.prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ?").get(id, userId) as
+	const row = await db.prepare("SELECT * FROM attachments WHERE id = ? AND owner_id = ?").get(id, userId) as
 		| FileRow
 		| undefined;
 	if (!row || !row.original_key) throw new Error("这个附件没有留存原图");
@@ -634,7 +634,7 @@ export async function restoreOriginal(userId: number, id: string): Promise<Recom
 	const newKey = `${baseKey}.restore.${origExt}`;
 	await putObject(newKey, orig.body as unknown as Uint8Array, orig.contentType || row.mime);
 
-	db.prepare(
+	await db.prepare(
 		`UPDATE attachments SET storage_key = ?, url = ?, mime = ?, bytes = ?, variant = 'original'
 		  WHERE id = ? AND owner_id = ?`
 	).run(newKey, publicUrlFor(newKey), orig.contentType || row.mime, (orig.body as unknown as Uint8Array).byteLength, id, userId);
@@ -672,9 +672,9 @@ export interface AdminUserUsage {
 	images: number;
 }
 
-export function adminUsageOverview(): AdminUserUsage[] {
+export async function adminUsageOverview(): Promise<AdminUserUsage[]> {
 	const db = getDb();
-	const users = db
+	const users = await db
 		.prepare("SELECT id, username, display_name, role, xp, quota_bonus_bytes FROM users ORDER BY id")
 		.all() as unknown as {
 		id: number;
@@ -684,9 +684,9 @@ export function adminUsageOverview(): AdminUserUsage[] {
 		xp: number;
 		quota_bonus_bytes: number;
 	}[];
-	return users
-		.map((u) => {
-			const agg = db
+	const usages = await Promise.all(
+		users.map(async (u) => {
+			const agg = await db
 				.prepare(
 					`SELECT COALESCE(SUM(bytes),0) AS used, COUNT(*) AS n, COALESCE(SUM(is_image),0) AS imgs
 					   FROM attachments WHERE owner_id = ?`
@@ -706,13 +706,14 @@ export function adminUsageOverview(): AdminUserUsage[] {
 				images: Number(agg.imgs) || 0,
 			};
 		})
-		.sort((a, b) => b.usedBytes - a.usedBytes);
+	);
+	return usages.sort((a, b) => b.usedBytes - a.usedBytes);
 }
 
 /** 后台强制清空某人全部附件（不可恢复，需二次确认）。 */
 export async function adminPurgeUser(userId: number): Promise<number> {
 	const db = getDb();
-	const rows = db.prepare("SELECT storage_key, original_key FROM attachments WHERE owner_id = ?").all(userId) as unknown as {
+	const rows = await db.prepare("SELECT storage_key, original_key FROM attachments WHERE owner_id = ?").all(userId) as unknown as {
 		storage_key: string;
 		original_key: string;
 	}[];
@@ -720,13 +721,13 @@ export async function adminPurgeUser(userId: number): Promise<number> {
 		await safeDeleteObject(r.storage_key);
 		if (r.original_key) await safeDeleteObject(r.original_key);
 	}
-	db.prepare("DELETE FROM attachments WHERE owner_id = ?").run(userId);
-	db.prepare("DELETE FROM attachment_folders WHERE owner_id = ?").run(userId);
+	await db.prepare("DELETE FROM attachments WHERE owner_id = ?").run(userId);
+	await db.prepare("DELETE FROM attachment_folders WHERE owner_id = ?").run(userId);
 	return rows.length;
 }
 
 /** 后台给用户加/减额外配额（MiB）。 */
-export function adminSetBonusQuota(userId: number, mib: number): void {
+export async function adminSetBonusQuota(userId: number, mib: number): Promise<void> {
 	const bytes = Number.isFinite(mib) && mib > 0 ? Math.round(mib * 1024 * 1024) : 0;
-	getDb().prepare("UPDATE users SET quota_bonus_bytes = ? WHERE id = ?").run(bytes, userId);
+	await getDb().prepare("UPDATE users SET quota_bonus_bytes = ? WHERE id = ?").run(bytes, userId);
 }

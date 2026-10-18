@@ -23,7 +23,7 @@ function homeFor(user: { role?: string | null; titles?: string[] | null } | null
 
 export const load = async ({ cookies, url }) => {
 	// 已登录就别再显示登录页了（否则刷新登录页会让人以为登录状态丢了）
-	const current = verifyToken(cookies.get("admin_token"));
+	const current = await verifyToken(cookies.get("admin_token"));
 	const target = url.searchParams.get("redirectTo");
 	if (current) {
 		redirect(303, target && target.startsWith("/") ? target : homeFor(current));
@@ -41,24 +41,24 @@ export const actions = {
 		const ua = request.headers.get("user-agent") || "";
 
 		// ── 防爆破（2026-09-27）：命中锁定直接拒绝；失败计数；成功清零 ──
-		const lock = checkLoginLock(form.data.username, ip);
+		const lock = await checkLoginLock(form.data.username, ip);
 		if (lock.locked) {
 			recordActivity({ username: form.data.username, action: "login", detail: "账号/来源已锁定，拒绝尝试", ip, userAgent: ua });
 			return message(form, "尝试过于频繁，请 " + Math.ceil(lock.retryAfterSec / 60) + " 分钟后再试", { status: 429 });
 		}
 
-		const user = verifyLogin(form.data.username, form.data.password);
+		const user = await verifyLogin(form.data.username, form.data.password);
 		if (!user) {
-			recordLoginFailure(form.data.username, ip);
+			await recordLoginFailure(form.data.username, ip);
 			// 待验证账号：给出可操作提示，而不是笼统的「用户名或密码错误」。
-			const pendingUser = getUser(form.data.username);
+			const pendingUser = await getUser(form.data.username);
 			if (pendingUser && pendingUser.status === "pending") {
 				return message(form, "账号待验证：请先完成邮箱验证再登录", { status: 403 });
 			}
 			return message(form, "用户名或密码错误", { status: 401 });
 		}
 
-		cookies.set("admin_token", makeToken(user, { ip, userAgent: ua }), {
+		cookies.set("admin_token", await makeToken(user, { ip, userAgent: ua }), {
 			path: "/",
 			httpOnly: true,
 			sameSite: "strict",
@@ -68,8 +68,8 @@ export const actions = {
 			secure: process.env.COOKIE_SECURE === "true",
 			maxAge: 30 * 24 * 60 * 60
 		});
-		markLogin(user.username, ip);
-		clearLoginFailures(user.username, ip);
+		await markLogin(user.username, ip);
+		await clearLoginFailures(user.username, ip);
 		recordActivity({ userId: user.id, username: user.username, action: "login", ip, userAgent: ua });
 		// 按权限分流，别一律 /admin（无 viewAdmin 的账号会被 hooks 弹回登录页）
 		redirect(302, homeFor(user));

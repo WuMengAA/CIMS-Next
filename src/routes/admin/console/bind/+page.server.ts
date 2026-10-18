@@ -7,15 +7,15 @@ import type { PageServerLoad } from "./$types";
 // L1 只读访客一律禁止，不会走到这一步）。
 // 绑定页本身**不该**再被「未绑定 -> redirect」拦——本页就是用来绑定的，
 // 因此这里只做登录 + viewConsole 校验，不检查 className。
-export const load: PageServerLoad = ({ cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+export const load: PageServerLoad = async ({ cookies }) => {
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	// 站长（owner/admin）能进面板不需要绑定，若误入此页直接放回面板
-	if (["owner", "admin"].includes(u.role)) throw redirect(303, "/admin/console");
+	if (["owner", "admin"].includes((await u).role)) throw redirect(303, "/admin/console");
 	return {
-		username: u.username,
-		displayName: u.displayName || u.username,
-		className: u.className || "",
-		gradeName: u.gradeName || ""
+		username: (await u).username,
+		displayName: (await u).displayName || (await u).username,
+		className: (await u).className || "",
+		gradeName: (await u).gradeName || ""
 	};
 };

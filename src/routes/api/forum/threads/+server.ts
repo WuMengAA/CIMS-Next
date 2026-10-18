@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ url }) => {
 };
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	let body: any = {};
 	try { body = await request.json(); } catch { return json({ error: "请求体错误" }, { status: 400 }); }

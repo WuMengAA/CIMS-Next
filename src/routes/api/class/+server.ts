@@ -21,18 +21,18 @@ import { addAudit } from "$lib/server/console-ext.js";
  * 删班保护：班里还有 active 设备 → 409 拒绝（防孤儿绑定）。
  */
 
-function authUser(event: RequestEvent) {
+async function authUser(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	return u;
 }
 
 export async function POST(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -40,10 +40,10 @@ export async function POST(event: RequestEvent) {
 	const name = String(body.name ?? "").trim();
 	if (!name) return json({ error: "缺少班级名" }, { status: 400 });
 
-	const cls = createStelarithClass({ name, code: body.code ? String(body.code).trim() : undefined });
+	const cls = await createStelarithClass({ name, code: body.code ? String(body.code).trim() : undefined });
 	if (!cls) return json({ error: "建班失败（名字可能重复）" }, { status: 409 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "class-create",
@@ -54,7 +54,7 @@ export async function POST(event: RequestEvent) {
 }
 
 export async function PATCH(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -62,13 +62,13 @@ export async function PATCH(event: RequestEvent) {
 	const classId = String(body.classId ?? "").trim();
 	if (!classId) return json({ error: "缺少 classId" }, { status: 400 });
 
-	const cls = updateStelarithClass(classId, {
+	const cls = await updateStelarithClass(classId, {
 		name: body.name !== undefined ? String(body.name).trim() : undefined,
 		code: body.code !== undefined ? String(body.code).trim() : undefined
 	});
 	if (!cls) return json({ error: "改班失败（查不到或名字重复）" }, { status: 409 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "class-update",
@@ -79,14 +79,14 @@ export async function PATCH(event: RequestEvent) {
 }
 
 export async function DELETE(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
 	const classId = String(event.url.searchParams.get("classId") ?? "").trim();
 	if (!classId) return json({ error: "缺少 classId" }, { status: 400 });
 
-	const r = deleteStelarithClass(classId);
+	const r = await deleteStelarithClass(classId);
 	if (!r.deleted) {
 		if (r.notFound) return json({ error: "班级不存在" }, { status: 404 });
 		if (r.blockedByDevices)
@@ -94,7 +94,7 @@ export async function DELETE(event: RequestEvent) {
 		return json({ error: "删班失败" }, { status: 500 });
 	}
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "class-delete",

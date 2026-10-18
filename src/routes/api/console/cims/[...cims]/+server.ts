@@ -41,11 +41,11 @@ function classMatches(c: Record<string, unknown>, ownDigits: string): boolean {
 		.filter(Boolean);
 	return cands.some((d) => d === ownDigits);
 }
-function applyScopeFilter(
+async function applyScopeFilter(
 	u: { role?: string | null; className?: string | null; id?: number | null },
 	rel: string,
 	payload: unknown
-): unknown {
+): Promise<unknown> {
 	// ⚠️ 设备三关铁律（#249 → v2 2026-09-25 收紧）：能看设备列表的原有档位是 watch
 	// （站长/班主任；电教委员 v2 只剩传文件，watch 也收回）。
 	// 2026-09-27 放宽：`apps_view` 也算「可读设备列表」——软件页的设备下拉要用它选设备，
@@ -58,7 +58,7 @@ function applyScopeFilter(
 	// （canDeviceAction 对 null/undefined 一律返回 false）。
 	if (
 		!canDevice((u.role ?? null) as never, "watch") &&
-		!canDeviceAction(u.role, "apps_view") &&
+		!canDeviceAction((u.role ?? null) as never, "apps_view") &&
 		!canDeviceAction((u.role ?? null) as never, "logs_view")
 	) {
 		if (rel === "/class/device-status") return { devices: [], fresh_seconds: 90 };
@@ -76,27 +76,27 @@ function applyScopeFilter(
 	// 没绑定的 homeroom/teacher/techrep = 空范围 = 设备一条不给。
 	// 迁移宽容：绑定表为空但 users.class_name 带数字时，退回旧数字启发式，
 	// 避免上线瞬间把还没来得及重新绑定的存量账号全部打成"看不见设备"。
-	const scope = classScopeOf((u.role ?? null) as Role, u.id ?? null);
+	const scope = await classScopeOf((u.role ?? null) as Role, u.id ?? null);
 	const ownIds: string[] = scope === "*" ? [] : scope;
 	const ownDigits = ownIds.length === 0 ? scopeDigits(u.className) : "";
-	const hitByBinding = (c: Record<string, unknown>): boolean => {
+	const hitByBinding = async (c: Record<string, unknown>): Promise<boolean> => {
 		const cid = String(c.class_id ?? "");
 		if (cid && scopeCovers(ownIds, cid)) return true;
 		// 名称兜底：绑定表存了 class_name，而列表项只有名字没有 id 的形态
 		const name = String(c.name ?? "");
-		if (name && listBindings(u.id ?? 0).some((b) => b.class_name && b.class_name === name)) return true;
+		if (name && (await listBindings(u.id ?? 0)).some((b) => b.class_name && b.class_name === name)) return true;
 		return false;
 	};
 	const hitByDigits = (c: Record<string, unknown>): boolean => classMatches(c, ownDigits);
-	const hit = (c: Record<string, unknown>): boolean =>
-		ownIds.length > 0 ? hitByBinding(c) : ownDigits ? hitByDigits(c) : false;
+	const hit = async (c: Record<string, unknown>): Promise<boolean> =>
+		ownIds.length > 0 ? await hitByBinding(c) : ownDigits ? hitByDigits(c) : false;
 
 	if (rel === "/class/device-status" && payload && typeof payload === "object") {
 		const p = payload as { devices?: unknown[] };
 		if (Array.isArray(p.devices)) {
-			p.devices = p.devices.filter((d) => {
+			p.devices = p.devices.filter(async (d) => {
 				const cid = String((d as Record<string, unknown>).class_id ?? "");
-				return !!cid && hit({ class_id: cid });
+				return !!cid && await hit({ class_id: cid });
 			});
 		}
 		return payload;
@@ -105,11 +105,11 @@ function applyScopeFilter(
 		const p = payload as { devices?: Record<string, unknown>; classes?: unknown[] };
 		if (p.devices && typeof p.devices === "object") {
 			for (const k of Object.keys(p.devices)) {
-				if (!hit({ class_id: p.devices[k] } as Record<string, unknown>)) delete p.devices[k];
+				if (!await hit({ class_id: p.devices[k] } as Record<string, unknown>)) delete p.devices[k];
 			}
 		}
 		if (Array.isArray(p.classes)) {
-			p.classes = p.classes.filter((c) => hit(c as Record<string, unknown>));
+			p.classes = p.classes.filter(async (c) => await hit(c as Record<string, unknown>));
 		}
 		return payload;
 	}
@@ -499,11 +499,11 @@ async function forward(event: RequestEvent) {
 	// ---- 鉴权（必须在放行路径检查之前，避免匿名用户探测可用路径）----
 	// 优先用 admin_token Cookie（网页面板），其次接受 Bearer 头（桌面端 OAuth 网站令牌）。
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const authH = event.request.headers.get("authorization") ?? "";
 		if (authH.toLowerCase().startsWith("bearer ")) {
-			u = verifyToken(authH.slice(7).trim());
+			u = await verifyToken(authH.slice(7).trim());
 		}
 	}
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
@@ -519,7 +519,7 @@ async function forward(event: RequestEvent) {
 	// ── v2 班级范围强制（写路径）────────────────────────────────────────────
 	// 粗档（control/remote）只回答「能不能发指令」，不回答「能对谁发」——
 	// 旧实现里班级账号可以把 shutdown 发给全校任何一台设备，这是范围维度的洞。
-	const scope = classScopeOf((u.role ?? null) as Role, u.id ?? null);
+	const scope = await classScopeOf((u.role ?? null) as Role, u.id ?? null);
 
 	// ① 危险动作收权：shutdown/reboot 只归学校管理员（v2 矩阵：关机一格只有站长有勾）。
 	//    ⚠️ 2026-09-27 修复：这一条原先是未转义正则（`/"action"\s*:\s*"(shutdown|reboot)"/`），
@@ -613,7 +613,7 @@ async function forward(event: RequestEvent) {
 		let payload: unknown = null;
 		try { payload = JSON.parse(raw); } catch { /* 非 JSON 不处理 */ }
 		if (payload !== null) {
-			return json(applyScopeFilter(u, rel, payload));
+			return json(await applyScopeFilter(u, rel, payload));
 		}
 		res = new Response(raw, {
 			status: 200,

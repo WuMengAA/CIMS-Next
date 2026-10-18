@@ -22,7 +22,7 @@ import { getStelarithClass } from "./stelarith/classes.js";
  */
 async function cimsDeviceClassMap() {
 	const mod = await import("./cims-client.js");
-	return mod.fetchDeviceClassMap();
+	return await mod.fetchDeviceClassMap();
 }
 
 export type DeviceBinding = {
@@ -47,18 +47,18 @@ const SELECT_COLS = "uid, class_id, class_name, bound_by, display_name, status, 
  *
  * fail-soft：写库出错只告警、不抛 —— 设备接入是主链路，登记不能把接入卡死。
  */
-export function recordDeviceBinding(input: {
+export async function recordDeviceBinding(input: {
 	uid: string;
 	schoolId?: string;
 	classId?: string;
 	className?: string;
 	boundBy?: string;
-}): boolean {
+}): Promise<boolean> {
 	const uid = String(input.uid ?? "").trim();
 	if (!uid) return false;
 	try {
 		const ts = nowIso();
-		getDb()
+		await getDb()
 			.prepare(
 				`INSERT INTO device_bindings (uid, school_id, class_id, class_name, bound_by, display_name, status, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, '', 'active', ?, ?)
@@ -87,10 +87,10 @@ export function recordDeviceBinding(input: {
 }
 
 /** 管理端改机器显示名（"高三3班讲台机"之类）；空串 = 回落班级名。 */
-export function setDeviceDisplayName(uid: string, displayName: string): boolean {
+export async function setDeviceDisplayName(uid: string, displayName: string): Promise<boolean> {
 	const u = String(uid ?? "").trim();
 	if (!u) return false;
-	const info = getDb()
+	const info = await getDb()
 		.prepare("UPDATE device_bindings SET display_name = ?, updated_at = ? WHERE uid = ?")
 		.run(String(displayName ?? "").slice(0, 64), nowIso(), u) as { changes?: number };
 	return !!info?.changes;
@@ -99,15 +99,15 @@ export function setDeviceDisplayName(uid: string, displayName: string): boolean 
 /** 管理端手动归班（2026-10-04 · 彻底去 CIMS：/class/device/assign 的自有替代）。
  *  设备已在表里 → 改归属；不在（CIMS 兜底时期的新机器）→ 插入一行。
  *  @returns 成功与否；班级名自动从 stelarith_classes 取（查不到用传入值/classId）。 */
-export function assignDeviceToClass(input: { uid: string; classId: string; className?: string; by?: string }): boolean {
+export async function assignDeviceToClass(input: { uid: string; classId: string; className?: string; by?: string }): Promise<boolean> {
 	const uid = String(input.uid ?? "").trim();
 	const classId = String(input.classId ?? "").trim();
 	if (!uid || !classId) return false;
 	try {
 		// 班级名与 school_id 优先从自有班级表取（避免脏名/跨学校错绑）；取不到回落调用方给的
-		const cls = getStelarithClass(classId);
-		const className = (cls?.name ?? String(input.className ?? "")).trim();
-		return recordDeviceBinding({ uid, classId, className, schoolId: cls?.school_id ?? "", boundBy: input.by ?? "manual" });
+		const cls = await getStelarithClass(classId);
+		const className = ((await cls)?.name ?? String(input.className ?? "")).trim();
+		return await recordDeviceBinding({ uid, classId, className, schoolId: (await cls)?.school_id ?? "", boundBy: input.by ?? "manual" });
 	} catch (err) {
 		console.warn("[device-bindings] 手动归班失败：", err);
 		return false;
@@ -116,11 +116,11 @@ export function assignDeviceToClass(input: { uid: string; classId: string; class
 
 /** 管理端移出班级（2026-10-04 · /class/device/unassign 的自有替代）。
  *  清空 class_id/class_name，状态置 unbound（保留登记行，不删——审计要留底）。 */
-export function unassignDeviceFromClass(uid: string): boolean {
+export async function unassignDeviceFromClass(uid: string): Promise<boolean> {
 	const u = String(uid ?? "").trim();
 	if (!u) return false;
 	try {
-		const info = getDb()
+		const info = await getDb()
 			.prepare("UPDATE device_bindings SET class_id = '', class_name = '', status = 'unbound', updated_at = ? WHERE uid = ?")
 			.run(nowIso(), u) as { changes?: number };
 		return !!info?.changes;
@@ -131,18 +131,18 @@ export function unassignDeviceFromClass(uid: string): boolean {
 }
 
 /** 全部登记行（管理端列表 / 本地 device-map 用）。 */
-export function listDeviceBindings(): DeviceBinding[] {
-	return getDb()
+export async function listDeviceBindings(): Promise<DeviceBinding[]> {
+	return await getDb()
 		.prepare(`SELECT ${SELECT_COLS} FROM device_bindings ORDER BY created_at DESC`)
 		.all() as DeviceBinding[];
 }
 
 /** 单台设备的本地归班（uid 不区分大小写匹配，与 CIMS 映射同一约定）。查不到返 null。 */
-export function localClassOfDevice(uid: string): DeviceBinding | null {
+export async function localClassOfDevice(uid: string): Promise<DeviceBinding | null> {
 	const u = String(uid ?? "").trim();
 	if (!u) return null;
 	return (
-		(getDb()
+		(await getDb()
 			.prepare(`SELECT ${SELECT_COLS} FROM device_bindings WHERE uid = ? COLLATE NOCASE LIMIT 1`)
 			.get(u) as DeviceBinding | undefined) ?? null
 	);
@@ -167,7 +167,7 @@ export async function resolveDeviceClassMap(): Promise<{
 	classes: { class_id: string; name: string }[];
 	source: "local" | "local+cims" | "cims";
 }> {
-	const rows = listDeviceBindings();
+	const rows = await listDeviceBindings();
 	const uidToClass = new Map<string, string>();
 	const devices: { uid: string; class_id: string }[] = [];
 	const classMap = new Map<string, string>(); // class_id -> name（去重）
@@ -221,7 +221,7 @@ export async function resolveDeviceClassMap(): Promise<{
  *   · CIMS 也不可达 → null，调用方按「确定不了就不放行」处理（与旧行为一致）。
  */
 export async function resolveClassOfDevice(uid: string): Promise<string | null> {
-	const local = localClassOfDevice(uid);
+	const local = await localClassOfDevice(uid);
 	if (local?.class_id) return local.class_id;
 	try {
 		const { classOfDevice } = await import("./cims-client.js");

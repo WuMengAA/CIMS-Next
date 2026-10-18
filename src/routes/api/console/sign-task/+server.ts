@@ -27,11 +27,11 @@ import { canDevice, canDeviceAction, userCan } from "$lib/permissions.js";
 export async function POST(event: RequestEvent) {
 	// ---- 鉴权（与 cims 代理同一模式：cookie admin_token 优先，其次 Bearer）----
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const authH = event.request.headers.get("authorization") ?? "";
 		if (authH.toLowerCase().startsWith("bearer ")) {
-			u = verifyToken(authH.slice(7).trim());
+			u = await verifyToken(authH.slice(7).trim());
 		}
 	}
 	if (!u) return json({ error: "请先登录" }, { status: 401 });

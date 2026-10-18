@@ -29,8 +29,8 @@ import { can } from "$lib/permissions.js";
  *
  * @returns 已通过则返回 null；未过则返回可直接返回的 401/403 响应。
  */
-function blocked(request: Request): Response | null {
-	const user = getApiUser(request);
+async function blocked(request: Request): Promise<Response | null> {
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	if (!can(user.role, "manageFiles")) {
 		return json({ error: "无权管理附件库" }, { status: 403 });
@@ -39,13 +39,13 @@ function blocked(request: Request): Response | null {
 }
 
 export async function GET({ request }: { request: Request }) {
-	const stop = blocked(request);
+	const stop = await blocked(request);
 	if (stop) return stop;
 	return json(listUploads());
 }
 
 export async function POST({ request }) {
-	const stop = blocked(request);
+	const stop = await blocked(request);
 	if (stop) return stop;
 	const formData = await request.formData();
 	const file = formData.get("file") as File;
@@ -57,7 +57,7 @@ export async function POST({ request }) {
 }
 
 export async function DELETE({ request }) {
-	const stop = blocked(request);
+	const stop = await blocked(request);
 	if (stop) return stop;
 	const { filename } = await request.json();
 	const ok = deleteUpload(filename);

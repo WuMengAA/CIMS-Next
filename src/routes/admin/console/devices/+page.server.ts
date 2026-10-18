@@ -7,7 +7,7 @@ import type { PageServerLoad } from "./$types";
 // 设备页（Svelte 版，2026-09-26 从原生面板迁移）：与集控面板同门槛 viewConsole，
 // 服务端把角色 + 设备轴权限位 + 操作账户下发，前端据此渲染（只读态隐藏写按钮）。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	const account = await getCimsAccount();
 	return {

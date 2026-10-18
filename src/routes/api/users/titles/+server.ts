@@ -15,15 +15,15 @@ import { userCan, titlesOf, TITLES, TITLE_KEYS, type TitleKey } from "$lib/permi
  * GET  /api/users/titles               —— 全部用户的称号一览（管理总览）
  * POST /api/users/titles { username, titles } —— 覆盖写该用户的称号集合（空数组 = 回退角色预设）
  */
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const { url, cookies } = event;
-	const me = verifyToken(cookies.get("admin_token"));
+	const me = await verifyToken(cookies.get("admin_token"));
 	if (!me) return json({ error: "未登录" }, { status: 401 });
 	if (!userCan(me, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
 
 	const username = url.searchParams.get("username");
 	if (username) {
-		const u = getUser(username);
+		const u = await getUser(username);
 		if (!u) return json({ error: "用户不存在" }, { status: 404 });
 		const preset = titlesOf(u.role);
 		const effective = u.titles && u.titles.length ? u.titles : preset;
@@ -41,7 +41,7 @@ export function GET(event: RequestEvent) {
 	}
 
 	// 全量一览：所有用户当前生效的称号（含是否覆盖角色预设）
-	const users = getUsers();
+	const users = await getUsers();
 	const overview = users.map((u) => {
 		const preset = titlesOf(u.role);
 		const effective = u.titles && u.titles.length ? u.titles : preset;
@@ -62,7 +62,7 @@ export function GET(event: RequestEvent) {
 
 export async function POST(event: RequestEvent) {
 	const { request, cookies } = event;
-	const me = verifyToken(cookies.get("admin_token"));
+	const me = await verifyToken(cookies.get("admin_token"));
 	if (!me) return json({ error: "未登录" }, { status: 401 });
 	if (!userCan(me, "manageUsers")) return json({ error: "无权限（需 manageUsers）" }, { status: 403 });
 
@@ -75,7 +75,7 @@ export async function POST(event: RequestEvent) {
 
 	const username = (body.username || "").trim();
 	if (!username) return json({ error: "缺少 username" }, { status: 400 });
-	const target = getUser(username);
+	const target = await getUser(username);
 	if (!target) return json({ error: "用户不存在" }, { status: 404 });
 	if (target.username === "admin") {
 		return json({ error: "内置管理员不可通过此接口改称号" }, { status: 403 });
@@ -88,7 +88,7 @@ export async function POST(event: RequestEvent) {
 	const clean = Array.from(new Set(titles.filter((t: string) => valid.has(t)))) as TitleKey[];
 
 	const hadOverride = !!(target.titles && target.titles.length);
-	setUserTitles(target.id!, clean);
+	await setUserTitles(target.id!, clean);
 	const effective = clean.length ? clean : titlesOf(target.role);
 
 	recordActivity({

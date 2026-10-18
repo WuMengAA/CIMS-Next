@@ -9,7 +9,7 @@ import type { PageServerLoad } from "./$types";
 // 最后一次上报的真实运行状态（模块 / 插件 / 补充遥测），不下发任何指令。
 // 下发类操作一律留在「设备控制」页与旧版面板，本页刻意不提供。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	return { user: u.displayName || u.username };
 };

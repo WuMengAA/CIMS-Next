@@ -24,7 +24,7 @@ export async function GET({ url, cookies }) {
 	const all = url.searchParams.get("all") === "1";
 
 	if (all) {
-		const u = verifyToken(cookies.get("admin_token"));
+		const u = await verifyToken(cookies.get("admin_token"));
 		if (!u || !userCan(u, "moderate")) return json({ error: "无权限" }, { status: 403 });
 		const list = target ? getComments(target) : getComments();
 		return json(list);
@@ -44,7 +44,7 @@ export async function POST({ request, cookies, getClientAddress }) {
 		return json({ error: "请求体无效" }, { status: 400 });
 	}
 	const action = body.action || "submit";
-	const user = verifyToken(cookies.get("admin_token"));
+	const user = await verifyToken(cookies.get("admin_token"));
 
 	if (action === "submit") {
 		const target = body.target || (body.postSlug ? "posts:" + body.postSlug : null);

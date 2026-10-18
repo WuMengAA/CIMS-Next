@@ -12,7 +12,7 @@ import type { PageServerLoad } from "./$types";
 //   ② /api/console/cims 代理   —— 无 logs_view 的 log_tail 直接被 403（人话文案）。
 // 注：owner/admin/homeroom/teacher/techrep 都有 logs_view；user/viewer/editor/moderator 没有。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	const account = await getCimsAccount();
 	return {

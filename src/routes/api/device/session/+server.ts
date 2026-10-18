@@ -43,7 +43,7 @@ export async function POST(event: RequestEvent) {
 	const stopped = body.state === "stopped" || body.state === "closed" || body.port === 0;
 	if (stopped) {
 		const removed = clearDeviceSession(PROTO, uid);
-		addAudit({
+		await addAudit({
 			actor: `device:${uid}`,
 			role: "device",
 			action: `${PROTO}.session.stop`,
@@ -60,7 +60,7 @@ export async function POST(event: RequestEvent) {
 	}
 
 	const token = String(body.token ?? "").trim();
-	const requireToken = getConsoleSettings().vnc_require_token !== false;
+	const requireToken = await (await getConsoleSettings()).vnc_require_token !== false;
 	if (requireToken && !token) {
 		return json({ error: "配置要求会话令牌，但上报未带 token" }, { status: 400 });
 	}
@@ -76,7 +76,7 @@ export async function POST(event: RequestEvent) {
 				? (body.extra as Record<string, unknown>)
 				: undefined
 	});
-	addAudit({
+	await addAudit({
 		actor: `device:${uid}`,
 		role: "device",
 		action: `${PROTO}.session.report`,
@@ -86,7 +86,7 @@ export async function POST(event: RequestEvent) {
 	return json({ ok: true, session: s });
 }
 
-export function DELETE(event: RequestEvent) {
+export async function DELETE(event: RequestEvent) {
 	const g = guardDevice(event);
 	if ("error" in g) return g.error;
 
@@ -94,7 +94,7 @@ export function DELETE(event: RequestEvent) {
 	if (!uid) return json({ error: "uid 不能为空" }, { status: 400 });
 
 	const removed = clearDeviceSession(PROTO, uid);
-	addAudit({
+	await addAudit({
 		actor: `device:${uid}`,
 		role: "device",
 		action: `${PROTO}.session.stop`,

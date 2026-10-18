@@ -15,15 +15,15 @@ import { pruneAudit, addAudit } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 	const actor = g.user.displayName || g.user.username;
 
 	const body = await readControlBody(event);
 	const days = Number(body.days) || undefined;
-	const r = pruneAudit(days);
+	const r = await pruneAudit(days);
 
-	addAudit({
+	await addAudit({
 		actor,
 		role: g.user.role,
 		action: "audit.prune",

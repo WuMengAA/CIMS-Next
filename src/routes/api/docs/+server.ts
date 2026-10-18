@@ -4,7 +4,7 @@ import { getApiUser, canManage, canManageOrPublic } from "$lib/server/api-auth.j
 
 
 export async function GET({ url, request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	const action = url.searchParams.get("action");
 	if (action === "get") {
 		const slug = url.searchParams.get("slug");
@@ -23,7 +23,7 @@ export async function GET({ url, request }) {
 }
 
 export async function POST({ request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	const action = request.headers.get("x-action");
 	const body = await request.json();
 	if (action === "save") {

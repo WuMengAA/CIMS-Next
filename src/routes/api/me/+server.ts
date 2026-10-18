@@ -25,15 +25,15 @@ import type { Role } from "$lib/permissions.js";
  * 桌面客户端经 OAuth 拿到的是令牌、没有 Cookie，所以必须支持 Authorization 头；
  * 否则桌面端永远读不到自己的身份，也就没法按身份适配界面。
  */
-function resolveUser(event: RequestEvent) {
+async function resolveUser(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
 	if (cookieToken) {
-		const u = verifyToken(cookieToken);
+		const u = await verifyToken(cookieToken);
 		if (u) return u;
 	}
 	const auth = event.request.headers.get("authorization") ?? "";
 	if (auth.toLowerCase().startsWith("bearer ")) {
-		return verifyToken(auth.slice(7).trim());
+		return await verifyToken(auth.slice(7).trim());
 	}
 	return null;
 }
@@ -46,14 +46,14 @@ function resolveUser(event: RequestEvent) {
  * `/admin/console` 用同一套函数（userCan / canDevice / allowedBroadcastScopes），
  * 保证两边看到的"我能做什么"永远一致。
  */
-function identityOf(u: NonNullable<ReturnType<typeof verifyToken>>) {
+async function identityOf(u: NonNullable<Awaited<ReturnType<typeof verifyToken>>>) {
 	const role = u.role as Role | null | undefined;
 	const tier = roleManagementTier(role);
 	const xp = u.xp ?? 0;
 	// v2（班级系统 2026-09-25）：动作矩阵与班级范围由服务端一次算清。
 	// 前端（含 Flutter 桌面端）只准消费这里的结果，不允许自己从 role 推导
 	// —— 推导分叉就会出现「界面能点、服务端 403」的错位。
-	const scope = classScopeOf(role, u.id ?? null);
+	const scope = await classScopeOf(role, u.id ?? null);
 	const actions = deviceActionsOf(role);
 	return {
 		role: role ?? null,
@@ -66,7 +66,7 @@ function identityOf(u: NonNullable<ReturnType<typeof verifyToken>>) {
 		gradeName: u.gradeName || "",
 		// v2：结构化班级绑定（真实 class_id 列表；"-" 表示全校无需绑定）
 		classScope: scope,
-		classes: scope === "*" ? [] : listBindings(u.id ?? 0),
+		classes: scope === "*" ? [] : await listBindings(u.id ?? 0),
 		deviceActions: actions,
 		can: {
 			watch: canDevice(role, "watch") || actions.includes("watch"),
@@ -93,8 +93,8 @@ function identityOf(u: NonNullable<ReturnType<typeof verifyToken>>) {
 }
 
 /** GET /api/me —— 当前登录用户资料 + 身份快照（Cookie 或 Bearer 均可）。 */
-export function GET(event: RequestEvent) {
-	const user = resolveUser(event);
+export async function GET(event: RequestEvent) {
+	const user = await resolveUser(event);
 	if (!user) return json(null);
 	return json({
 		username: user.username,
@@ -110,14 +110,14 @@ export function GET(event: RequestEvent) {
 		lastLoginAt: user.lastLoginAt ?? null,
 		loginCount: user.loginCount ?? 0,
 		// 身份快照：桌面端 / 面板据它决定"摆什么、藏什么"
-		identity: identityOf(user)
+		identity: await identityOf(user)
 	});
 }
 
 /** PUT /api/me —— 保存个人资料（昵称 / 邮箱 / 简介 / 头像 / 班级 / 年级）。 */
 export async function PUT(event: RequestEvent) {
 	const { request, cookies } = event;
-	const user = verifyToken(cookies.get("admin_token"));
+	const user = await verifyToken(cookies.get("admin_token"));
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 
 	const body = await request.json().catch(() => ({}));
@@ -126,12 +126,12 @@ export async function PUT(event: RequestEvent) {
 	// 必须提交当前密码做二次验证，防会话被盗后静默改绑邮箱劫持账号。
 	const changingEmail = typeof body.email === "string" && body.email !== (user as unknown as { email?: string }).email;
 	if (changingEmail) {
-		if (!verifyLogin(user.username, String(body.currentPassword || ""))) {
+		if (!await verifyLogin(user.username, String(body.currentPassword || ""))) {
 			return json({ error: "修改邮箱需先验证当前密码", currentPasswordRequired: true }, { status: 400 });
 		}
 	}
 
-	const r = updateProfile(user.username, {
+	const r = await updateProfile(user.username, {
 		displayName: body.displayName,
 		email: body.email,
 		bio: body.bio,
@@ -152,7 +152,7 @@ export async function PUT(event: RequestEvent) {
 		try {
 			if (patchClassName) {
 				// 2026-10-04：班级真源切自有表（stelarith_classes）；本地为空回退 CIMS 兜底
-				let classes = listStelarithClasses();
+				let classes = await listStelarithClasses();
 				if (!classes.length) {
 					try {
 						const { fetchClassList } = await import("$lib/server/cims-client.js");
@@ -171,11 +171,11 @@ export async function PUT(event: RequestEvent) {
 				if (classes.length) {
 					const hit = matchClass(classes, patchClassName);
 					if (hit) {
-						replaceBindings(user.id ?? 0, [{ class_id: hit.class_id, class_name: patchClassName }], user.displayName || user.username);
+						await replaceBindings(user.id ?? 0, [{ class_id: hit.class_id, class_name: patchClassName }], user.displayName || user.username);
 					}
 				}
 			} else {
-				replaceBindings(user.id ?? 0, [], user.displayName || user.username);
+				await replaceBindings(user.id ?? 0, [], user.displayName || user.username);
 			}
 		} catch {
 			// CIMS 不可达 / 匹配失败：保持旧行为（只写 className，数字启发式兜底），
@@ -194,7 +194,7 @@ export async function PUT(event: RequestEvent) {
 		userAgent: request.headers.get("user-agent") || ""
 	});
 
-	const fresh = getUser(user.username);
+	const fresh = await getUser(user.username);
 
 	// 镜像到 CIMS（账号跟随 website 同步）。班级/年级是集控侧「这台设备属于哪个班」
 	// 的账号维度依据 —— 电教委员改了班级，CIMS 侧要同步，否则设备归属与人对不上。

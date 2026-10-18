@@ -9,7 +9,7 @@ import { recordActivity } from "$lib/server/activity.js";
 import { renameFolder, deleteFolderDeep } from "$lib/server/attachment-library.js";
 
 export async function PATCH(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	const id = event.params.id ?? "";
 	const body = await event.request.json().catch(() => ({}));
@@ -22,7 +22,7 @@ export async function PATCH(event: RequestEvent) {
 
 /** 删除目录：里面所有文件与子目录一起清掉，R2 对象同步删除（不可恢复）。 */
 export async function DELETE(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	const id = event.params.id ?? "";
 	const removed = await deleteFolderDeep(user.id, id);

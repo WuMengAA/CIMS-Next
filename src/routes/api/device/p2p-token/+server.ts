@@ -65,7 +65,7 @@ export async function GET(event: RequestEvent) {
 	const secret = mintSecret(uid);
 	await registerToSidecar(uid, secret);
 
-	const mc = getMonitorConfig();
+	const mc = await getMonitorConfig();
 	const iceRaw = String(mc.p2p_ice_override ?? "").trim();
 	let iceServers: unknown[] = [
 		{ urls: "stun:stun.miwifi.com:3478" },

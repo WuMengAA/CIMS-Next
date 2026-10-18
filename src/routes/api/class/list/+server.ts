@@ -16,17 +16,17 @@ import { listStelarithClasses, stelarithClassesReady } from "$lib/server/stelari
  */
 export async function GET(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "viewConsole")) return json({ error: "无权限" }, { status: 403 });
 
 	// 本地优先：自有表有数据就服务，CIMS 不可达也不受影响
-	if (stelarithClassesReady()) {
-		return json({ classes: listStelarithClasses(), source: "local" });
+	if (await stelarithClassesReady()) {
+		return json({ classes: await listStelarithClasses(), source: "local" });
 	}
 
 	// 本地为空 → CIMS 兜底（迁移脚本未跑 / 新环境首次启动）

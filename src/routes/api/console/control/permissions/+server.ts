@@ -16,8 +16,8 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { permissionMatrix } from "$lib/permissions.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
-	return json(permissionMatrix(g.user));
+	return json(permissionMatrix((await g).user));
 }

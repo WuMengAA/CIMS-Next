@@ -12,24 +12,24 @@ import type { PageServerLoad } from "./$types";
  *
  * ⚠️ #248：晋升按「角色秩」（ROLE_RANK）逐级，与经验等级（xp→Lv）完全无关。
  */
-export const load: PageServerLoad = ({ cookies }) => {
-	const user = verifyToken(cookies.get("admin_token"));
+export const load: PageServerLoad = async ({ cookies }) => {
+	const user = await verifyToken(cookies.get("admin_token"));
 	if (!user) {
 		return { loggedIn: false, me: null, targets: [], proofTypes: PROOF_TYPES, requests: [] };
 	}
 
-	const role = user.role as Role;
+	const role = (await user).role as Role;
 	const rank = roleRank(role);
 
 	return {
 		loggedIn: true,
 		me: {
-			username: user.username,
+			username: (await user).username,
 			role,
 			roleLabel: ROLE_LABELS[role] ?? role,
 			rank,
-			className: user.className || "",
-			gradeName: user.gradeName || ""
+			className: (await user).className || "",
+			gradeName: (await user).gradeName || ""
 		},
 		// 只有「上一秩」的角色可用（逐级晋升由服务端再校验一次，前端这份仅用于渲染下拉）。
 		// 与 `/api/role-requests?scope=mine` **共用** targetOptions()：
@@ -37,6 +37,6 @@ export const load: PageServerLoad = ({ cookies }) => {
 		// 前端按一种解析就必然打挂另一种。单一来源后不会再漂移。
 		targets: targetOptions(role),
 		proofTypes: PROOF_TYPES,
-		requests: listMyRoleRequests(user.username)
+		requests: listMyRoleRequests((await user).username)
 	};
 };

@@ -28,17 +28,17 @@ const ALLOWED_IMAGE_MIME = /^image\/(jpeg|png|webp|avif|gif)$/;
 type TargetFormat = "avif" | "webp" | "original";
 
 /** GET /api/library —— 目录树 + 文件列表 + 配额。一次拿全，前端不用发三趟。 */
-export function GET(event: RequestEvent) {
-	const user = sessionUser(event);
+export async function GET(event: RequestEvent) {
+	const user = await sessionUser(event);
 	if (!user) return bad("未登录", 401);
 	const sp = event.url.searchParams;
 	const folderId = sp.get("folder");
 	const kind = (sp.get("kind") ?? "all") as ListFilesOptions["kind"];
 	const q = sp.get("q") ?? "";
-	ensureRootFolders(user.id);
+	await ensureRootFolders(user.id);
 	return json({
-		usage: usageOf(user.id),
-		folders: listFolders(user.id),
+		usage: await usageOf(user.id),
+		folders: await listFolders(user.id),
 		files: listFiles(user.id, {
 			folderId: folderId === "root" ? null : folderId,
 			kind: kind === "all" ? undefined : kind,
@@ -54,7 +54,7 @@ export function GET(event: RequestEvent) {
 
 /** POST /api/library —— 上传文件到个人库（multipart）。 */
 export async function POST(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return bad("未登录", 401);
 	let form: FormData;
 	try {
@@ -106,7 +106,7 @@ export async function POST(event: RequestEvent) {
 			ok: true,
 			file: saved.file,
 			compressionRatio: saved.compressionRatio,
-			usage: usageOf(user.id)
+			usage: await usageOf(user.id)
 		});
 	} catch (e) {
 		if (e instanceof QuotaExceededError) return bad(e.message, 413);

@@ -77,7 +77,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		log(`拒绝：grant_type 不是 authorization_code（拿到 ${grant_type ?? "空"}）`);
 		throw error(400, "unsupported_grant_type");
 	}
-	if (!validateClient(client_id, client_secret)) {
+	if (!await validateClient(client_id, client_secret)) {
 		log(`拒绝：客户端校验不通过 client_id=${client_id || "(空)"} → 密钥不匹配，或该 client_id 未登记`);
 		throw error(401, "invalid_client");
 	}
@@ -95,7 +95,7 @@ export const POST: RequestHandler = async ({ request }) => {
 		throw error(400, "invalid_grant");
 	}
 
-	const user = resolveUser(rec.userId);
+	const user = await resolveUser(rec.userId);
 	if (!user) {
 		log(`拒绝：授权用户 id=${rec.userId} 已不存在`);
 		throw error(400, "invalid_grant");
@@ -105,8 +105,8 @@ export const POST: RequestHandler = async ({ request }) => {
 	// 登录软件信息（2026-09-27 安全改造）：OAuth 换令牌时记录来源 UA，
 	// 后台活动页据此显示"星集控桌面端 / 网页浏览器"等登录来源。
 	const ua = request.headers.get("user-agent") ?? "";
-	const token = mintWebsiteToken(user, { ttlDays: ttlSecs / 86400, userAgent: ua });
-	log(`签发成功：client_id=${client_id} 用户=${user.username} scope=${rec.scope || "profile"} ttl=${ttlSecs}s`);
+	const token = await mintWebsiteToken(user, { ttlDays: ttlSecs / 86400, userAgent: ua });
+	log(`签发成功：client_id=${client_id} 用户=${(await user).username} scope=${rec.scope || "profile"} ttl=${ttlSecs}s`);
 	return json({
 		access_token: token,
 		token_type: "Bearer",

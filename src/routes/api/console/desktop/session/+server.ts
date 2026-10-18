@@ -42,7 +42,7 @@ export const POST: RequestHandler = async ({ request }) => {
 	if (!secretToken) throw error(401, "缺少 Authorization: Bearer <网站会话令牌>");
 
 	// ① 会话令牌必须是本站签的，且还没过期
-	const u = verifyToken(secretToken);
+	const u = await verifyToken(secretToken);
 	if (!u) throw error(401, "网站会话已失效，请在管理端重新登录");
 	// ② 权限：能看集控才配连管理端
 	if (!userCan(u, "viewConsole")) throw error(403, "该账号没有查看集控的权限");

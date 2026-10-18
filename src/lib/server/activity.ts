@@ -64,12 +64,12 @@ function throttled(key: string): boolean {
 	return false;
 }
 
-export function recordActivity(input: ActivityInput, opts: { throttle?: boolean } = {}): void {
+export async function recordActivity(input: ActivityInput, opts: { throttle?: boolean } = {}): Promise<void> {
 	try {
 		const target = (input.target || "").slice(0, 300);
 		const key = `${input.userId ?? input.username ?? "-"}|${input.action}|${target}`;
 		if (opts.throttle && throttled(key)) return;
-		getDb()
+		await getDb()
 			.prepare(
 				`INSERT INTO activities (user_id, username, action, target, detail, ip, user_agent, created_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -96,7 +96,7 @@ export interface ActivityQuery {
 	since?: string;
 }
 
-export function listActivities(q: ActivityQuery = {}): { items: ActivityRow[]; total: number } {
+export async function listActivities(q: ActivityQuery = {}): Promise<{ items: ActivityRow[]; total: number }> {
 	const db = getDb();
 	const where: string[] = [];
 	const params: any[] = [];
@@ -114,10 +114,10 @@ export function listActivities(q: ActivityQuery = {}): { items: ActivityRow[]; t
 	}
 	const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-	const total = (db.prepare(`SELECT COUNT(*) AS n FROM activities ${clause}`).get(...params) as { n: number }).n;
+	const total = (await db.prepare(`SELECT COUNT(*) AS n FROM activities ${clause}`).get(...params) as { n: number }).n;
 	const limit = Math.min(Math.max(q.limit ?? 50, 1), 200);
 	const offset = Math.max(q.offset ?? 0, 0);
-	const items = db
+	const items = await db
 		.prepare(`SELECT * FROM activities ${clause} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
 		.all(...params, limit, offset) as unknown as ActivityRow[];
 	return { items, total };
@@ -134,9 +134,9 @@ export interface OnlineUser {
 }
 
 /** 在线用户（按账号聚合多端会话）。 */
-export function onlineUsers(windowMs = ONLINE_WINDOW_MS): OnlineUser[] {
+export async function onlineUsers(windowMs = ONLINE_WINDOW_MS): Promise<OnlineUser[]> {
 	const since = new Date(Date.now() - windowMs).toISOString();
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT u.username, u.display_name, u.role, u.avatar,
 			        MAX(s.last_seen_at) AS last_seen, COUNT(*) AS session_count,
@@ -178,9 +178,9 @@ export interface UserOverview {
 }
 
 /** 后台用户总览：账号 + 在线状态 + 会话数 + 活动数（一次查询聚合）。 */
-export function listUsersOverview(): UserOverview[] {
+export async function listUsersOverview(): Promise<UserOverview[]> {
 	const now = Date.now();
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT u.username, u.display_name, u.email, u.avatar, u.bio, u.role, u.status, u.verified,
 			        u.created_at, u.last_login_at, u.last_login_ip, u.login_count,
@@ -215,24 +215,24 @@ export function listUsersOverview(): UserOverview[] {
 }
 
 /** 心跳：显式刷新会话 last_seen（前端定时调用，保证在线判定实时）。 */
-export function touchPresence(token: string | undefined | null): boolean {
+export async function touchPresence(token: string | undefined | null): Promise<boolean> {
 	if (!token) return false;
 	try {
-		const info = getDb()
+		const info = await getDb()
 			.prepare("UPDATE sessions SET last_seen_at = ? WHERE token = ?")
 			.run(nowIso(), token);
-		return Number(info.changes ?? 0) > 0;
+		return Number((await info).changes ?? 0) > 0;
 	} catch {
 		return false;
 	}
 }
 
 /** 清理过期会话与过旧活动（可挂定时调用）。 */
-export function prune(): { sessions: number; activities: number } {
+export async function prune(): Promise<{ sessions: number; activities: number }> {
 	const db = getDb();
-	const s = db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(nowIso());
+	const s = await db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(nowIso());
 	const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-	const a = db.prepare("DELETE FROM activities WHERE created_at < ?").run(cutoff);
+	const a = await db.prepare("DELETE FROM activities WHERE created_at < ?").run(cutoff);
 	return { sessions: Number(s.changes ?? 0), activities: Number(a.changes ?? 0) };
 }
 
@@ -246,10 +246,10 @@ export interface DailyCount {
  * 直接用 SQL 的 substr(created_at,1,10) 切日期：activities.created_at 恒为 ISO 字符串，
  * 不存在时区漂移问题（都按存储 tz 呈现，前端统一加注）。
  */
-export function dailyActivities(days = 30): DailyCount[] {
+export async function dailyActivities(days = 30): Promise<DailyCount[]> {
 	const db = getDb();
 	const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-	const rows = db
+	const rows = await db
 		.prepare(
 			`SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS n
 			   FROM activities WHERE created_at >= ? GROUP BY d ORDER BY d ASC`
@@ -267,10 +267,10 @@ export function dailyActivities(days = 30): DailyCount[] {
 }
 
 /** 近 N 天最活跃账号（有活动的才算）。 */
-export function topActiveUsers(days = 14, limit = 8): { username: string; displayName: string; count: number }[] {
+export async function topActiveUsers(days = 14, limit = 8): Promise<{ username: string; displayName: string; count: number }[]> {
 	const db = getDb();
 	const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-	return db
+	return await db
 		.prepare(
 			`SELECT a.username AS username,
 			        COALESCE(u.display_name, a.username) AS display_name,
@@ -283,13 +283,13 @@ export function topActiveUsers(days = 14, limit = 8): { username: string; displa
 		.all(since, limit) as unknown as { username: string; displayName: string; count: number }[];
 }
 
-export function activitySummary(): { total: number; today: number; activeUsers24h: number } {
+export async function activitySummary(): Promise<{ total: number; today: number; activeUsers24h: number }> {
 	const db = getDb();
 	const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-	const total = (db.prepare("SELECT COUNT(*) AS n FROM activities").get() as { n: number }).n;
-	const today = (db.prepare("SELECT COUNT(*) AS n FROM activities WHERE created_at >= ?").get(dayAgo) as { n: number }).n;
+	const total = (await db.prepare("SELECT COUNT(*) AS n FROM activities").get() as { n: number }).n;
+	const today = (await db.prepare("SELECT COUNT(*) AS n FROM activities WHERE created_at >= ?").get(dayAgo) as { n: number }).n;
 	const activeUsers24h = (
-		db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM activities WHERE created_at >= ? AND user_id IS NOT NULL").get(dayAgo) as { n: number }
+		await db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM activities WHERE created_at >= ? AND user_id IS NOT NULL").get(dayAgo) as { n: number }
 	).n;
 	return { total, today, activeUsers24h };
 }

@@ -21,14 +21,14 @@ export interface SessionUser extends User {
  * 从请求里解析登录用户。
  * @param event 只要有 cookies 即可（页面 load 与 API 端点都能传）。
  */
-export function sessionUser(event: Pick<RequestEvent, "cookies">): SessionUser | null {
+export async function sessionUser(event: Pick<RequestEvent, "cookies">): Promise<SessionUser | null> {
 	const token = event.cookies.get("admin_token");
 	if (!token) return null;
-	const u = verifyToken(token);
+	const u = await verifyToken(token);
 	if (!u) return null;
 	// verifyToken 返回的是登录时刻的快照，再读一次拿最新的资料与主键。
-	const fresh = getUser(u.username) ?? u;
-	return fresh.id ? (fresh as SessionUser) : null;
+	const fresh = await getUser((await u).username) ?? u;
+	return (await fresh).id ? (await fresh as SessionUser) : null;
 }
 
 /** 401 的中文响应，省得每个路由各写一遍。 */

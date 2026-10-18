@@ -41,13 +41,13 @@ export const GET: RequestHandler = async ({ url }) => {
 	const board = getBoard(slug);
 	return json({
 		board,
-		issues: listIssues(slug, { state: "all" }),
-		stats: issueStats(slug)
+		issues: await listIssues(slug, { state: "all" }),
+		stats: await issueStats(slug)
 	});
 };
 
 export const POST: RequestHandler = async ({ request }) => {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 
 	const action = request.headers.get("x-action");

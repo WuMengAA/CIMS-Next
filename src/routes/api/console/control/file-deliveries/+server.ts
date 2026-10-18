@@ -18,24 +18,24 @@ import { classScopeOf } from "$lib/server/class-scope.js";
 import { getFileObject, listDeliveries } from "$lib/server/file-transfer.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
-	const u = g.user;
+	const u = (await g).user;
 
 	const fid = String(event.url.searchParams.get("file") ?? "").trim();
 	if (!fid) return json({ error: "缺少 file 参数" }, { status: 400 });
 
-	const obj = getFileObject(fid);
+	const obj = await getFileObject(fid);
 	if (!obj) return json({ error: "文件不存在" }, { status: 404 });
 
-	const scope = classScopeOf(u.role, u.id);
-	if (scope !== "*" && obj.uploader !== (u.displayName || u.username) && u.role !== "owner" && u.role !== "admin") {
+	const scope = await classScopeOf(u.role, u.id);
+	if (scope !== "*" && (await obj).uploader !== (u.displayName || u.username) && u.role !== "owner" && u.role !== "admin") {
 		return json({ error: "无权限查看该文件的回执" }, { status: 403 });
 	}
 
 	return json({
-		file: { id: obj.id, name: obj.name, kind: obj.kind },
+		file: { id: (await obj).id, name: (await obj).name, kind: (await obj).kind },
 		deliveries: listDeliveries(fid)
 	});
 }

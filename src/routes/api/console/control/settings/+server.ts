@@ -27,14 +27,14 @@ import {
 } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
-	return json({ settings: getConsoleSettings() });
+	return json({ settings: await getConsoleSettings() });
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 	const actor = g.user.displayName || g.user.username;
 
@@ -42,8 +42,8 @@ export async function POST(event: RequestEvent) {
 	const patch: Record<string, unknown> = {};
 	for (const k of CONSOLE_SETTINGS_KEYS) if (k in body) patch[k] = body[k];
 
-	const saved = saveConsoleSettings(patch);
-	addAudit({
+	const saved = await saveConsoleSettings(patch);
+	await addAudit({
 		actor,
 		role: g.user.role,
 		action: "settings.update",

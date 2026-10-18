@@ -17,14 +17,14 @@ export function startScheduledBroadcastScheduler(): void {
 
 	setInterval(async () => {
 		try {
-			const due = dueScheduledBroadcasts();
-			if (!due.length) return;
+			const dueList = await dueScheduledBroadcasts();
+			if (!dueList.length) return;
 			const base = cloudHttpBase();
 			const token = cloudViewerToken();
 			if (!base || !token) return; // 云端未配置：等下次扫描
 
-			for (const it of due) {
-				const bindings = listDeviceBindings().filter((b) => b.class_id === it.target_class_id && b.status === "active");
+			for (const it of dueList) {
+				const bindings = (await listDeviceBindings()).filter((b) => b.class_id === it.target_class_id && b.status === "active");
 				let delivered = 0, failed = 0;
 				for (const b of bindings) {
 					try {

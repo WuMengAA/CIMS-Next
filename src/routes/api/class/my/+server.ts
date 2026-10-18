@@ -16,8 +16,8 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { listBindings } from "$lib/server/class-scope.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
-	return json({ classes: listBindings(g.user.id) });
+	return json({ classes: await listBindings((await g).user.id) });
 }

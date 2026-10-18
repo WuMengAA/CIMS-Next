@@ -19,22 +19,22 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { listAudit, addAudit } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
 	const q = event.url.searchParams;
-	return json(listAudit(Number(q.get("limit") ?? 100) || 100, q.get("action") || undefined));
+	return json(await listAudit(Number(q.get("limit") ?? 100) || 100, q.get("action") || undefined));
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "submitIssue");
+	const g = await guardControl(event, "submitIssue");
 	if ("error" in g) return g.error;
 
 	const body = await readControlBody(event);
 	if (!body.action) return json({ error: "缺少 action" }, { status: 400 });
 
-	const item = addAudit({
+	const item = await addAudit({
 		actor: g.user.displayName || g.user.username,
 		role: g.user.role,
 		action: String(body.action),

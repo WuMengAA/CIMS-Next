@@ -29,6 +29,8 @@ const FILES_DIR = path.join(CONTENT_DIR, "files");
 export const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 export interface FileObject {
+	/** 盘上绝对路径；缺省时按 FILES_DIR/id 推导。 */
+	path?: string;
 	id: string;
 	name: string;
 	size: number;
@@ -39,7 +41,7 @@ export interface FileObject {
 }
 
 /** 保存一个上传的文件：写盘 + 登记。返回登记行；超限/空文件抛错（路由层转 400）。 */
-export function saveUpload(fileName: string, bytes: Buffer, kind: string, uploader: string): FileObject {
+export async function saveUpload(fileName: string, bytes: Buffer, kind: string, uploader: string): Promise<FileObject> {
 	const name = String(fileName ?? "").trim() || "未命名文件";
 	if (!bytes || bytes.length === 0) throw new Error("文件内容为空");
 	if (bytes.length > MAX_FILE_BYTES) {
@@ -53,7 +55,7 @@ export function saveUpload(fileName: string, bytes: Buffer, kind: string, upload
 	fs.writeFileSync(disk, bytes);
 	const sha = crypto.createHash("sha256").update(bytes).digest("hex");
 	const ts = nowIso();
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO file_objects (id, name, size, sha256, kind, path, uploader, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -62,10 +64,10 @@ export function saveUpload(fileName: string, bytes: Buffer, kind: string, upload
 	return { id, name: name.slice(0, 200), size: bytes.length, sha256: sha, kind: cleanKind, uploader, created_at: ts };
 }
 
-export function getFileObject(id: string): FileObject | null {
+export async function getFileObject(id: string): Promise<FileObject | null> {
 	const key = String(id ?? "").trim();
 	if (!key) return null;
-	const row = getDb()
+	const row = await getDb()
 		.prepare(`SELECT id, name, size, sha256, kind, path, uploader, created_at FROM file_objects WHERE id = ?`)
 		.get(key) as
 		| { id: string; name: string; size: number; sha256: string; kind: string; path: string; uploader: string; created_at: string }
@@ -103,8 +105,8 @@ export interface DeliveryRow {
 	updated_at: string;
 }
 
-export function listDeliveries(fileId: string): DeliveryRow[] {
-	return getDb()
+export async function listDeliveries(fileId: string): Promise<DeliveryRow[]> {
+	return await getDb()
 		.prepare(
 			`SELECT id, file_id, uid, class_id, state, detail, created_at, updated_at
 			 FROM file_deliveries WHERE file_id = ? ORDER BY created_at ASC`
@@ -113,18 +115,18 @@ export function listDeliveries(fileId: string): DeliveryRow[] {
 }
 
 /** 设备侧回报下载/播放结果（file-ack）。未找到行时返回 false（比如指令是重放的）。 */
-export function updateDelivery(fileId: string, uid: string, state: string, detail: string): boolean {
+export async function updateDelivery(fileId: string, uid: string, state: string, detail: string): Promise<boolean> {
 	const f = String(fileId ?? "").trim();
 	const u = String(uid ?? "").trim().toLowerCase();
 	if (!f || !u) return false;
 	const st = ["acked", "failed", "pending"].includes(state) ? state : "pending";
-	const r = getDb()
+	const r = await getDb()
 		.prepare(
 			`UPDATE file_deliveries SET state = ?, detail = ?, updated_at = ?
 			 WHERE file_id = ? AND LOWER(uid) = ?`
 		)
 		.run(st, String(detail ?? "").slice(0, 300), nowIso(), f, u);
-	return Number(r.changes) > 0;
+	return Number((await r).changes) > 0;
 }
 
 /**
@@ -195,9 +197,9 @@ export async function pushFileToDevices(
 	return out.filter(Boolean);
 }
 
-function markDelivery(fileId: string, uid: string, classId: string, state: string, detail: string): void {
+async function markDelivery(fileId: string, uid: string, classId: string, state: string, detail: string): Promise<void> {
 	const ts = nowIso();
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO file_deliveries (file_id, uid, class_id, state, detail, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`

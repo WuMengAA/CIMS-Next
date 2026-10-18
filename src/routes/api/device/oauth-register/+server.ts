@@ -12,7 +12,7 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { registerDeviceClient } from "$lib/server/oauth-clients.js";
 import { guardDevice } from "$lib/server/guard-device.js";
 
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const g = guardDevice(event);
 	if ("error" in g) return g.error;
 
@@ -20,10 +20,10 @@ export function GET(event: RequestEvent) {
 	if (!fp) return json({ error: "缺少 fp（设备指纹）" }, { status: 400 });
 
 	try {
-		const reg = registerDeviceClient(fp);
+		const reg = await registerDeviceClient(fp);
 		return json({
-			clientId: reg.clientId,
-			clientSecret: reg.clientSecret,
+			clientId: (await reg).clientId,
+			clientSecret: (await reg).clientSecret,
 			loopback: true,
 			scopes: ["cims", "profile"]
 		});

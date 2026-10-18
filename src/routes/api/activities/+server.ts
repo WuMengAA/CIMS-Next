@@ -9,16 +9,16 @@ import { can, userCan } from "$lib/permissions.js";
  * 多用户活动流。需具备后台查看权限（viewAdmin / moderate / manageUsers）。
  * 查询参数：limit / offset / username / action / since
  */
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const { url, cookies } = event;
-	const user = verifyToken(cookies.get("admin_token"));
+	const user = await verifyToken(cookies.get("admin_token"));
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	if (!(userCan(user, "viewAdmin") || userCan(user, "moderate"))) {
 		return json({ error: "无权限" }, { status: 403 });
 	}
 
 	const q = url.searchParams;
-	const { items, total } = listActivities({
+	const { items, total } = await listActivities({
 		limit: Number(q.get("limit") || 60),
 		offset: Number(q.get("offset") || 0),
 		username: q.get("username") || undefined,

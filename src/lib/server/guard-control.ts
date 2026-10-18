@@ -52,13 +52,13 @@ const DEVICE_TIERS: DeviceTier[] = ["watch", "control", "remote", "manage"];
  * 兜底 `admin_token` cookie（浏览器）。两路走同一套 `verifyToken` 会话校验，
  * Bearer 失效同样 401 —— 不会比 cookie 路径更宽。
  */
-export function requestUser(event: RequestEvent): User | null {
+export async function requestUser(event: RequestEvent): Promise<User | null> {
 	const bearer = event.request.headers.get("authorization") ?? "";
 	if (/^Bearer\s+/i.test(bearer)) {
-		const u = verifyToken(bearer.replace(/^Bearer\s+/i, "").trim());
+		const u = await verifyToken(bearer.replace(/^Bearer\s+/i, "").trim());
 		if (u) return u;
 	}
-	return verifyToken(event.cookies.get("admin_token"));
+	return await verifyToken(event.cookies.get("admin_token"));
 }
 
 /**
@@ -71,11 +71,11 @@ export function requestUser(event: RequestEvent): User | null {
  *
  * 默认 `"viewConsole"`：只要求"能进集控面板"，与其余 console 读操作同档。
  */
-export function guardControl(
+export async function guardControl(
 	event: RequestEvent,
 	need: Action | DeviceTier | "broadcast" = "viewConsole"
-): { user: ConsoleUser } | { error: Response } {
-	const u = requestUser(event);
+): Promise<{ user: ConsoleUser } | { error: Response }> {
+	const u = await requestUser(event);
 	if (!u) return { error: json({ error: "请先登录" }, { status: 401 }) } as const;
 	// 缺 id 时后续所有以 id 为键的操作都会静默失效，不如在这里明确拒绝。
 	if (typeof u.id !== "number") {
@@ -130,11 +130,11 @@ export async function readControlBody(event: RequestEvent): Promise<Record<strin
  * 「老师能传文件但不能监控」（teacher 的 `ROLE_DEVICE_ACTIONS` 只有 `file`），
  * 必须用细档。同理 `apps_view` / `apps_stop` / `logs_view` 也走这里。
  */
-export function guardControlDeviceAction(
+export async function guardControlDeviceAction(
 	event: RequestEvent,
 	action: DeviceAction
-): { user: ConsoleUser } | { error: Response } {
-	const u = requestUser(event);
+): Promise<{ user: ConsoleUser } | { error: Response }> {
+	const u = await requestUser(event);
 	if (!u) return { error: json({ error: "请先登录" }, { status: 401 }) } as const;
 	if (typeof u.id !== "number") {
 		return { error: json({ error: "会话无效，请重新登录" }, { status: 401 }) } as const;

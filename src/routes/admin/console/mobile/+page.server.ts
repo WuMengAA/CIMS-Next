@@ -8,7 +8,7 @@ import type { PageServerLoad } from "./$types";
 // 鉴权（2026-10-03 已补）：云端要求第一条消息是 auth，浏览器用的短票由 ./ticket/+server.ts
 //   现签（2 分钟有效，密钥 CLOUD_VIEWER_SECRET 站点与云端共用）。本页门槛仍是 viewConsole（L2+）。
 export const load: PageServerLoad = async ({ cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	return {
 		role: u.role,

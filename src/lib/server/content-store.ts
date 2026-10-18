@@ -1017,9 +1017,9 @@ export function getStatsSummary(days = 7): { total: number; today: number; daily
 const USERS_FILE = path.join(CONTENT_DIR, "users.json");
 export interface PublicUserProfile { username: string; displayName: string; role: string; bio?: string; createdAt: string; }
 
-export function getUserPublic(username: string): PublicUserProfile | null {
+export async function getUserPublic(username: string): Promise<PublicUserProfile | null> {
 	// 真实账号已迁到 SQLite（stelarith.db），优先从这里取。
-	const u = getSqlUser(username);
+	const u = await getSqlUser(username);
 	if (u) {
 		return { username: u.username, displayName: u.displayName, role: u.role, bio: u.bio, createdAt: u.createdAt };
 	}

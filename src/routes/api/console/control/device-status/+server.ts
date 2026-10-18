@@ -20,16 +20,16 @@ import { listDeviceBindings } from "$lib/server/device-bindings.js";
  */
 export async function GET(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "viewConsole")) return json({ error: "无权限" }, { status: 403 });
 
 	const onlineMap = await cloudDeviceStatus();
-	const bindings = listDeviceBindings();
+	const bindings = await listDeviceBindings();
 
 	const devices = bindings.map((b) => {
 		const st = onlineMap[b.uid] || onlineMap[b.uid.toLowerCase()] || { online: false, version: "", lastSeenAgoSec: 0 };

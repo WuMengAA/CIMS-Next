@@ -37,7 +37,7 @@ export async function POST(event: RequestEvent) {
 	if (!nid || !uid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
 	if (!text) return json({ error: "回复内容不能为空" }, { status: 400 });
 
-	const ok = markNoticeReply(nid, uid, text);
+	const ok = await markNoticeReply(nid, uid, text);
 	if (!ok) {
 		return json(
 			{ ok: false, reason: "这条通知不是发往该设备的（或已不存在），回复未记录" },
@@ -45,7 +45,7 @@ export async function POST(event: RequestEvent) {
 		);
 	}
 
-	addAudit({
+	await addAudit({
 		actor: `device:${uid}`,
 		role: "device",
 		action: "notice.reply",
@@ -53,7 +53,7 @@ export async function POST(event: RequestEvent) {
 		detail: text.slice(0, 120)
 	});
 
-	void syncReplyToCims(uid, nid, text)
+	void await syncReplyToCims(uid, nid, text)
 		.then((synced) => {
 			if (!synced) console.warn(`[device/notice-reply] CIMS 回复同步失败 uid=${uid} nid=${nid}`);
 		})

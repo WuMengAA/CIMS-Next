@@ -16,15 +16,15 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { resolveUserFeatures } from "$lib/server/console-ext.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
-	const res = resolveUserFeatures(String(g.user.id), g.user.role);
+	const res = await resolveUserFeatures(String((await g).user.id), (await g).user.role);
 	return json({
-		role: g.user.role,
-		features: res.features,
-		defaults: res.defaults,
-		overridden: res.overridden
+		role: (await g).user.role,
+		features: (await res).features,
+		defaults: (await res).defaults,
+		overridden: (await res).overridden
 	});
 }

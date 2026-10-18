@@ -18,12 +18,12 @@ import {
 } from "$lib/server/activity.js";
 import { adminUsageOverview } from "$lib/server/attachment-library.js";
 
-export const load: PageServerLoad = ({ cookies }) => {
-	const u = verifyToken(cookies.get("admin_token"));
-	const admin = u ? getUser(u.username) : null;
+export const load: PageServerLoad = async ({ cookies }) => {
+	const u = await verifyToken(cookies.get("admin_token"));
+	const admin = u ? await getUser((await u).username) : null;
 	const canSeeStorage = !!admin && userCan(admin, "manageStorage");
 
-	const online = onlineUsers().map((o) => ({
+	const online = (await onlineUsers()).map((o) => ({
 		username: o.username,
 		displayName: o.displayName || o.username,
 		role: o.role,
@@ -33,8 +33,8 @@ export const load: PageServerLoad = ({ cookies }) => {
 	return {
 		online,
 		onlineWindowMin: Math.round(ONLINE_WINDOW_MS / 60000),
-		summary: activitySummary(),
-		feed: listActivities({ limit: 40 }).items.map((a) => ({
+		summary: await activitySummary(),
+		feed: (await listActivities({ limit: 40 })).items.map((a) => ({
 			id: a.id,
 			username: a.username,
 			action: a.action,
@@ -43,10 +43,10 @@ export const load: PageServerLoad = ({ cookies }) => {
 			createdAt: a.created_at
 		})),
 		// 月度热度：最近 30 天，按天
-		heat: dailyActivities(30),
-		top: topActiveUsers(14, 8),
+		heat: await dailyActivities(30),
+		top: await topActiveUsers(14, 8),
 		storage: canSeeStorage
-			? adminUsageOverview().map((r) => ({
+			? (await adminUsageOverview()).map((r) => ({
 					username: r.username,
 					displayName: r.displayName,
 					usedBytes: r.usedBytes,

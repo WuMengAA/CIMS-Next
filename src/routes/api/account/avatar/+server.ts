@@ -18,7 +18,7 @@ import { r2Configured, StorageNotConfiguredError } from "$lib/server/storage/r2.
 const ALLOWED = /^image\/(jpeg|png|webp|avif|gif)$/;
 
 export async function POST(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	let form: FormData;
 	try {
@@ -53,7 +53,7 @@ export async function POST(event: RequestEvent) {
 			maxEdge: 1024
 		});
 
-		const r = updateProfile(user.username, { avatar: saved.file.url });
+		const r = await updateProfile(user.username, { avatar: saved.file.url });
 		if (!r.ok) return json({ error: r.error }, { status: 400 });
 
 		recordActivity({

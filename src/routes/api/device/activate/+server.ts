@@ -47,17 +47,17 @@ export async function POST(event: RequestEvent) {
 	if (!code) return json({ error: "缺少接入码" }, { status: 400 });
 	if (!uid) return json({ error: "缺少 uid 参数" }, { status: 400 });
 
-	const item = consumeActivationCode(code, uid);
+	const item = await consumeActivationCode(code, uid);
 	if (!item) return json({ error: "接入码无效或已过期" }, { status: 404 });
 	// 消费成功即**落库**设备↔班级（站点自持真源，见 device-bindings.ts）。
 	// 这一步此前缺失：码上只写了 usedBy，机器归了哪个班查不到、不可审计。
 	// fail-soft：登记失败不阻断接入（recordDeviceBinding 内部吞异常）。
-	recordDeviceBinding({ uid, classId: item.classId, className: item.className, boundBy: "activation-code" });
+	await recordDeviceBinding({ uid, classId: item.classId, className: item.className, boundBy: "activation-code" });
 	// 2026-10-09：回喂**权威班级码**给被控端 —— 它随后 register 时带给云端做班级索引的**键**。
 	//   ⚠️ 班级表的 `code` 列存的是**中文名**（如 "1班"），不合云端 `^[A-Za-z0-9_-]{6,16}$`，
 	//      所以键取**真源 class_id**（"class_01"，8–12 位、恰好合规）。若哪天 `code` 被
 	//      改成合规 ASCII，这里会自动优先用它（不必再改一次）。
-	const cls = getStelarithClass(item.classId);
+	const cls = await getStelarithClass(item.classId);
 	const rawCode = String(cls?.code ?? "").trim();
 	const classCode = /^[A-Za-z0-9_-]{6,16}$/.test(rawCode) ? rawCode : item.classId;
 	return json({ ok: true, classId: item.classId, className: item.className, classCode, uid });

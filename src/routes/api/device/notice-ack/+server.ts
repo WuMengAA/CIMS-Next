@@ -39,14 +39,14 @@ export async function POST(event: RequestEvent) {
 	if (!nid || !uid) return json({ error: "notice_id/uid 不能为空" }, { status: 400 });
 
 	const st = STATES.includes(String(body.state)) ? String(body.state) : "read";
-	const ok = markNoticeDelivery(
+	const ok = await markNoticeDelivery(
 		nid,
 		uid,
 		st,
 		st === "replied" ? String(body.action_result ?? "") : ""
 	);
 
-	addAudit({
+	await addAudit({
 		actor: `device:${uid}`,
 		role: "device",
 		action: "notice.ack",

@@ -49,13 +49,13 @@ function sweepExpired() {
 setInterval(sweepExpired, 60_000).unref?.();
 
 /** 客户端是否存在且密钥匹配。 */
-export function validateClient(clientId: string, secret: string): boolean {
-	return validateClientInRegistry(clientId, secret);
+export async function validateClient(clientId: string, secret: string): Promise<boolean> {
+	return await validateClientInRegistry(clientId, secret);
 }
 
 /** 回拨地址是否属于该客户端。传 client_id 字符串也接受，未知客户端一律拒绝。 */
-export function validateRedirectUri(clientId: string, uri: string): boolean {
-	const rec = getClient(clientId);
+export async function validateRedirectUri(clientId: string, uri: string): Promise<boolean> {
+	const rec = await getClient(clientId);
 	return !!rec && validateRedirectInRegistry(rec, uri);
 }
 
@@ -85,19 +85,19 @@ export function consumeCode(code: string): CodeRecord | null {
 }
 
 /** 为指定用户签发网站会话令牌（与网站登录拿到的令牌同构）。 */
-export function mintWebsiteToken(
+export async function mintWebsiteToken(
 	user: User,
 	meta: { ip?: string; userAgent?: string; ttlDays?: number } = {}
-): string {
-	return makeToken(user, meta);
+): Promise<string> {
+	return await makeToken(user, meta);
 }
 
 /** 调试用：仅当给定令牌有效时返回用户（代理侧复用）。 */
-export function userFromWebsiteToken(token: string): User | null {
-	return verifyToken(token);
+export async function userFromWebsiteToken(token: string): Promise<User | null> {
+	return await verifyToken(token);
 }
 
 /** 按 id 取用户（token 端点用）。 */
-export function resolveUser(userId: number): User | null {
-	return getUserById(userId);
+export async function resolveUser(userId: number): Promise<User | null> {
+	return await getUserById(userId);
 }

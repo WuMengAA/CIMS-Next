@@ -23,9 +23,9 @@ export interface ClassBinding {
 }
 
 /** 读某用户的全部班级绑定（按绑定时间升序）。 */
-export function listBindings(uid: number): ClassBinding[] {
+export async function listBindings(uid: number): Promise<ClassBinding[]> {
 	const db = getDb();
-	const rows = db
+	const rows = await db
 		.prepare(
 			`SELECT class_id, class_name, created_at, bound_by
 			 FROM user_class_bindings WHERE uid = ? ORDER BY created_at ASC`
@@ -40,13 +40,13 @@ export function listBindings(uid: number): ClassBinding[] {
 }
 
 /** 用户的班级范围："*"（全校）| class_id 数组（可能为空 = 没有范围）。 */
-export function classScopeOf(
+export async function classScopeOf(
 	role: Role | null | undefined,
 	uid: number | null | undefined
-): "*" | string[] {
+): Promise<"*" | string[]> {
 	if (role === "owner" || role === "admin") return "*";
 	if (!uid || !requiresBinding(role)) return [];
-	return listBindings(uid).map((b) => b.class_id);
+	return await (await listBindings(uid)).map((b) => b.class_id);
 }
 
 function requiresBinding(role: Role | null | undefined): boolean {
@@ -85,32 +85,32 @@ export function validateBindingSet(
 }
 
 /** 全量替换某用户的绑定集（调用方须已通过 validateBindingSet）。 */
-export function replaceBindings(
+export async function replaceBindings(
 	uid: number,
 	entries: { class_id: string; class_name?: string }[],
 	boundBy: string
-): ClassBinding[] {
+): Promise<ClassBinding[]> {
 	const db = getDb();
-	const del = db.prepare("DELETE FROM user_class_bindings WHERE uid = ?");
-	const ins = db.prepare(
+	const del = await db.prepare("DELETE FROM user_class_bindings WHERE uid = ?");
+	const ins = await db.prepare(
 		`INSERT OR IGNORE INTO user_class_bindings (uid, class_id, class_name, bound_by, created_at)
 		 VALUES (?, ?, ?, ?, ?)`
 	);
 	const ts = nowIso();
 	// node:sqlite 的 DatabaseSync 没有 better-sqlite3 的 .transaction()，
 	// 用显式事务保证「清空 + 重插」原子性（与 auth.ts setUserTitles 同款）。
-	db.exec("BEGIN");
+	await db.exec("BEGIN");
 	try {
-		del.run(uid);
+		await del.run(uid);
 		for (const e of entries) {
-			ins.run(uid, e.class_id, e.class_name ?? "", boundBy, ts);
+			await ins.run(uid, e.class_id, e.class_name ?? "", boundBy, ts);
 		}
-		db.exec("COMMIT");
+		await db.exec("COMMIT");
 	} catch (e) {
-		db.exec("ROLLBACK");
+		await db.exec("ROLLBACK");
 		throw e;
 	}
-	return listBindings(uid);
+	return await listBindings(uid);
 }
 
 /**

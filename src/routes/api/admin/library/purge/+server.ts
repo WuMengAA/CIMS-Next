@@ -7,7 +7,7 @@ import { adminPurgeUser } from "$lib/server/attachment-library.js";
 import { recordActivity } from "$lib/server/activity.js";
 
 export async function POST(event: RequestEvent) {
-	const user = sessionUser(event);
+	const user = await sessionUser(event);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	if (!userCan(user, "manageStorage")) return json({ error: "无权操作" }, { status: 403 });
 

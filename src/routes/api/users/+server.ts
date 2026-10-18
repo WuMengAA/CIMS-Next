@@ -16,18 +16,18 @@ import type { Role } from "$lib/permissions.js";
  * 「账号跟随 website 同步」：update / delete 之后把变更镜像到 CIMS（website 为账号权威）。
  * 同步是 fail-open 的 —— CIMS 不可达不影响本地操作结果，只在响应里带 sync 字段说明。
  */
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const { url, cookies } = event;
-	const me = verifyToken(cookies.get("admin_token"));
+	const me = await verifyToken(cookies.get("admin_token"));
 	if (!me) return json({ error: "未登录" }, { status: 401 });
 	if (!userCan(me, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
 
 	const username = url.searchParams.get("username");
 	if (username) {
-		const u = getUser(username);
+		const u = await getUser(username);
 		if (!u) return json({ error: "用户不存在" }, { status: 404 });
-		const { items } = listActivities({ username, limit: 30 });
-		const overview = listUsersOverview().find((o) => o.username === username) || null;
+		const { items } = await listActivities({ username, limit: 30 });
+		const overview = (await listUsersOverview()).find((o) => o.username === username) || null;
 		return json({
 			user: {
 				username: u.username,
@@ -51,7 +51,7 @@ export function GET(event: RequestEvent) {
 
 export async function POST(event: RequestEvent) {
 	const { request, cookies } = event;
-	const me = verifyToken(cookies.get("admin_token"));
+	const me = await verifyToken(cookies.get("admin_token"));
 	if (!me) return json({ error: "未登录" }, { status: 401 });
 
 	let ip = "";
@@ -62,7 +62,7 @@ export async function POST(event: RequestEvent) {
 
 	if (action === "update") {
 		if (!userCan(me, "manageUsers")) return json({ error: "无权限" }, { status: 403 });
-		const r = adminUpdateUser(body.username, {
+		const r = await adminUpdateUser(body.username, {
 			displayName: body.displayName,
 			email: body.email,
 			bio: body.bio,
@@ -73,7 +73,7 @@ export async function POST(event: RequestEvent) {
 			recordActivity({ userId: me.id, username: me.username, action: "user_update", target: body.username, ip, userAgent: ua });
 			// 镜像到 CIMS：角色 / 邮箱 / 显示名 / 停启用 / 班级年级。
 			// 取更新后的用户记录（而不是请求体）作为同步源，避免把未填的字段覆盖成空。
-			const after = getUser(body.username);
+			const after = await getUser(body.username);
 			if (after?.email) {
 				const sync = await syncUserUpdateToCims({
 					email: after.email,
@@ -95,8 +95,8 @@ export async function POST(event: RequestEvent) {
 	if (action === "delete") {
 		if (!userCan(me, "manageUsers")) return json({ error: "无权限" }, { status: 403 });
 		// 先留一份邮箱/用户名用于同步，删除后本地就查不到了
-		const before = getUser(body.username);
-		const r = deleteUser(body.username);
+		const before = await getUser(body.username);
+		const r = await deleteUser(body.username);
 		if (r.ok) {
 			recordActivity({ userId: me.id, username: me.username, action: "user_delete", target: body.username, ip, userAgent: ua });
 			// CIMS 侧没有「删除用户」，用停用表达「该账号不再可用」——
@@ -113,7 +113,7 @@ export async function POST(event: RequestEvent) {
 		if (!userCan(me, "manageUsers") && body.username !== me.username) {
 			return json({ error: "无权限" }, { status: 403 });
 		}
-		const n = revokeSessions(body.username || me.username);
+		const n = await revokeSessions(body.username || me.username);
 		recordActivity({ userId: me.id, username: me.username, action: "session_revoke", target: body.username || me.username, detail: `吊销 ${n} 个会话`, ip, userAgent: ua });
 		return json({ ok: true, revoked: n });
 	}

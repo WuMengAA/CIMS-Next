@@ -12,7 +12,7 @@ import type { PageServerLoad } from "./$types";
 // （无 apps_view 调 process_list → 403；无 apps_stop 调 process_stop → 403）。
 // 注：owner/admin/homeroom 两者都有；teacher/techrep 只有 apps_view；user 都没有。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	const account = await getCimsAccount();
 	return {

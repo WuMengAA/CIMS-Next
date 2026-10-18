@@ -14,7 +14,7 @@ export function GET() {
  * 入口藏起来不算边界，API 才要自己判一次。
  */
 export async function POST({ request }) {
-	const user = verifyToken(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
+	const user = await verifyToken(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	if (!userCan(user, "manageContent")) return json({ error: "权限不足" }, { status: 403 });
 

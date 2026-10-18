@@ -29,8 +29,8 @@ const PUBLIC_URL = (process.env.STELARITH_P2P_PUBLIC_URL || "").replace(/\/+$/, 
 const ADMIN_KEY = (process.env.STELARITH_P2P_ADMIN_KEY || "").trim();
 const HMAC_KEY = (process.env.STELARITH_P2P_HMAC_KEY || process.env.CIMS_ADMIN_SECRET || "").trim();
 
-function authUser(event: RequestEvent): User | null {
-	const u = verifyToken(event.cookies.get("admin_token"));
+async function authUser(event: RequestEvent): Promise<User | null> {
+	const u = await verifyToken(event.cookies.get("admin_token"));
 	if (!u || typeof u.id !== "number") return null;
 	if (!userCan(u, "viewConsole")) return null;
 	return u;
@@ -65,7 +65,7 @@ export async function GET(event: RequestEvent) {
 		}
 		if (!uid) return json({ error: "missing uid" }, { status: 400 });
 	} else {
-		const u = authUser(event);
+		const u = await authUser(event);
 		if (!u) return json({ error: "无权限" }, { status: 401 });
 		if (!canDevice(u.role, "remote")) return json({ error: "需 device.remote 档位" }, { status: 403 });
 	}
@@ -77,7 +77,7 @@ export async function GET(event: RequestEvent) {
 	await registerToSidecar(uid, secret);
 	// ICE 服务器：优先取监控配置的 p2p_ice_override（管理员可填 TURN/STUN JSON 数组），
 	// 留空回退默认 STUN（仅局域网/打洞可达；配了 TURN 才有 50kb/s 级中转兜底）。
-	const mc = getMonitorConfig();
+	const mc = await getMonitorConfig();
 	const iceRaw = String(mc.p2p_ice_override ?? "").trim();
 	let iceServers = [
 		{ urls: "stun:stun.miwifi.com:3478" },

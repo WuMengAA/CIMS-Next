@@ -14,18 +14,18 @@ import { addAudit } from "$lib/server/console-ext.js";
  * 权限：manage。写 device_bindings 表（本地真源），CIMS 不再参与。
  */
 
-function authUser(event: RequestEvent) {
+async function authUser(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	return u;
 }
 
 export async function POST(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -34,10 +34,10 @@ export async function POST(event: RequestEvent) {
 	const classId = String(body.classId ?? "").trim();
 	if (!uid || !classId) return json({ error: "缺少 uid 或 classId" }, { status: 400 });
 
-	if (!assignDeviceToClass({ uid, classId, by: u.displayName || u.username }))
+	if (!await assignDeviceToClass({ uid, classId, by: u.displayName || u.username }))
 		return json({ error: "归班失败（设备或班级无效）" }, { status: 400 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "device-assign",
@@ -48,16 +48,16 @@ export async function POST(event: RequestEvent) {
 }
 
 export async function DELETE(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
 	const uid = String(event.url.searchParams.get("uid") ?? "").trim();
 	if (!uid) return json({ error: "缺少 uid" }, { status: 400 });
 
-	if (!unassignDeviceFromClass(uid)) return json({ error: "移出班级失败（设备未登记？）" }, { status: 400 });
+	if (!await unassignDeviceFromClass(uid)) return json({ error: "移出班级失败（设备未登记？）" }, { status: 400 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "device-unassign",

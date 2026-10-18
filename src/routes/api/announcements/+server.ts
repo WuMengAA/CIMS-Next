@@ -6,10 +6,10 @@ import { broadcastToClassrooms } from "$lib/server/broadcast.js";
 
 // GET /api/announcements  → 公开：默认只返回“生效中”的公告
 // ?all=1（需 manageContent）→ 后台：返回全部（含草稿/归档）
-export function GET({ url, cookies }) {
+export async function GET({ url, cookies }) {
 	const all = url.searchParams.get("all") === "1";
 	if (all) {
-		const u = verifyToken(cookies.get("admin_token"));
+		const u = await verifyToken(cookies.get("admin_token"));
 		if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 		return json(getAnnouncements());
 	}
@@ -18,7 +18,7 @@ export function GET({ url, cookies }) {
 
 // POST /api/announcements  → 新建公告（需 manageContent）
 export async function POST({ request, cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	let body: any;
 	try {
@@ -54,7 +54,7 @@ export async function POST({ request, cookies }) {
 
 // PUT /api/announcements  → 更新公告
 export async function PUT({ request, cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	if (!body.id) return json({ error: "缺少 id" }, { status: 400 });
@@ -66,7 +66,7 @@ export async function PUT({ request, cookies }) {
 
 // DELETE /api/announcements  → 删除公告
 export async function DELETE({ request, cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return json({ error: "无权限" }, { status: 403 });
 	const body = await request.json();
 	if (!body.id) return json({ error: "缺少 id" }, { status: 400 });

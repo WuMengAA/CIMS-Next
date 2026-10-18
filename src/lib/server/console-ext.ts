@@ -76,7 +76,7 @@ const unpackClasses = (s: unknown): string[] =>
 
 // ── 通知广播历史 ────────────────────────────────────────────────────────────
 
-export function listNotices(limit = 50, classId?: string, since?: string): ConsoleNotice[] {
+export async function listNotices(limit = 50, classId?: string, since?: string): Promise<ConsoleNotice[]> {
 	// 按班级筛选：班级号是逗号串里的独立项，用「首项 / 中间项 / 末项」三种包含式精确匹配，
 	// 避免 LIKE '%3%' 把「13班」也匹配进来。空 classes 的旧行为「不限班级」，任何筛选都可见。
 	const cls = String(classId ?? "").trim();
@@ -94,7 +94,7 @@ export function listNotices(limit = 50, classId?: string, since?: string): Conso
 		params.push(new Date(snc).toISOString());
 	}
 	const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
 			        k.type, k.flags
@@ -130,8 +130,8 @@ export function noticeFromRow(r: any): ConsoleNotice {
 	};
 }
 
-export function getNoticeById(id: number): ConsoleNotice | null {
-	const r = getDb()
+export async function getNoticeById(id: number): Promise<ConsoleNotice | null> {
+	const r = await getDb()
 		.prepare(
 			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
 			        k.type, k.flags
@@ -143,7 +143,7 @@ export function getNoticeById(id: number): ConsoleNotice | null {
 	return r ? noticeFromRow(r) : null;
 }
 
-export function addNotice(input: {
+export async function addNotice(input: {
 	title: string;
 	scope?: string;
 	account?: string;
@@ -155,7 +155,7 @@ export function addNotice(input: {
 	type?: string;
 	/** 类型化旗标对象（emergency_confirm / auto_dismiss_seconds / reply_presets…）。 */
 	flags?: Record<string, unknown>;
-}): ConsoleNotice {
+}): Promise<ConsoleNotice> {
 	const row = {
 		title: cut(input.title, 200),
 		scope: cut(input.scope || "本班", 32),
@@ -166,19 +166,19 @@ export function addNotice(input: {
 		channel: cut(input.channel, 24)
 	};
 	const ts = nowIso();
-	const info = getDb()
+	const info = await getDb()
 		.prepare(
 			`INSERT INTO console_notices (title, scope, account, author, sent, classes, channel, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 		)
 		.run(row.title, row.scope, row.account, row.author, row.sent, row.classes, row.channel, ts);
-	const id = Number(info.lastInsertRowid);
+	const id = Number((await info).lastInsertRowid);
 	const kind = ["notice", "island", "popup", "fullscreen"].includes(String(input.type || "notice"))
 		? String(input.type || "notice")
 		: "notice";
 	const flags = input.flags && typeof input.flags === "object" ? input.flags : {};
 	if (kind !== "notice" || Object.keys(flags).length > 0) {
-		getDb()
+		await getDb()
 			.prepare(`INSERT INTO notice_kinds (notice_id, type, flags) VALUES (?, ?, ?)
 			           ON CONFLICT(notice_id) DO UPDATE SET type = excluded.type, flags = excluded.flags`)
 			.run(id, kind, JSON.stringify(flags).slice(0, 2000));
@@ -200,14 +200,14 @@ export function addNotice(input: {
 }
 
 /** 清空通知历史（需 manageDevices 权限，由路由层把关）。 */
-export function clearNotices(): number {
-	const info = getDb().prepare("DELETE FROM console_notices").run();
+export async function clearNotices(): Promise<number> {
+	const info = await getDb().prepare("DELETE FROM console_notices").run();
 	return Number(info.changes ?? 0);
 }
 
 /** 回填送达数（类型化通知先建档拿 id、下发后再把 delivered 写回）。 */
-export function setNoticeSent(id: number, sent: number): void {
-	getDb()
+export async function setNoticeSent(id: number, sent: number): Promise<void> {
+	await getDb()
 		.prepare("UPDATE console_notices SET sent = ? WHERE id = ?")
 		.run(Math.max(0, Number(sent ?? 0)), Number(id ?? 0));
 }
@@ -228,8 +228,8 @@ export interface NoticeDeliveryRow {
 }
 
 /** 某条通知的逐台回执（面板「谁看了、谁没看」明细）。 */
-export function listNoticeDeliveries(noticeId: number): NoticeDeliveryRow[] {
-	return getDb()
+export async function listNoticeDeliveries(noticeId: number): Promise<NoticeDeliveryRow[]> {
+	return await getDb()
 		.prepare(
 		`SELECT id, notice_id, uid, state, action_result, reply, detail, created_at, updated_at
 		 FROM notice_deliveries WHERE notice_id = ? ORDER BY created_at ASC`
@@ -238,11 +238,11 @@ export function listNoticeDeliveries(noticeId: number): NoticeDeliveryRow[] {
 }
 
 /** 建档：某通知开局时给每台目标设备落一行 pending（幂等：已存在则跳过）。 */
-export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number {
+export async function ensureNoticeDeliveries(noticeId: number, uids: string[]): Promise<number> {
 	if (!Number(noticeId)) return 0;
 	const ts = nowIso();
 	let n = 0;
-	const stmt = getDb().prepare(
+	const stmt = await getDb().prepare(
 		`INSERT OR IGNORE INTO notice_deliveries (notice_id, uid, state, action_result, reply, detail, created_at, updated_at)
 		 VALUES (?, ?, 'pending', '', '', '', ?, ?)`
 	);
@@ -250,7 +250,7 @@ export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number
 	for (const uidRaw of uids) {
 		const uid = String(uidRaw ?? "").trim().toLowerCase();
 		if (!uid) continue;
-		stmt.run(noticeId, uid, ts, ts);
+		await stmt.run(noticeId, uid, ts, ts);
 		n++;
 	}
 	return n;
@@ -262,13 +262,13 @@ export function ensureNoticeDeliveries(noticeId: number, uids: string[]): number
  * [detail] 2026-10-04 新增：failed 时可带原因（如"设备离线未送达"），其余状态不存（防脏数据）。
  * 返回是否命中（找不到行 = 通知不存在或不是发往这台设备的，拒绝）。
  */
-export function markNoticeDelivery(
+export async function markNoticeDelivery(
 	noticeId: number,
 	uid: string,
 	state: string,
 	actionResult: string,
 	detail?: string
-): boolean {
+): Promise<boolean> {
 	const nid = Number(noticeId ?? 0);
 	const u = String(uid ?? "").trim().toLowerCase();
 	if (!nid || !u) return false;
@@ -278,28 +278,28 @@ export function markNoticeDelivery(
 	// replied 允许带预设短语原文；failed 允许带原因；其余状态一律不存（防脏数据）
 	const ar = st === "replied" ? String(actionResult ?? "").slice(0, 120) : "";
 	const det = st === "failed" ? String(detail ?? "").slice(0, 200) : "";
-	const r = getDb()
+	const r = await getDb()
 		.prepare(
 			`UPDATE notice_deliveries
 			 SET state = ?, action_result = ?, detail = ?, updated_at = ?
 			 WHERE notice_id = ? AND LOWER(uid) = ? AND state NOT IN ('replied', 'acked')`
 		)
 		.run(st, ar, det, nowIso(), nid, u);
-	return Number(r.changes) > 0;
+	return Number((await r).changes) > 0;
 }
 
 /**
  * 被控端 catch-up 拉取：某台设备还没看到的类型化通知（用于「错过弹窗/重启后补齐」）。
  * 返回该设备仍为 pending/received（未终态）的通知。plain notice 不在此列（无交互语义）。
  */
-export function listPendingTypedNotices(
+export async function listPendingTypedNotices(
 	uid: string,
 	limit = 20,
 	sinceId = 0
-): ConsoleNotice[] {
+): Promise<ConsoleNotice[]> {
 	const u = String(uid ?? "").trim().toLowerCase();
 	if (!u) return [];
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT n.id, n.title, n.scope, n.account, n.author, n.sent, n.classes, n.channel, n.created_at,
 			        k.type, k.flags
@@ -322,12 +322,12 @@ export function listPendingTypedNotices(
  * 那条永远排在 20 名之外，机器重启后照样错过。游标（已处理到的最大 notice_id）
  * 让「拉到哪了」变成可持久化的进度，幂等才有落点。
  */
-export function listPendingTypedNoticesPage(
+export async function listPendingTypedNoticesPage(
 	uid: string,
 	sinceId = 0,
 	limit = 20
-): { notices: ConsoleNotice[]; cursor: number } {
-	const list = listPendingTypedNotices(uid, limit, sinceId);
+): Promise<{ notices: ConsoleNotice[]; cursor: number }> {
+	const list = await listPendingTypedNotices(uid, limit, sinceId);
 	const cursor = list.reduce((m, n) => (n.id > m ? n.id : m), Number(sinceId) || 0);
 	return { notices: list, cursor };
 }
@@ -339,12 +339,12 @@ export function listPendingTypedNoticesPage(
  * 只报 pending：received/read 说明机器确实收到了；failed 有专门的错误路径。
  * 默认 10 分钟，短了会把「正在推的路上」误报成错过。
  */
-export function listStaleDeliveries(
+export async function listStaleDeliveries(
 	minutes = 10,
 	limit = 100
-): { notice_id: number; uid: string; title: string; type: string; created_at: string }[] {
+): Promise<{ notice_id: number; uid: string; title: string; type: string; created_at: string }[]> {
 	const since = new Date(Date.now() - Math.max(1, minutes) * 60_000).toISOString();
-	return getDb()
+	return await getDb()
 		.prepare(
 			`SELECT d.notice_id, d.uid, n.title, COALESCE(k.type, 'notice') AS type, d.created_at
 			 FROM notice_deliveries d
@@ -375,19 +375,19 @@ export function listStaleDeliveries(
  *
  * 返回是否命中（没这行 = 通知不存在 / 不是发往这台设备的，拒绝）。
  */
-export function markNoticeReply(noticeId: number, uid: string, text: string): boolean {
+export async function markNoticeReply(noticeId: number, uid: string, text: string): Promise<boolean> {
 	const nid = Number(noticeId ?? 0);
 	const u = String(uid ?? "").trim().toLowerCase();
 	const t = cut(text, 500).trim();
 	if (!nid || !u || !t) return false;
-	const r = getDb()
+	const r = await getDb()
 		.prepare(
 			`UPDATE notice_deliveries
 			 SET reply = ?, state = 'replied', action_result = '', updated_at = ?
 			 WHERE notice_id = ? AND LOWER(uid) = ?`
 		)
 		.run(t, nowIso(), nid, u);
-	return Number(r.changes) > 0;
+	return Number((await r).changes) > 0;
 }
 
 // ── 设备执行回执（被控端「动作做完之后」的上报）───────────────────────────────
@@ -408,14 +408,14 @@ const DEVICE_EVENT_KEEP = 200;
  * 记一条执行回执。ok=false **照样落库** —— 失败才是需要被看见的东西，
  * 只留成功的会让「哪台机器最近老是失败」从账面上彻底消失。
  */
-export function addDeviceEvent(input: {
+export async function addDeviceEvent(input: {
 	uid: string;
 	event: string;
 	ok?: boolean;
 	detail?: string;
 	extra?: Record<string, unknown>;
 	at?: string;
-}): DeviceEventRow {
+}): Promise<DeviceEventRow> {
 	const uid = cut(input.uid, 64).trim();
 	const ev = cut(input.event, 64).trim();
 	if (!uid || !ev) throw new Error("uid/event 不能为空");
@@ -428,14 +428,14 @@ export function addDeviceEvent(input: {
 			extraRaw = "";
 		}
 	}
-	const info = getDb()
+	const info = await getDb()
 		.prepare(
 			`INSERT INTO device_events (uid, event, ok, detail, extra, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`
 		)
 		.run(uid, ev, input.ok === false ? 0 : 1, cut(input.detail, 400), extraRaw, ts);
-	const id = Number(info.lastInsertRowid);
-	pruneDeviceEvents(uid);
+	const id = Number((await info).lastInsertRowid);
+	await pruneDeviceEvents(uid);
 	return {
 		id,
 		uid,
@@ -448,12 +448,12 @@ export function addDeviceEvent(input: {
 }
 
 /** 取回执流水（按时间倒序）。uid 省略 = 全校（面板总览用，限 300 条）。 */
-export function listDeviceEvents(uid?: string, limit = 100): DeviceEventRow[] {
+export async function listDeviceEvents(uid?: string, limit = 100): Promise<DeviceEventRow[]> {
 	const n = Math.min(Math.max(limit, 1), 300);
 	const u = String(uid ?? "").trim();
 	const where = u ? "WHERE uid = ?" : "";
 	const params: any[] = u ? [u] : [];
-	return getDb()
+	return await getDb()
 		.prepare(`SELECT * FROM device_events ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
 		.all(...params, n) as unknown as DeviceEventRow[];
 }
@@ -465,27 +465,27 @@ export function listDeviceEvents(uid?: string, limit = 100): DeviceEventRow[] {
  * 报了什么」时，按时间划线会正好划掉那一小时。条数裁剪只丢最新的记录，
  * 而最近 200 条覆盖了最近几天，够用；真要长期留档该走审计表，不该塞这里。
  */
-export function pruneDeviceEvents(uid: string): number {
+export async function pruneDeviceEvents(uid: string): Promise<number> {
 	const u = String(uid ?? "").trim();
 	if (!u) return 0;
 	return Number(
-		getDb()
+		(await getDb()
 			.prepare(
 				`DELETE FROM device_events
 				  WHERE uid = ? AND id NOT IN (
 					SELECT id FROM device_events WHERE uid = ? ORDER BY created_at DESC, id DESC LIMIT ?
 				  )`
 			)
-			.run(u, u, DEVICE_EVENT_KEEP).changes ?? 0
+			.run(u, u, DEVICE_EVENT_KEEP)).changes ?? 0
 	);
 }
 
 /** 面板「执行回执」页的计数条：这台机器最近多少成功、多少失败。 */
-export function deviceEventStats(uid: string, sinceHours = 24): { total: number; ok: number; failed: number } {
+export async function deviceEventStats(uid: string, sinceHours = 24): Promise<{ total: number; ok: number; failed: number }> {
 	const u = String(uid ?? "").trim();
 	if (!u) return { total: 0, ok: 0, failed: 0 };
 	const since = new Date(Date.now() - Math.max(1, sinceHours) * 3600_000).toISOString();
-	const r = getDb()
+	const r = await getDb()
 		.prepare(
 			`SELECT COUNT(*) AS total, SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS ok
 			 FROM device_events WHERE uid = ? AND created_at >= ?`
@@ -498,8 +498,8 @@ export function deviceEventStats(uid: string, sinceHours = 24): { total: number;
 
 // ── 班级交流 ────────────────────────────────────────────────────────────────
 
-export function listChat(room = "techrep-global", limit = 100): ConsoleChatMessage[] {
-	const rows = getDb()
+export async function listChat(room = "techrep-global", limit = 100): Promise<ConsoleChatMessage[]> {
+	const rows = await getDb()
 		.prepare(
 			`SELECT id, room, sender, body, created_at FROM console_chat
 			 WHERE room = ? ORDER BY created_at DESC, id DESC LIMIT ?`
@@ -517,22 +517,22 @@ export function listChat(room = "techrep-global", limit = 100): ConsoleChatMessa
 		.reverse();
 }
 
-export function addChat(input: { room?: string; sender?: string; body: string }): ConsoleChatMessage {
+export async function addChat(input: { room?: string; sender?: string; body: string }): Promise<ConsoleChatMessage> {
 	const row = {
 		room: cut(input.room || "techrep-global", 64) || "techrep-global",
 		sender: cut(input.sender, 64),
 		body: cut(input.body, 1000)
 	};
 	const ts = nowIso();
-	const info = getDb()
+	const info = await getDb()
 		.prepare(`INSERT INTO console_chat (room, sender, body, created_at) VALUES (?, ?, ?, ?)`)
 		.run(row.room, row.sender, row.body, ts);
-	return { id: Number(info.lastInsertRowid), ...row, createdAt: ts };
+	return { id: Number((await info).lastInsertRowid), ...row, createdAt: ts };
 }
 
 /** 各房间最新消息时间，用于未读角标（可选）。 */
-export function chatRooms(): { room: string; count: number; lastAt: string }[] {
-	const rows = getDb()
+export async function chatRooms(): Promise<{ room: string; count: number; lastAt: string }[]> {
+	const rows = await getDb()
 		.prepare(
 			`SELECT room, COUNT(*) AS n, MAX(created_at) AS last FROM console_chat
 			 GROUP BY room ORDER BY last DESC`
@@ -543,10 +543,10 @@ export function chatRooms(): { room: string; count: number; lastAt: string }[] {
 
 // ── 操作日志 ────────────────────────────────────────────────────────────────
 
-export function listAudit(limit = 100, action?: string): ConsoleAuditEntry[] {
+export async function listAudit(limit = 100, action?: string): Promise<ConsoleAuditEntry[]> {
 	const where = action ? "WHERE action = ?" : "";
 	const params: any[] = action ? [cut(action, 64)] : [];
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT id, actor, role, action, target, detail, created_at FROM console_audit
 			 ${where} ORDER BY created_at DESC, id DESC LIMIT ?`
@@ -594,13 +594,13 @@ function auditRowHash(prevHash: string, r: { id: number; actor: string; role: st
 		: crypto.createHash("sha256").update(payload).digest("hex");
 }
 
-function metaGet(key: string): string {
-	const row = getDb().prepare("SELECT value FROM console_meta WHERE key = ?").get(key) as { value: string } | undefined;
+async function metaGet(key: string): Promise<string> {
+	const row = await getDb().prepare("SELECT value FROM console_meta WHERE key = ?").get(key) as { value: string } | undefined;
 	return row?.value ?? "";
 }
 
-function metaSet(key: string, value: string): void {
-	getDb()
+async function metaSet(key: string, value: string): Promise<void> {
+	await getDb()
 		.prepare("INSERT INTO console_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
 		.run(key, value);
 }
@@ -640,8 +640,8 @@ export const CONSOLE_SETTINGS_KEYS = [
  * 录像保留天数），必须全校一致；localStorage 是「每台电脑各存一份」—— 运维在 A 机改了，
  * B 机登录面板看到的还是旧值，两边下发的策略不一致，排查时会怀疑人生。
  */
-export function getConsoleSettings(): Record<string, unknown> {
-	const raw = metaGet(CONSOLE_SETTINGS_KEY);
+export async function getConsoleSettings(): Promise<Record<string, unknown>> {
+	const raw = await metaGet(CONSOLE_SETTINGS_KEY);
 	if (!raw) return {};
 	try {
 		const o = JSON.parse(raw);
@@ -656,10 +656,10 @@ export function getConsoleSettings(): Record<string, unknown> {
  * 合并写入配置（PATCH 语义：只覆盖传入的键，其余保留）。
  * 显式传 `null` 的键会被删除，用于「恢复默认」。返回写入后的完整配置，便于前端立即回显。
  */
-export function saveConsoleSettings(patch: Record<string, unknown>): Record<string, unknown> {
-	const merged: Record<string, unknown> = { ...getConsoleSettings(), ...(patch || {}) };
+export async function saveConsoleSettings(patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const merged: Record<string, unknown> = { ...await getConsoleSettings(), ...(patch || {}) };
 	for (const k of Object.keys(merged)) if (merged[k] === null) delete merged[k];
-	metaSet(CONSOLE_SETTINGS_KEY, JSON.stringify(merged));
+	await metaSet(CONSOLE_SETTINGS_KEY, JSON.stringify(merged));
 	return merged;
 }
 
@@ -667,8 +667,8 @@ export function saveConsoleSettings(patch: Record<string, unknown>): Record<stri
  * 监控参数（截图/录像/远控编码）：从 console settings 取，缺省给默认值。
  * 设备端（Rust agent）经 GET /ext/monitor-config（设备密钥）拉取后应用。
  */
-export function getMonitorConfig(): Record<string, unknown> {
-	const s = getConsoleSettings();
+export async function getMonitorConfig(): Promise<Record<string, unknown>> {
+	const s = await getConsoleSettings();
 	const num = (k: string, d: number) => {
 		const v = Number(s[k]);
 		return Number.isFinite(v) && v > 0 ? v : d;
@@ -703,8 +703,8 @@ export type ActivationCode = {
 	usedBy?: string;
 };
 
-export function listActivationCodes(): ActivationCode[] {
-	const raw = metaGet(ACTIVATE_KEY);
+export async function listActivationCodes(): Promise<ActivationCode[]> {
+	const raw = await metaGet(ACTIVATE_KEY);
 	if (!raw) return [];
 	try {
 		const a = JSON.parse(raw);
@@ -712,11 +712,11 @@ export function listActivationCodes(): ActivationCode[] {
 	} catch { return []; }
 }
 
-function saveActivationCodes(list: ActivationCode[]): void {
-	metaSet(ACTIVATE_KEY, JSON.stringify(list));
+async function saveActivationCodes(list: ActivationCode[]): Promise<void> {
+	await metaSet(ACTIVATE_KEY, JSON.stringify(list));
 }
 
-export function generateActivationCode(opts: { classId: string; className: string; hours: number }): ActivationCode {
+export async function generateActivationCode(opts: { classId: string; className: string; hours: number }): Promise<ActivationCode> {
 	const code = "XJK-" + Math.random().toString(36).slice(2, 8).toUpperCase() + "-" + Math.random().toString(36).slice(2, 5).toUpperCase();
 	const now = new Date();
 	const item: ActivationCode = {
@@ -727,22 +727,22 @@ export function generateActivationCode(opts: { classId: string; className: strin
 		expiresAt: new Date(now.getTime() + opts.hours * 3600_000).toISOString(),
 		used: false,
 	};
-	const list = listActivationCodes();
+	const list = await listActivationCodes();
 	list.unshift(item);
-	saveActivationCodes(list.slice(0, 200)); // 只留最近 200 条
+	await saveActivationCodes(list.slice(0, 200)); // 只留最近 200 条
 	return item;
 }
 
-export function revokeActivationCode(code: string): boolean {
-	const list = listActivationCodes();
+export async function revokeActivationCode(code: string): Promise<boolean> {
+	const list = await listActivationCodes();
 	const next = list.filter((c) => c.code !== code);
 	if (next.length === list.length) return false;
-	saveActivationCodes(next);
+	await saveActivationCodes(next);
 	return true;
 }
 
-export function consumeActivationCode(code: string, deviceUid: string): ActivationCode | null {
-	const list = listActivationCodes();
+export async function consumeActivationCode(code: string, deviceUid: string): Promise<ActivationCode | null> {
+	const list = await listActivationCodes();
 	const idx = list.findIndex((c) => c.code === code.trim().toUpperCase() && !c.used);
 	if (idx < 0) return null;
 	const item = list[idx];
@@ -750,7 +750,7 @@ export function consumeActivationCode(code: string, deviceUid: string): Activati
 	item.used = true;
 	item.usedBy = deviceUid;
 	list[idx] = item;
-	saveActivationCodes(list);
+	await saveActivationCodes(list);
 	return item;
 }
 
@@ -767,23 +767,23 @@ export function consumeActivationCode(code: string, deviceUid: string): Activati
  * ⚠️ 旧路径 `GET /api/console/ext/device-config` 仍免鉴权，那是双轨期既有行为；
  *    待旧路径退役后，"明文可取 deviceSecret" 的隐患才真正消除。
  */
-export function validateActivationCode(code: string): ActivationCode | null {
+export async function validateActivationCode(code: string): Promise<ActivationCode | null> {
 	const c = String(code ?? "").trim().toUpperCase();
 	if (!c) return null;
-	const item = listActivationCodes().find((x) => x.code === c && !x.used);
+	const item = await (await listActivationCodes()).find((x) => x.code === c && !x.used);
 	if (!item) return null;
 	if (new Date(item.expiresAt) < new Date()) return null; // 过期
 	return item;
 }
 
 
-export function addAudit(input: {
+export async function addAudit(input: {
 	actor?: string;
 	role?: string;
 	action: string;
 	target?: string;
 	detail?: string;
-}): ConsoleAuditEntry {
+}): Promise<ConsoleAuditEntry> {
 	const row = {
 		actor: cut(input.actor, 64),
 		role: cut(input.role, 32),
@@ -798,24 +798,24 @@ export function addAudit(input: {
 	// 本函数全程**同步**（node:sqlite 的 DatabaseSync），单进程内不会被其它 JS 插队；
 	// 但 SQLite 允许多进程连接，所以仍然显式开事务，防止第二个实例/命令行写入挤在中间，
 	// 那会让两条记录拿到同一个 prev_hash —— 链就此分叉且**事后无法判定谁先谁后**。
-	db.exec("BEGIN IMMEDIATE");
+	await db.exec("BEGIN IMMEDIATE");
 	try {
-		const prev = metaGet("audit_head");
-		const info = db
+		const prev = await metaGet("audit_head");
+		const info = await db
 			.prepare(
 				`INSERT INTO console_audit (actor, role, action, target, detail, created_at, prev_hash, row_hash)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, '')`
 			)
 			.run(row.actor, row.role, row.action, row.target, row.detail, ts, prev);
-		const id = Number(info.lastInsertRowid);
+		const id = Number((await info).lastInsertRowid);
 		const hash = auditRowHash(prev, { id, ...row, created_at: ts });
-		db.prepare("UPDATE console_audit SET row_hash = ? WHERE id = ?").run(hash, id);
-		metaSet("audit_head", hash);
-		db.exec("COMMIT");
+		await db.prepare("UPDATE console_audit SET row_hash = ? WHERE id = ?").run(hash, id);
+		await metaSet("audit_head", hash);
+		await db.exec("COMMIT");
 		return { id, ...row, createdAt: ts };
 	} catch (err) {
 		try {
-			db.exec("ROLLBACK");
+			await db.exec("ROLLBACK");
 		} catch {
 			/* 已经回滚或根本没有活动事务，忽略 */
 		}
@@ -850,10 +850,10 @@ export interface AuditVerifyReport {
  * 第一处断在哪、为什么」。因为旧库迁移、裁剪保留期都会合法地产生「链不完整」，
  * 用一个 bool 表达会把「正常的历史裁剪」和「有人改了库」混为一谈 —— 那样报出来也没人信。
  */
-export function verifyAudit(): AuditVerifyReport {
+export async function verifyAudit(): Promise<AuditVerifyReport> {
 	const db = getDb();
-	const anchor = metaGet("audit_anchor");
-	const rows = db
+	const anchor = await metaGet("audit_anchor");
+	const rows = await db
 		.prepare(
 			`SELECT id, actor, role, action, target, detail, created_at, prev_hash, row_hash
 			 FROM console_audit ORDER BY id ASC`
@@ -903,7 +903,7 @@ export function verifyAudit(): AuditVerifyReport {
 		checked++;
 	}
 
-	const head = metaGet("audit_head");
+	const head = await metaGet("audit_head");
 	// 空库时 head 与 prev 都是空串，视为一致；有 head 就必须等于链尾。
 	const tailOk = !head ? checked === 0 : head === prev;
 	if (tailOk === false && firstBadId === null) {
@@ -919,7 +919,7 @@ export function verifyAudit(): AuditVerifyReport {
 		tailOk,
 		mode: AUDIT_KEYED ? "hmac-sha256" : "sha256",
 		retentionDays: AUDIT_RETENTION_DAYS,
-		prunedBefore: metaGet("audit_pruned_before") || null
+		prunedBefore: await metaGet("audit_pruned_before") || null
 	};
 }
 
@@ -934,49 +934,49 @@ export function verifyAudit(): AuditVerifyReport {
  *      prev_hash 会指向一个已经不存在的行，verify 立刻报断裂 —— 这会让人把
  *      「正常裁剪」误判成「有人篡改」，进而不再信任这个功能。
  */
-export function pruneAudit(retentionDays = AUDIT_RETENTION_DAYS): {
+export async function pruneAudit(retentionDays = AUDIT_RETENTION_DAYS): Promise<{
 	removed: number;
 	anchor: string | null;
 	prunedBefore: string | null;
 	cutoff: string;
 	/** 实际生效的保留天数（入参会被夹到 1~3650 的合理区间）。 */
 	retentionDays: number;
-} {
+}> {
 	const db = getDb();
 	const days = Math.max(1, Math.min(Math.floor(retentionDays) || AUDIT_RETENTION_DAYS, 3650));
 	const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
 
-	const last = db
+	const last = await db
 		.prepare("SELECT id, row_hash, created_at FROM console_audit WHERE created_at < ? ORDER BY id DESC LIMIT 1")
 		.get(cutoff) as { id: number; row_hash: string; created_at: string } | undefined;
 	if (!last) return { removed: 0, anchor: null, prunedBefore: null, cutoff, retentionDays: days };
 
-	const info = db.prepare("DELETE FROM console_audit WHERE id <= ?").run(last.id);
+	const info = await db.prepare("DELETE FROM console_audit WHERE id <= ?").run(last.id);
 	const removed = Number(info.changes ?? 0);
-	if (last.row_hash) metaSet("audit_anchor", last.row_hash);
-	metaSet("audit_pruned_before", last.created_at);
+	if (last.row_hash) await metaSet("audit_anchor", last.row_hash);
+	await metaSet("audit_pruned_before", last.created_at);
 	return { removed, anchor: last.row_hash || null, prunedBefore: last.created_at, cutoff, retentionDays: days };
 }
 
 /** 审计策略快照（供面板显示「当前保留多久、哪种档位」）。 */
-export function auditPolicy(): { retentionDays: number; mode: "hmac-sha256" | "sha256"; anchored: boolean; prunedBefore: string | null } {
+export async function auditPolicy(): Promise<{ retentionDays: number; mode: "hmac-sha256" | "sha256"; anchored: boolean; prunedBefore: string | null }> {
 	return {
 		retentionDays: AUDIT_RETENTION_DAYS,
 		mode: AUDIT_KEYED ? "hmac-sha256" : "sha256",
-		anchored: !!metaGet("audit_anchor"),
-		prunedBefore: metaGet("audit_pruned_before") || null
+		anchored: !!await metaGet("audit_anchor"),
+		prunedBefore: await metaGet("audit_pruned_before") || null
 	};
 }
 
 /** 面板首页用的汇总计数。 */
-export function consoleSummary(): { notices: number; chatMessages: number; auditEntries: number; lastAuditAt: string | null } {
+export async function consoleSummary(): Promise<{ notices: number; chatMessages: number; auditEntries: number; lastAuditAt: string | null }> {
 	const db = getDb();
-	const n = (sql: string) => Number((db.prepare(sql).get() as { n: number } | undefined)?.n ?? 0);
-	const last = db.prepare("SELECT MAX(created_at) AS t FROM console_audit").get() as { t: string | null } | undefined;
+	const n = async (sql: string) => Number((await db.prepare(sql).get() as { n: number } | undefined)?.n ?? 0);
+	const last = await db.prepare("SELECT MAX(created_at) AS t FROM console_audit").get() as { t: string | null } | undefined;
 	return {
-		notices: n("SELECT COUNT(*) AS n FROM console_notices"),
-		chatMessages: n("SELECT COUNT(*) AS n FROM console_chat"),
-		auditEntries: n("SELECT COUNT(*) AS n FROM console_audit"),
+		notices: await n("SELECT COUNT(*) AS n FROM console_notices"),
+		chatMessages: await n("SELECT COUNT(*) AS n FROM console_chat"),
+		auditEntries: await n("SELECT COUNT(*) AS n FROM console_audit"),
 		lastAuditAt: last?.t ?? null
 	};
 }
@@ -1009,14 +1009,14 @@ export interface ConsoleFriend {
 const pairKey = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
 
 /** 查询可添加的用户（按用户名/显示名/班级模糊匹配），排除自己。 */
-export function searchUsers(
+export async function searchUsers(
 	meId: number,
 	q: string,
 	limit = 20
-): { id: number; username: string; displayName: string; className: string; gradeName: string; role: string }[] {
+): Promise<{ id: number; username: string; displayName: string; className: string; gradeName: string; role: string }[]> {
 	const kw = `%${String(q ?? "").trim()}%`;
 	if (kw === "%%") return [];
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT id, username, display_name, class_name, grade_name, role FROM users
 			 WHERE id != ? AND status = 'active'
@@ -1035,11 +1035,11 @@ export function searchUsers(
 }
 
 /** 按 id 取一个用户的最小公开资料（校验对端存在性用；不返回邮箱等隐私字段）。 */
-export function getUserBrief(
+export async function getUserBrief(
 	id: number
-): { id: number; username: string; displayName: string; className: string; gradeName: string } | null {
+): Promise<{ id: number; username: string; displayName: string; className: string; gradeName: string } | null> {
 	if (!Number.isFinite(id) || id <= 0) return null;
-	const r = getDb()
+	const r = await getDb()
 		.prepare(
 			`SELECT id, username, display_name, class_name, grade_name FROM users
 			 WHERE id = ? AND status = 'active'`
@@ -1056,8 +1056,8 @@ export function getUserBrief(
 }
 
 /** 我的好友关系（含待处理请求，双向都列）。 */
-export function listFriends(meId: number): ConsoleFriend[] {
-	const rows = getDb()
+export async function listFriends(meId: number): Promise<ConsoleFriend[]> {
+	const rows = await getDb()
 		.prepare(
 			`SELECT id, requester_id, requester_name, addressee_id, addressee_name, status, message, updated_at
 			 FROM console_friends
@@ -1080,76 +1080,76 @@ export function listFriends(meId: number): ConsoleFriend[] {
 }
 
 /** 发起好友申请（幂等：已存在关系时复用该行并回到 pending）。 */
-export function requestFriend(
+export async function requestFriend(
 	me: { id: number; name: string },
 	peerId: number,
 	peerName: string,
 	message = ""
-): ConsoleFriend {
+): Promise<ConsoleFriend> {
 	const db = getDb();
 	const pair = pairKey(me.id, peerId);
 	const ts = nowIso();
-	const exist = db.prepare("SELECT id, status FROM console_friends WHERE pair = ?").get(pair) as
+	const exist = await db.prepare("SELECT id, status FROM console_friends WHERE pair = ?").get(pair) as
 		| { id: number; status: string }
 		| undefined;
 	if (exist) {
 		// 已是好友就不重新申请（避免把 accepted 打回 pending）；
 		// 被拒过则复用该行重新发起。
 		if (exist.status === "accepted") {
-			return listFriends(me.id).find((f) => f.peerId === peerId)!;
+			return await (await listFriends(me.id)).find(async (f) => f.peerId === peerId)!;
 		}
-		db.prepare("UPDATE console_friends SET status='pending', message=?, updated_at=? WHERE id=?")
+		await db.prepare("UPDATE console_friends SET status='pending', message=?, updated_at=? WHERE id=?")
 			.run(cut(message, 200), ts, exist.id);
 	} else {
-		db.prepare(
+		await db.prepare(
 			`INSERT INTO console_friends
 			 (pair, requester_id, requester_name, addressee_id, addressee_name, status, message, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
 		).run(pair, me.id, cut(me.name, 64), peerId, cut(peerName, 64), cut(message, 200), ts, ts);
 	}
-	return listFriends(me.id).find((f) => f.peerId === peerId)!;
+	return await (await listFriends(me.id)).find((f) => f.peerId === peerId)!;
 }
 
 /**
  * 回应好友申请。**只有收件人**能接受/拒绝 —— 这是权限要点：
  * SQL 的 WHERE 带 addressee_id = me，否则任何人都能替别人答应好友请求。
  */
-export function respondFriend(meId: number, peerId: number, accept: boolean): boolean {
+export async function respondFriend(meId: number, peerId: number, accept: boolean): Promise<boolean> {
 	const pair = pairKey(meId, peerId);
-	const info = getDb()
+	const info = await getDb()
 		.prepare(
 			`UPDATE console_friends SET status = ?, updated_at = ?
 			 WHERE pair = ? AND addressee_id = ? AND status = 'pending'`
 		)
 		.run(accept ? "accepted" : "rejected", nowIso(), pair, meId);
-	return Number(info.changes ?? 0) > 0;
+	return Number((await info).changes ?? 0) > 0;
 }
 
 /** 删除好友（或撤回自己发出的待处理申请）。两端任一都可删除。 */
-export function removeFriend(meId: number, peerId: number): boolean {
-	const info = getDb()
+export async function removeFriend(meId: number, peerId: number): Promise<boolean> {
+	const info = await getDb()
 		.prepare("DELETE FROM console_friends WHERE pair = ? AND (requester_id = ? OR addressee_id = ?)")
 		.run(pairKey(meId, peerId), meId, meId);
-	return Number(info.changes ?? 0) > 0;
+	return Number((await info).changes ?? 0) > 0;
 }
 
 /** 我与某人是否为已接受的好友（私聊权限判定用）。 */
-export function areFriends(meId: number, peerId: number): boolean {
-	const row = getDb()
+export async function areFriends(meId: number, peerId: number): Promise<boolean> {
+	const row = await getDb()
 		.prepare("SELECT status FROM console_friends WHERE pair = ?")
 		.get(pairKey(meId, peerId)) as { status: string } | undefined;
 	return row?.status === "accepted";
 }
 
 /** 我作为某房间成员是否有权发言：一对一房间要求是好友，其余房间放行。 */
-export function canTalkInRoom(meId: number, room: string): boolean {
+export async function canTalkInRoom(meId: number, room: string): Promise<boolean> {
 	const m = /^dm:(\d+):(\d+)$/.exec(String(room || ""));
 	if (!m) return true; // 群/班级房间由路由层按房间语义另外校验
 	const a = Number(m[1]);
 	const b = Number(m[2]);
 	if (a !== meId && b !== meId) return false; // 不是这条会话的参与者
 	const peer = a === meId ? b : a;
-	return areFriends(meId, peer);
+	return await areFriends(meId, peer);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1317,7 +1317,7 @@ export function listCaptureReadyEvents(): CaptureReadyEvent[] {
 
 
 /** 登记一张设备截图（同设备覆盖旧图），返回元数据。uid 大小写不敏感（面板按 host 查时可能带大写）。 */
-export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): DeviceCaptureMeta {
+export async function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): Promise<DeviceCaptureMeta> {
 	const key = String(uid ?? "").trim().toLowerCase();
 	if (!key) throw new Error("uid 不能为空");
 	if (!bytes || bytes.length === 0) throw new Error("图片字节为空");
@@ -1337,7 +1337,7 @@ export function putDeviceCapture(uid: string, bytes: Buffer | Uint8Array): Devic
 	// 老师想回看上午的教室画面时什么都没有 —— 这就是「监控视频回放」的落点。
 	try {
 		const sha = crypto.createHash("sha256").update(bytes).digest("hex");
-		getDb()
+		await getDb()
 			.prepare(
 				`INSERT INTO captures (uid, path, bytes, sha256, created_at) VALUES (?, ?, ?, ?, ?)`
 			)
@@ -1359,10 +1359,10 @@ export interface CaptureHistoryItem {
 }
 
 /** 某设备的截图历史（回放时间线，按时间倒序）。 */
-export function listDeviceCaptures(uid: string, limit = 60): CaptureHistoryItem[] {
+export async function listDeviceCaptures(uid: string, limit = 60): Promise<CaptureHistoryItem[]> {
 	const key = String(uid ?? "").trim().toLowerCase();
 	if (!key) return [];
-	const rows = getDb()
+	const rows = await getDb()
 		.prepare(
 			`SELECT id, uid, bytes, sha256, created_at FROM captures
 			 WHERE uid = ? ORDER BY created_at DESC LIMIT ?`
@@ -1384,9 +1384,9 @@ export function listDeviceCaptures(uid: string, limit = 60): CaptureHistoryItem[
 }
 
 /** 按行 id 取回放帧（含 PNG 字节）；文件已清理时返回 null。 */
-export function getDeviceCaptureById(id: number): { meta: CaptureHistoryItem; png: Buffer } | null {
+export async function getDeviceCaptureById(id: number): Promise<{ meta: CaptureHistoryItem; png: Buffer } | null> {
 	if (!Number.isFinite(id) || id <= 0) return null;
-	const row = getDb()
+	const row = await getDb()
 		.prepare(`SELECT id, uid, path, bytes, sha256, created_at FROM captures WHERE id = ?`)
 		.get(id) as { id: number; uid: string; path: string; bytes: number; sha256: string; created_at: string } | undefined;
 	if (!row) return null;
@@ -1452,10 +1452,10 @@ export function clearDeviceCapture(uid: string): boolean {
 // 客户端拿到的是结论（true/false），拿不到规则 —— 改前端开不出功能。
 
 /** 读覆盖值。没记录 = 全按角色默认（不给每个人造空行）。 */
-export function getUserFeatureOverrides(uid: string): Record<string, unknown> {
+export async function getUserFeatureOverrides(uid: string): Promise<Record<string, unknown>> {
 	const u = String(uid ?? "").trim();
 	if (!u) return {};
-	const r = getDb().prepare("SELECT flags FROM user_features WHERE uid = ?").get(u) as
+	const r = await getDb().prepare("SELECT flags FROM user_features WHERE uid = ?").get(u) as
 		| { flags?: string }
 		| undefined;
 	if (!r?.flags) return {};
@@ -1471,21 +1471,21 @@ export function getUserFeatureOverrides(uid: string): Record<string, unknown> {
  * 写覆盖值：只认白名单功能位 + 布尔值，`null` = 恢复按角色默认，其余丢弃。
  * 不做白名单过滤的话，一个拼错的键会永远留在库里，谁都看不出它为什么没生效。
  */
-export function setUserFeatureOverrides(
+export async function setUserFeatureOverrides(
 	uid: string,
 	patch: Record<string, unknown>,
 	actor: string
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
 	const u = String(uid ?? "").trim();
 	if (!u) return {};
-	const next: Record<string, unknown> = { ...getUserFeatureOverrides(u) };
+	const next: Record<string, unknown> = { ...await getUserFeatureOverrides(u) };
 	const src = patch && typeof patch === "object" ? patch : {};
 	for (const k of FEATURE_KEYS) {
 		const v = (src as Record<string, unknown>)[k];
 		if (v === true || v === false) next[k] = v;
 		else if (v === null) delete next[k];
 	}
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO user_features (uid, flags, updated_at, updated_by) VALUES (?, ?, ?, ?)
 			 ON CONFLICT(uid) DO UPDATE SET flags = excluded.flags,
@@ -1497,11 +1497,11 @@ export function setUserFeatureOverrides(
 }
 
 /** 最终能力位 —— 服务端唯一的裁决出口（面板/被控端都只能消费它）。 */
-export function resolveUserFeatures(
+export async function resolveUserFeatures(
 	uid: string,
 	role: Role | null | undefined
-): { features: Record<FeatureKey, boolean>; overridden: FeatureKey[]; defaults: Record<FeatureKey, boolean> } {
-	const { features, overridden } = resolveFeatures(role, getUserFeatureOverrides(uid));
+): Promise<{ features: Record<FeatureKey, boolean>; overridden: FeatureKey[]; defaults: Record<FeatureKey, boolean> }> {
+	const { features, overridden } = resolveFeatures(role, await getUserFeatureOverrides(uid));
 	return { features, overridden, defaults: featureDefaultsOf(role) };
 }
 
@@ -1526,12 +1526,12 @@ const TASK_KEEP = 300;
  * 设备做完之后带着同一个 task_id 回报 —— 这才是「被控端完成操作后给操控端
  * 上报响应」能落到某个按钮上的前提。
  */
-export function createTask(input: {
+export async function createTask(input: {
 	uid: string;
 	kind: string;
 	actor?: string;
 	extra?: Record<string, unknown>;
-}): DeviceTaskRow {
+}): Promise<DeviceTaskRow> {
 	const uid = cut(input.uid, 64).trim().toLowerCase();
 	const kind = cut(input.kind, 32).trim();
 	if (!uid || !kind) throw new Error("uid/kind 不能为空");
@@ -1545,13 +1545,13 @@ export function createTask(input: {
 		}
 	}
 	const id = crypto.randomUUID();
-	getDb()
+	await getDb()
 		.prepare(
 			`INSERT INTO device_tasks (task_id, uid, kind, actor, state, result, extra, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, 'pending', '', ?, ?, ?)`
 		)
 		.run(id, uid, kind, cut(input.actor, 64), extraRaw, ts, ts);
-	pruneTasks(uid);
+	await pruneTasks(uid);
 	return {
 		task_id: id,
 		uid,
@@ -1569,12 +1569,12 @@ export function createTask(input: {
  * 设备回报结果。state 只允许 done / failed / timeout —— 越界一律当 failed，
  * 绝不让「上报了一个不认识的状态」偷偷把任务留在 pending（那会让面板永远转圈）。
  */
-export function putTaskResult(
+export async function putTaskResult(
 	taskId: string,
 	state: string,
 	result?: string,
 	extra?: Record<string, unknown>
-): DeviceTaskRow | null {
+): Promise<DeviceTaskRow | null> {
 	const id = String(taskId ?? "").trim();
 	if (!id) return null;
 	const st = ["done", "failed", "timeout"].includes(state) ? state : "failed";
@@ -1589,30 +1589,30 @@ export function putTaskResult(
 			extraRaw = "";
 		}
 	}
-	const r = getDb()
+	const r = await getDb()
 		.prepare(
 			`UPDATE device_tasks SET state = ?, result = ?, extra = CASE WHEN ? <> '' THEN ? ELSE extra END, updated_at = ?
 			 WHERE task_id = ?`
 		)
 		.run(st, cut(result, 400), extraRaw, extraRaw, nowIso(), id);
-	if (Number(r.changes) <= 0) return null;
-	return getTask(id);
+	if (Number((await r).changes) <= 0) return null;
+	return await getTask(id);
 }
 
-export function getTask(taskId: string): DeviceTaskRow | null {
-	const r = getDb().prepare("SELECT * FROM device_tasks WHERE task_id = ?").get(String(taskId ?? "").trim()) as
+export async function getTask(taskId: string): Promise<DeviceTaskRow | null> {
+	const r = await getDb().prepare("SELECT * FROM device_tasks WHERE task_id = ?").get(String(taskId ?? "").trim()) as
 		| DeviceTaskRow
 		| undefined;
 	return r ?? null;
 }
 
 /** 列任务（uid 省略 = 全校最近若干条，面板总览与排障用）。 */
-export function listTasks(uid?: string, limit = 50): DeviceTaskRow[] {
+export async function listTasks(uid?: string, limit = 50): Promise<DeviceTaskRow[]> {
 	const n = Math.min(Math.max(limit, 1), 200);
 	const u = String(uid ?? "").trim();
 	const where = u ? "WHERE uid = ?" : "";
 	const params: any[] = u ? [u] : [];
-	return getDb()
+	return await getDb()
 		.prepare(`SELECT * FROM device_tasks ${where} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
 		.all(...params, n) as unknown as DeviceTaskRow[];
 }
@@ -1622,23 +1622,23 @@ export function listTasks(uid?: string, limit = 50): DeviceTaskRow[] {
  * 没有这一步，一次网络抖动就会让按钮卡在「等待回执」上永远不落地 ——
  * 老师只会看到转圈，不会知道这次其实已经失败了。
  */
-export function timeoutTasks(minutes = 5): number {
+export async function timeoutTasks(minutes = 5): Promise<number> {
 	const since = new Date(Date.now() - Math.max(1, minutes) * 60_000).toISOString();
 	return Number(
-		getDb()
+		(await getDb()
 			.prepare(
 				`UPDATE device_tasks SET state = 'timeout', result = '设备未在 5 分钟内回执', updated_at = ?
 				 WHERE state = 'pending' AND created_at <= ?`
 			)
-			.run(nowIso(), since).changes ?? 0
+			.run(nowIso(), since)).changes ?? 0
 	);
 }
 
 /** 每台设备只留最近 [TASK_KEEP] 条，理由同 pruneDeviceEvents（按条数而非按时间）。 */
-function pruneTasks(uid: string): void {
+async function pruneTasks(uid: string): Promise<void> {
 	const u = String(uid ?? "").trim();
 	if (!u) return;
-	getDb()
+	await getDb()
 		.prepare(
 			`DELETE FROM device_tasks
 			  WHERE uid = ? AND rowid NOT IN (

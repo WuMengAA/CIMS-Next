@@ -71,7 +71,7 @@ const NOT_FOUND_HINT = { enabled: false, error: "云端未启用报修端点（�
 const UNREACHABLE = { enabled: false, error: "云端不可达（连接失败或超时）" };
 
 export async function GET(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	const id = String(event.params.id ?? "").trim();
@@ -85,7 +85,7 @@ export async function GET(event: RequestEvent) {
 }
 
 export async function PATCH(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	const id = String(event.params.id ?? "").trim();
@@ -125,7 +125,7 @@ export async function PATCH(event: RequestEvent) {
 }
 
 export async function DELETE(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	const id = String(event.params.id ?? "").trim();

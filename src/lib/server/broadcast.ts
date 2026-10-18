@@ -308,7 +308,7 @@ export async function broadcastToClassrooms(
 		const { uids: resolved, matched, missed } = resolveClassTargets(map, classes);
 		classNote = missed.length ? `未匹配班级：${missed.join("、")}` : "";
 		if (resolved.length === 0) {
-			const notice = addNotice({
+			const notice = await addNotice({
 				title: cleanTitle,
 				scope: opts.scope || classes.join("、"),
 				author: opts.author,
@@ -316,7 +316,7 @@ export async function broadcastToClassrooms(
 				classes,
 				channel: opts.source || "manual"
 			});
-			addAudit({
+			await addAudit({
 				action: "broadcast_" + (opts.source || "manual"),
 				target: classes.join("、"),
 				detail: `定向班级无可推送设备，未下发：${classNote || cleanTitle}`.slice(0, 200)
@@ -340,7 +340,7 @@ export async function broadcastToClassrooms(
 
 	if (!cloudBase) {
 		// 无云端配置：只留痕，让上层知道没送到
-		const notice = addNotice({
+		const notice = await addNotice({
 			title: cleanTitle,
 			scope: opts.scope || "全校",
 			author: opts.author,
@@ -348,7 +348,7 @@ export async function broadcastToClassrooms(
 			classes,
 			channel: opts.source || "manual"
 		});
-		addAudit({
+		await addAudit({
 			action: "broadcast_" + (opts.source || "manual"),
 			target: opts.scope || "全校",
 			detail: `云端未配置，仅留痕：${cleanTitle}`
@@ -365,7 +365,7 @@ export async function broadcastToClassrooms(
 		: null;
 	let typingNotice: ConsoleNotice | null = null;
 	if (typed) {
-		typingNotice = addNotice({
+		typingNotice = await addNotice({
 			title: cleanTitle,
 			scope: opts.scope || (classes.length ? classes.join("、") : "全校"),
 			author: opts.author,
@@ -377,7 +377,7 @@ export async function broadcastToClassrooms(
 		});
 	} else {
 		// 普通通知同样开局建档（拿 id 用于逐台回执；末尾不再重复 addNotice）
-		typingNotice = addNotice({
+		typingNotice = await addNotice({
 			title: cleanTitle,
 			scope: opts.scope || (classes.length ? classes.join("、") : "全校"),
 			author: opts.author,
@@ -417,7 +417,7 @@ export async function broadcastToClassrooms(
 	// 开局建档：给全部目标设备落 pending 回执行（普通通知现在也建档，2026-10-04）。
 	// 之后离线/失败有地方标 failed，老师能在回执表看到"哪台没收到"。
 	const noticeId = typingNotice?.id ?? 0;
-	if (noticeId) ensureNoticeDeliveries(noticeId, uids);
+	if (noticeId) await ensureNoticeDeliveries(noticeId, uids);
 
 	let delivered = 0;
 	const kind = typed ?? "popup";
@@ -438,7 +438,7 @@ export async function broadcastToClassrooms(
 		if (st === "sent") {
 			delivered++;
 		} else if (noticeId) {
-			markNoticeDelivery(
+			await markNoticeDelivery(
 				noticeId,
 				uid,
 				"failed",
@@ -450,14 +450,14 @@ export async function broadcastToClassrooms(
 
 	// 留痕（唯一收口 —— 调用方请用返回值，不要再自己写一条）
 	// 2026-10-04：普通通知也已开局建档（见上），这里统一回填送达数，不再重复 addNotice。
-	setNoticeSent(noticeId, delivered);
+	await setNoticeSent(noticeId, delivered);
 	// 2026-10-04：异步对账——把设备真执行的回执（done）关联回通知表，pending → delivered。
 	// 不 await：广播主链路已返回，对账是增强；对账失败不影响下发结果与留痕。
 	if (noticeId && delivered > 0) {
-		void reconcileNoticeReceipts(noticeId, uids);
+		void await reconcileNoticeReceipts(noticeId, uids);
 	}
 	const notice = typingNotice ? { ...typingNotice, sent: delivered } : undefined;
-	addAudit({
+	await addAudit({
 		action: "broadcast_" + (opts.source || "manual"),
 		target: opts.scope || (classes.length ? classes.join("、") : "全校"),
 		detail: `推送到 ${delivered}/${uids.length} 台设备${classNote ? "（" + classNote + "）" : ""}${typed ? `（${typed}）` : ""}：${cleanTitle}`.slice(0, 200)
@@ -502,7 +502,7 @@ export async function reconcileNoticeReceipts(
 				const uid = String(rec.uid ?? "").trim().toLowerCase();
 				if (!uid || !uids.some((x) => x.trim().toLowerCase() === uid)) continue;
 				const done = rec.state === "done" || rec.result === "done";
-				markNoticeDelivery(nid, uid, done ? "delivered" : "failed", "", done ? "" : "设备执行失败");
+				await markNoticeDelivery(nid, uid, done ? "delivered" : "failed", "", done ? "" : "设备执行失败");
 				hit++;
 			}
 			if (hit > 0) return;   // 对账到至少一条就收工（其余保持 pending，前端可见）

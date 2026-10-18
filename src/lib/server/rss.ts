@@ -163,7 +163,7 @@ export async function getAggregatedNews(force = false): Promise<FeedItem[]> {
 	}
 	const cfg = getFeedConfig();
 	const enabled = cfg.sources.filter((s) => s.enabled && s.url);
-	const results = await Promise.allSettled(enabled.map((s) => fetchFeed(s.url, s.name, s.maxItems)));
+	const results = await Promise.allSettled(enabled.map(async (s) => await fetchFeed(s.url, s.name, s.maxItems)));
 	const external: FeedItem[] = [];
 	for (const r of results) if (r.status === "fulfilled") external.push(...r.value);
 	// 外部去重（按 link/guid/标题），按时间倒序

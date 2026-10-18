@@ -28,13 +28,13 @@ import {
 	PROOF_TYPES
 } from "$lib/server/role-requests.js";
 
-function currentUser(request: Request, cookies: { get: (n: string) => string | undefined }) {
+async function currentUser(request: Request, cookies: { get: (n: string) => string | undefined }) {
 	const token = cookies.get("admin_token") || request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "";
-	return verifyToken(token);
+	return await verifyToken(token);
 }
 
 export async function GET({ url, request, cookies }) {
-	const user = currentUser(request, cookies);
+	const user = await currentUser(request, cookies);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	const scope = url.searchParams.get("scope") || "mine";
 
@@ -51,17 +51,17 @@ export async function GET({ url, request, cookies }) {
 	if (scope === "pending-count") {
 		// 角标只对能审的人有意义；无权者一律返回 0，避免泄露待办规模。
 		if (!userCan(user, "reviewPermission")) return json({ count: 0, canReview: false });
-		return json({ count: pendingRoleRequestCount(), canReview: true });
+		return json({ count: await pendingRoleRequestCount(), canReview: true });
 	}
 
 	// scope=review：审批队列
 	if (!userCan(user, "reviewPermission")) return json({ error: "无权查看权限申请" }, { status: 403 });
 	const status = url.searchParams.get("status") || "pending";
-	return json({ requests: status === "all" ? listRoleRequests() : listRoleRequests(status) });
+	return json({ requests: status === "all" ? await listRoleRequests() : await listRoleRequests(status) });
 }
 
 export async function POST({ request, cookies }) {
-	const user = currentUser(request, cookies);
+	const user = await currentUser(request, cookies);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 
 	let body: Record<string, unknown> = {};
@@ -73,7 +73,7 @@ export async function POST({ request, cookies }) {
 	const action = String(body.action || "submit");
 
 	if (action === "submit") {
-		const r = submitRoleRequest({
+		const r = await submitRoleRequest({
 			username: user.username,
 			targetRole: String(body.targetRole || ""),
 			realName: body.realName as string,
@@ -90,7 +90,7 @@ export async function POST({ request, cookies }) {
 	}
 
 	if (action === "cancel") {
-		const r = cancelRoleRequest(String(body.id || ""), user.username);
+		const r = await cancelRoleRequest(String(body.id || ""), user.username);
 		if (!r.ok) return json({ error: r.error }, { status: 400 });
 		return json({ ok: true });
 	}
@@ -101,7 +101,7 @@ export async function POST({ request, cookies }) {
 		if (!userCan(user, "reviewPermission")) {
 			return json({ error: "无权审批权限申请" }, { status: 403 });
 		}
-		const r = reviewRoleRequest(
+		const r = await reviewRoleRequest(
 			String(body.id || ""),
 			action,
 			user.username,

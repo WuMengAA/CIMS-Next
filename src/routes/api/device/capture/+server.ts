@@ -53,8 +53,8 @@ export async function POST(event: RequestEvent) {
 		return json({ error: "回传内容不是有效 PNG（<64B 或魔数不符）" }, { status: 400 });
 	}
 
-	const meta = putDeviceCapture(uid, raw);
-	addAudit({
+	const meta = await putDeviceCapture(uid, raw);
+	await addAudit({
 		actor: `device:${uid}`,
 		role: "device",
 		action: "capture.report",

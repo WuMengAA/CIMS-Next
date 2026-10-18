@@ -21,7 +21,7 @@ export const GET: RequestHandler = async ({ params }) => {
 };
 
 export const POST: RequestHandler = async ({ request, cookies, params }) => {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	let body: any = {};
 	try { body = await request.json(); } catch { return json({ error: "请求体错误" }, { status: 400 }); }
 

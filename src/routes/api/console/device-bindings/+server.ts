@@ -20,7 +20,7 @@ import {
 } from "$lib/server/device-bindings.js";
 
 export async function GET(event: RequestEvent) {
-	const g = guardControl(event);
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
 	const map = await resolveDeviceClassMap();
@@ -30,20 +30,20 @@ export async function GET(event: RequestEvent) {
 	return json({
 		devices,
 		classes: map.classes,
-		bindings: listDeviceBindings(),
+		bindings: await listDeviceBindings(),
 		source: map.source
 	});
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	const body = await readControlBody(event);
 	const uid = String(body.uid ?? "").trim();
 	if (!uid) return json({ error: "缺少 uid" }, { status: 400 });
 	const displayName = String(body.displayName ?? "").trim();
-	const ok = setDeviceDisplayName(uid, displayName);
+	const ok = await setDeviceDisplayName(uid, displayName);
 	if (!ok) return json({ error: "该设备尚未登记归班，无法命名" }, { status: 404 });
 	return json({ ok: true, uid, displayName });
 }

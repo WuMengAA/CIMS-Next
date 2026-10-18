@@ -34,11 +34,11 @@ export async function GET(event: RequestEvent) {
 	const g = guardDevice(event);
 	if ("error" in g) {
 		const code = String(event.url.searchParams.get("code") ?? "");
-		if (!validateActivationCode(code)) return g.error;
+		if (!await validateActivationCode(code)) return g.error;
 	}
 	// p2pIce：与 `/api/console/control/p2p-token` 下发给浏览器的那份同源，
 	// agent 端 `STELARITH_P2P_ICE` 用同一份，两端才能互相打洞/中转。
-	const mc = getMonitorConfig();
+	const mc = await getMonitorConfig();
 	const iceRaw = String(mc.p2p_ice_override ?? "").trim();
 	let p2pIce: unknown[] = [
 		{ urls: "stun:stun.miwifi.com:3478" },

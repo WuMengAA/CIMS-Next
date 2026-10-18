@@ -14,8 +14,8 @@ export interface LoginLock {
 	fail_count: number;
 }
 
-function ensureTable(): void {
-	getDb().prepare(
+async function ensureTable(): Promise<void> {
+	await getDb().prepare(
 		`CREATE TABLE IF NOT EXISTS login_attempts (
 			key         TEXT PRIMARY KEY,
 			fail_count  INTEGER NOT NULL DEFAULT 0,
@@ -32,14 +32,14 @@ function keys(username: string, ip: string): string[] {
 	return out;
 }
 
-export function checkLoginLock(username: string, ip: string): LoginLock {
+export async function checkLoginLock(username: string, ip: string): Promise<LoginLock> {
 	const now = Date.now();
-	ensureTable();
+	await ensureTable();
 	const db = getDb();
 	let retry = 0;
 	let fail = 0;
 	for (const k of keys(username, ip)) {
-		const row = db.prepare("SELECT fail_count, locked_until FROM login_attempts WHERE key = ?").get("login:" + k) as
+		const row = await db.prepare("SELECT fail_count, locked_until FROM login_attempts WHERE key = ?").get("login:" + k) as
 			{ fail_count: number; locked_until: string } | undefined;
 		if (!row) continue;
 		fail = Math.max(fail, row.fail_count || 0);
@@ -49,15 +49,15 @@ export function checkLoginLock(username: string, ip: string): LoginLock {
 	return { locked: retry > 0, retryAfterSec: retry, fail_count: fail };
 }
 
-export function recordLoginFailure(username: string, ip: string): { locked: boolean; retryAfterSec: number } {
+export async function recordLoginFailure(username: string, ip: string): Promise<{ locked: boolean; retryAfterSec: number }> {
 	const now = Date.now();
-	ensureTable();
+	await ensureTable();
 	const db = getDb();
 	let locked = false;
 	let retry = 0;
 	for (const k of keys(username, ip)) {
 		const key = "login:" + k;
-		const row = db.prepare("SELECT fail_count, locked_until FROM login_attempts WHERE key = ?").get(key) as
+		const row = await db.prepare("SELECT fail_count, locked_until FROM login_attempts WHERE key = ?").get(key) as
 			{ fail_count: number; locked_until: string } | undefined;
 		const count = (row?.fail_count || 0) + 1;
 		let until = "";
@@ -68,7 +68,7 @@ export function recordLoginFailure(username: string, ip: string): { locked: bool
 			retry = Math.max(retry, minutes * 60);
 			locked = true;
 		}
-		db.prepare(
+		await db.prepare(
 			`INSERT INTO login_attempts (key, fail_count, locked_until, last_fail_at)
 			 VALUES (?, ?, ?, ?)
 			 ON CONFLICT(key) DO UPDATE SET
@@ -80,10 +80,10 @@ export function recordLoginFailure(username: string, ip: string): { locked: bool
 	return { locked, retryAfterSec: retry };
 }
 
-export function clearLoginFailures(username: string, ip: string): void {
-	ensureTable();
+export async function clearLoginFailures(username: string, ip: string): Promise<void> {
+	await ensureTable();
 	const db = getDb();
 	for (const k of keys(username, ip)) {
-		db.prepare("DELETE FROM login_attempts WHERE key = ?").run("login:" + k);
+		await db.prepare("DELETE FROM login_attempts WHERE key = ?").run("login:" + k);
 	}
 }

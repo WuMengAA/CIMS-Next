@@ -57,7 +57,7 @@ async function registerToSidecar(uid: string, secret: string): Promise<void> {
 }
 
 export async function GET(event: RequestEvent) {
-	const g = guardControl(event, "remote");
+	const g = await guardControl(event, "remote");
 	if ("error" in g) return g.error;
 
 	const uid = String(event.url.searchParams.get("uid") ?? "").trim();
@@ -70,7 +70,7 @@ export async function GET(event: RequestEvent) {
 	// ICE：优先取监控配置的 `p2p_ice_override`（管理员可填 TURN/STUN JSON 数组），
 	// 留空回退默认 STUN。**必须与被控轴 `/api/device/p2p-token` 同源** ——
 	// 两端打洞参数不一致就协商不起来。
-	const mc = getMonitorConfig();
+	const mc = await getMonitorConfig();
 	const iceRaw = String(mc.p2p_ice_override ?? "").trim();
 	let iceServers: unknown[] = [
 		{ urls: "stun:stun.miwifi.com:3478" },

@@ -3,7 +3,7 @@ import { listItems, getItem, saveItem, deleteItem, reorderItems, renderMarkdown,
 import { getApiUser, canManage, canManageOrPublic } from "$lib/server/api-auth.js";
 
 export async function GET({ url, request }: { url: URL; request: Request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	const action = url.searchParams.get("action");
 	if (action === "get") {
 		const slug = url.searchParams.get("slug");
@@ -20,7 +20,7 @@ export async function GET({ url, request }: { url: URL; request: Request }) {
 }
 
 export async function POST({ request }: { request: Request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	const action = request.headers.get("x-action");
 	const body = await request.json();
 	if (action === "save") {

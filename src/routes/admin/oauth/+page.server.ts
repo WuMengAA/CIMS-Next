@@ -55,7 +55,7 @@ function splitLines(s: string): string[] {
 }
 
 export const load: PageServerLoad = async ({ cookies, url }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "manageOAuth")) throw error(403, "需要站长权限");
 
 	// 站点对外根地址的取值优先序：PUBLIC_SITE_URL → ORIGIN → 本次请求来源。
@@ -87,7 +87,7 @@ export const load: PageServerLoad = async ({ cookies, url }) => {
 		cookies.delete(FLASH_COOKIE, { path: "/admin/oauth" });
 	}
 
-	const all = listClientsForAdmin();
+	const all = await listClientsForAdmin();
 
 	// 只有「刚重置密钥」这一种 flash 才回读明文，且读完即不再出现在后续刷新里
 	let flashSecret = "";
@@ -118,7 +118,7 @@ export const load: PageServerLoad = async ({ cookies, url }) => {
 
 export const actions: Actions = {
 	save: async ({ request, cookies }) => {
-		const u = verifyToken(cookies.get("admin_token") ?? "");
+		const u = await verifyToken(cookies.get("admin_token") ?? "");
 		if (!u || !userCan(u, "manageOAuth")) flashAndBack(cookies, { kind: "error", message: "需要站长权限" });
 
 		const f = await request.formData();
@@ -139,41 +139,41 @@ export const actions: Actions = {
 			}
 		}
 
-		const res = saveClient({ id, name, description, secret, redirectUris, scopes, defaultScope, loopback, enabled });
+		const res = await saveClient({ id, name, description, secret, redirectUris, scopes, defaultScope, loopback, enabled });
 		if (!res.ok) flashAndBack(cookies, { kind: "error", message: res.error, id });
 		flashAndBack(cookies, { kind: "saved", id });
 	},
 
 	resetSecret: async ({ request, cookies }) => {
-		const u = verifyToken(cookies.get("admin_token") ?? "");
+		const u = await verifyToken(cookies.get("admin_token") ?? "");
 		if (!u || !userCan(u, "manageOAuth")) flashAndBack(cookies, { kind: "error", message: "需要站长权限" });
 
 		const f = await request.formData();
 		const id = (f.get("id") ?? "").toString().trim();
-		const res = resetClientSecret(id);
+		const res = await resetClientSecret(id);
 		if (!res.ok) flashAndBack(cookies, { kind: "error", message: res.error, id });
 		flashAndBack(cookies, { kind: "reset", id });
 	},
 
 	toggle: async ({ request, cookies }) => {
-		const u = verifyToken(cookies.get("admin_token") ?? "");
+		const u = await verifyToken(cookies.get("admin_token") ?? "");
 		if (!u || !userCan(u, "manageOAuth")) flashAndBack(cookies, { kind: "error", message: "需要站长权限" });
 
 		const f = await request.formData();
 		const id = (f.get("id") ?? "").toString().trim();
 		const on = f.get("enabled") != null;
-		const res = setClientEnabled(id, on);
+		const res = await setClientEnabled(id, on);
 		if (!res.ok) flashAndBack(cookies, { kind: "error", message: res.error ?? "操作失败", id });
 		flashAndBack(cookies, { kind: on ? "enabled" : "disabled", id });
 	},
 
 	remove: async ({ request, cookies }) => {
-		const u = verifyToken(cookies.get("admin_token") ?? "");
+		const u = await verifyToken(cookies.get("admin_token") ?? "");
 		if (!u || !userCan(u, "manageOAuth")) flashAndBack(cookies, { kind: "error", message: "需要站长权限" });
 
 		const f = await request.formData();
 		const id = (f.get("id") ?? "").toString().trim();
-		const res = deleteClient(id);
+		const res = await deleteClient(id);
 		if (!res.ok) flashAndBack(cookies, { kind: "error", message: res.error ?? "删除失败", id });
 		flashAndBack(cookies, { kind: "deleted", id });
 	}

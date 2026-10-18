@@ -30,21 +30,21 @@ import {
 import { guardControl } from "$lib/server/guard-control.js";
 
 export async function GET(event: RequestEvent) {
-	const g = guardControl(event);
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 	const u = g.user;
 
 	const q = event.url.searchParams;
-	const uid = String(q.get("uid") ?? "").trim();
-	const host = String(q.get("host") ?? "").trim();
+	const uid = String(await q.get("uid") ?? "").trim();
+	const host = String(await q.get("host") ?? "").trim();
 	if (!uid && !host) return json({ capture: null, reason: "missing_uid" });
 
 	const target = uid || host;
-	const scope = classScopeOf(u.role, u.id);
+	const scope = await classScopeOf(u.role, u.id);
 
 	// ── v2：监控回放（历史时间线 + 按帧取图）─────────────────────────────
 	// 需要 watch 或 playback 动作；目标设备的班必须在调用者班级范围内。
-	if (q.get("history") === "1" || q.get("frame")) {
+	if (await q.get("history") === "1" || await q.get("frame")) {
 		if (!canDeviceAction(u.role, "watch") && !canDeviceAction(u.role, "playback")) {
 			return json({ error: "无权限（需要监控/回放能力）" }, { status: 403 });
 		}
@@ -54,17 +54,17 @@ export async function GET(event: RequestEvent) {
 				return json({ error: "目标设备不在你的班级范围内" }, { status: 403 });
 			}
 		}
-		const frameId = Number(q.get("frame") ?? 0);
+		const frameId = Number(await q.get("frame") ?? 0);
 		if (frameId > 0) {
-			const f = getDeviceCaptureById(frameId);
+			const f = await getDeviceCaptureById(frameId);
 			if (!f) return json({ capture: null, reason: "frame_gone" });
 			return json({
 				capture: { at: f.meta.at, bytes: f.meta.bytes, image_base64: f.png.toString("base64") },
 				reason: "ok"
 			});
 		}
-		const limit = Number(q.get("limit") ?? 60) || 60;
-		return json({ history: listDeviceCaptures(target, limit), reason: "ok" });
+		const limit = Number(await q.get("limit") ?? 60) || 60;
+		return json({ history: await listDeviceCaptures(target, limit), reason: "ok" });
 	}
 
 	// 实时最新一张：同样按班级范围收敛（班主任看本班、站长看全校）。

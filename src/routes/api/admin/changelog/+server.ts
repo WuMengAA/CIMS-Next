@@ -46,15 +46,15 @@ function write(list: ChangelogEntry[]): { ok: true } | { ok: false; res: ReturnT
 }
 
 // GET /api/admin/changelog → 全部版本（含草稿，不过滤）
-export function GET({ cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+export async function GET({ cookies }) {
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return fail(NO_PERMISSION, 403);
 	return json(getChangelog());
 }
 
 // POST /api/admin/changelog → 新建版本（默认草稿）
 export async function POST({ request, cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return fail(NO_PERMISSION, 403);
 	const body = await readBody(request);
 	if (!body) return fail("请求体解析失败，请刷新页面重试", 400);
@@ -85,7 +85,7 @@ export async function POST({ request, cookies }) {
 
 // PUT /api/admin/changelog → 按 version 更新（可改标题/高亮/日期/条目/发布状态，必要时改版本号）
 export async function PUT({ request, cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return fail(NO_PERMISSION, 403);
 	const body = await readBody(request);
 	if (!body) return fail("请求体解析失败，请刷新页面重试", 400);
@@ -124,7 +124,7 @@ export async function PUT({ request, cookies }) {
 
 // DELETE /api/admin/changelog → 按 version 删除
 export async function DELETE({ request, cookies }) {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "manageContent")) return fail(NO_PERMISSION, 403);
 	const body = await readBody(request);
 	if (!body) return fail("请求体解析失败，请刷新页面重试", 400);

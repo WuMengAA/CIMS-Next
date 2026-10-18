@@ -6,8 +6,8 @@ import { seedClass8IfEmpty, ensureRealClass8Data, ensureSportsTimeline } from "$
 import { fullSnapshot } from "$lib/server/class8/class8-service.js";
 
 export const load = async () => {
-  seedClass8IfEmpty();
-  ensureRealClass8Data();
-  ensureSportsTimeline();
-  return fullSnapshot();
+  await seedClass8IfEmpty();
+  await ensureRealClass8Data();
+  await ensureSportsTimeline();
+  return await fullSnapshot();
 };

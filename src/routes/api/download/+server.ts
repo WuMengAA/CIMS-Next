@@ -96,7 +96,7 @@ export async function GET({ url }: { url: URL }) {
 	const rawType = url.searchParams.get("type") || "";
 	const types = rawType.split(",").map((s) => s.trim()).filter(Boolean);
 
-	const [projectReleases, uploads] = await Promise.all([collectProjectReleases(), Promise.resolve(collectUploads())]);
+	const [projectReleases, uploads] = await Promise.all([await collectProjectReleases(), Promise.resolve(collectUploads())]);
 	let items = [...projectReleases, ...uploads];
 
 	if (q) {

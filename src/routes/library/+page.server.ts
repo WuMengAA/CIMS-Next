@@ -16,19 +16,19 @@ import {
 import { r2Configured } from "$lib/server/storage/r2.js";
 import { QUOTA_MIB, QUOTA_MAX_MIB } from "$lib/storage-quota.js";
 
-export const load: PageServerLoad = ({ cookies }) => {
-	const user = sessionUser({ cookies });
+export const load: PageServerLoad = async ({ cookies }) => {
+	const user = await sessionUser({ cookies });
 	if (!user) throw redirect(303, "/admin/login");
 
-	const id = user.id;
-	ensureRootFolders(id);
+	const id = (await user).id;
+	await ensureRootFolders(id);
 
 	const configured = r2Configured();
 
 	return {
-		me: { username: user.username, displayName: user.displayName || user.username },
-		usage: usageOf(id),
-		folders: listFolders(id),
+		me: { username: (await user).username, displayName: (await user).displayName || (await user).username },
+		usage: await usageOf(id),
+		folders: await listFolders(id),
 		files: listFiles(id),
 		storage: {
 			configured,

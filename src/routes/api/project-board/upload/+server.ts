@@ -16,7 +16,7 @@ import path from "node:path";
 import { UPLOADS_DIR } from "$lib/server/paths.js";
 
 export const POST: RequestHandler = async ({ request }) => {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	if (!can(user.role, "manageContent")) return json({ error: "无权上传发行文件" }, { status: 403 });
 

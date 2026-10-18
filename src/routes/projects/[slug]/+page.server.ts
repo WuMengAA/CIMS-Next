@@ -17,8 +17,8 @@ export async function load({ params }) {
 	let downloads = null;
 	if (project.slug === "xingjikong") {
 		const [agent, viewer] = await Promise.all([
-			fetchPublished("agent"),
-			fetchPublished("viewer")
+			await fetchPublished("agent"),
+			await fetchPublished("viewer")
 		]);
 		downloads = [
 			{
@@ -52,8 +52,8 @@ export async function load({ params }) {
 		words: rendered.words,
 		board,
 		downloads,
-		issues: listIssues(params.slug, { state: "all" }),
-		stats: issueStats(params.slug),
+		issues: await listIssues(params.slug, { state: "all" }),
+		stats: await issueStats(params.slug),
 		hasGithubToken: hasGithubToken(),
 		// 供页面拼 JSON-LD 的绝对地址
 		siteUrl: getSiteUrl()

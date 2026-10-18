@@ -17,19 +17,19 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { listPendingTypedNoticesPage } from "$lib/server/console-ext.js";
 import { guardDevice } from "$lib/server/guard-device.js";
 
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const g = guardDevice(event);
 	if ("error" in g) return g.error;
 
 	const q = event.url.searchParams;
-	const uid = String(q.get("pending_for") ?? "").trim();
+	const uid = String(await q.get("pending_for") ?? "").trim();
 	if (!uid) return json({ error: "缺少 pending_for（设备 uid）" }, { status: 400 });
 
-	const sinceRaw = String(q.get("since") ?? "").trim();
-	const page = listPendingTypedNoticesPage(
+	const sinceRaw = String(await q.get("since") ?? "").trim();
+	const page = await listPendingTypedNoticesPage(
 		uid,
 		Number(sinceRaw) || 0,
 		Number(q.get("limit") ?? 20) || 20
 	);
-	return json({ notices: page.notices, cursor: page.cursor });
+	return json({ notices: (await page).notices, cursor: (await page).cursor });
 }

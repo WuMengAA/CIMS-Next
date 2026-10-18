@@ -5,7 +5,7 @@ import { userCan } from "$lib/permissions.js";
 
 // 后台审批队列：列表必须过内容管理权，否则任何登录用户都能拉取全站待审申请。
 export async function GET({ url, request }) {
-  const user = verifyAuth(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
+  const user = await verifyAuth(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
   if (!user) return json({ error: "未登录" }, { status: 401 });
   if (!userCan(user, "manageContent")) return json({ error: "无权查看友链申请" }, { status: 403 });
   const status = url.searchParams.get("status") || undefined;
@@ -27,7 +27,7 @@ export async function POST({ request }) {
 
   // 后台审批：原先只判「已登录」—— 任何 viewer 都能批准友链，直接把陌生人站点挂进全站友链区。
   // 与 admin/+layout.svelte 里该页面的 need: "manageContent" 对齐（审批属于内容轴）。
-  const user = verifyAuth(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
+  const user = await verifyAuth(request.headers.get("cookie")?.match(/admin_token=([^;]+)/)?.[1] || "");
   if (!user) return json({ error: "未登录" }, { status: 401 });
   if (!userCan(user, "manageContent")) return json({ error: "无权审批友链申请" }, { status: 403 });
   if (action === "approve") {

@@ -37,19 +37,19 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	// 单条详情（含评论）
 	if (number) {
-		const one = getIssue(slug, Number(number));
+		const one = await getIssue(slug, Number(number));
 		if (!one) return json({ error: "issue not found" }, { status: 404 });
 		return json(one);
 	}
 
 	return json({
-		issues: listIssues(slug, { state, q }),
-		stats: issueStats(slug)
+		issues: await listIssues(slug, { state, q }),
+		stats: await issueStats(slug)
 	});
 };
 
 export const POST: RequestHandler = async ({ request }) => {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "请先登录后再提交" }, { status: 401 });
 
 	const action = request.headers.get("x-action");
@@ -73,8 +73,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			const labels = Array.isArray(body.labels)
 				? body.labels.map((l: any) => String(l).trim()).filter(Boolean).slice(0, 5)
 				: [];
-			const issue = createIssue({ slug, title, body: content, author: user.username, labels });
-			return json({ issue, stats: issueStats(slug) });
+			const issue = await createIssue({ slug, title, body: content, author: user.username, labels });
+			return json({ issue, stats: await issueStats(slug) });
 		}
 
 		case "comment": {
@@ -84,7 +84,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (!Number.isFinite(number)) return json({ error: "number required" }, { status: 400 });
 			if (!content) return json({ error: "回复内容不能为空" }, { status: 400 });
 			if (content.length > 8000) return json({ error: "回复最多 8000 字" }, { status: 400 });
-			const comment = addIssueComment(slug, number, { author: user.username, body: content });
+			const comment = await addIssueComment(slug, number, { author: user.username, body: content });
 			if (!comment) return json({ error: "issue not found" }, { status: 404 });
 			return json({ comment });
 		}
@@ -93,15 +93,15 @@ export const POST: RequestHandler = async ({ request }) => {
 			const number = Number(body.number);
 			const next = body.state === "closed" ? "closed" : "open";
 			if (!Number.isFinite(number)) return json({ error: "number required" }, { status: 400 });
-			const one = getIssue(slug, number);
+			const one = await getIssue(slug, number);
 			if (!one) return json({ error: "issue not found" }, { status: 404 });
 			// 本人可关自己的，管理/审核可关任何人的
-			const isOwner = one.issue.author === user.username;
+			const isOwner = (await one).issue.author === user.username;
 			if (!isOwner && !can(user.role, "moderate")) {
 				return json({ error: "只能关闭自己提交的 Issue" }, { status: 403 });
 			}
-			const issue = setIssueState(slug, number, next, user.username);
-			return json({ issue, stats: issueStats(slug) });
+			const issue = await setIssueState(slug, number, next, user.username);
+			return json({ issue, stats: await issueStats(slug) });
 		}
 
 		case "labels": {
@@ -111,7 +111,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			const labels = Array.isArray(body.labels)
 				? body.labels.map((l: any) => String(l).trim()).filter(Boolean).slice(0, 5)
 				: [];
-			const issue = setIssueLabels(slug, number, labels);
+			const issue = await setIssueLabels(slug, number, labels);
 			if (!issue) return json({ error: "issue not found" }, { status: 404 });
 			return json({ issue });
 		}
@@ -120,7 +120,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			if (!can(user.role, "moderate")) return json({ error: "无权删除 Issue" }, { status: 403 });
 			const number = Number(body.number);
 			if (!Number.isFinite(number)) return json({ error: "number required" }, { status: 400 });
-			return json({ ok: deleteIssue(slug, number), stats: issueStats(slug) });
+			return json({ ok: await deleteIssue(slug, number), stats: await issueStats(slug) });
 		}
 
 		default:

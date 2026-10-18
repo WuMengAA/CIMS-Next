@@ -13,18 +13,18 @@ import { addAudit } from "$lib/server/console-ext.js";
  *
  * 权限：manageDevices（改课表是管理操作）。
  */
-function authUser(event: RequestEvent) {
+async function authUser(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	return u;
 }
 
 export async function PUT(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -36,10 +36,10 @@ export async function PUT(event: RequestEvent) {
 	const subject = String(body.subject ?? "").trim();
 	if (!subject) return json({ error: "科目不能为空" }, { status: 400 });
 
-	if (!setScheduleCell(classId, weekday, periodNo, { subject, teacher: body.teacher ? String(body.teacher).trim() : "", remark: body.remark ? String(body.remark).trim() : "" }))
+	if (!await setScheduleCell(classId, weekday, periodNo, { subject, teacher: body.teacher ? String(body.teacher).trim() : "", remark: body.remark ? String(body.remark).trim() : "" }))
 		return json({ error: "写入失败" }, { status: 500 });
 
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "schedule-cell-set",
@@ -50,7 +50,7 @@ export async function PUT(event: RequestEvent) {
 }
 
 export async function DELETE(event: RequestEvent) {
-	const u = authUser(event);
+	const u = await authUser(event);
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
 
@@ -60,7 +60,7 @@ export async function DELETE(event: RequestEvent) {
 	if (!classId || !weekday || !periodNo) return json({ error: "缺少 classId/weekday/periodNo" }, { status: 400 });
 
 	clearScheduleCell(classId, weekday, periodNo);
-	addAudit({
+	await addAudit({
 		actor: u.displayName || u.username,
 		role: u.role,
 		action: "schedule-cell-clear",

@@ -8,7 +8,7 @@ export function GET() {
 }
 
 export async function POST({ request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	// T11（2026-10-03）：原先只判「已登录」—— 任何 viewer 都能整站覆盖友链。
 	// 全站友链属于内容轴；提交友链申请走 /api/link-applications（公开投稿），此处是后台批量覆盖。

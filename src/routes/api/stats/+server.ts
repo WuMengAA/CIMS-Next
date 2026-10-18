@@ -14,7 +14,7 @@ export const POST: RequestHandler = async ({ request }) => {
 };
 
 export const GET: RequestHandler = async ({ cookies, url }) => {
-	const u = verifyToken(cookies.get("admin_token"));
+	const u = await verifyToken(cookies.get("admin_token"));
 	if (!u || !userCan(u, "viewAdmin")) return json({ error: "无权限" }, { status: 403 });
 	const days = Math.min(30, Math.max(1, parseInt(url.searchParams.get("days") || "7", 10) || 7));
 	return json(getStatsSummary(days));

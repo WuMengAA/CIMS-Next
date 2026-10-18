@@ -103,15 +103,15 @@ CREATE TABLE IF NOT EXISTS class8_culture_spots (
 let _done = false;
 
 /** 幂等：建 class8 全部表（启动时调用一次）。 */
-export function ensureClass8Schema() {
+export async function ensureClass8Schema() {
   if (_done) return;
   const db = getDb();
-  db.exec(CLASS8_SCHEMA);
-  db.exec(`INSERT OR IGNORE INTO class8_profile (id) VALUES (1)`);
+  await db.exec(CLASS8_SCHEMA);
+  await db.exec(`INSERT OR IGNORE INTO class8_profile (id) VALUES (1)`);
   // 点位微文化默认（空则填充，幂等）
-  const spotN = (db.prepare("SELECT COUNT(*) AS n FROM class8_culture_spots").get() as { n: number }).n;
+  const spotN = (await db.prepare("SELECT COUNT(*) AS n FROM class8_culture_spots").get() as { n: number }).n;
   if (spotN === 0) {
-    const insSt = db.prepare("INSERT INTO class8_culture_spots (key,title,slogan,body) VALUES (?,?,?,?)");
+    const insSt = await db.prepare("INSERT INTO class8_culture_spots (key,title,slogan,body) VALUES (?,?,?,?)");
     const spots = [
       ["entry", "进门宣传栏", "入室即静，入座即学", "班级名称·口号·理念·公约。由全体同学共同讨论制定。"],
       ["water", "饮水处", "饮水思源", "珍惜水资源，节约每一滴水。"],
@@ -121,17 +121,17 @@ export function ensureClass8Schema() {
       ["hygiene", "卫生角", "扫帚簸箕有其家，干净有序靠大家", "工具归位，分区分片，值日尽责。"],
       ["north_wall", "侧墙·靶向标语区", "入室即静，入座即学", "结合本班现阶段突出问题选取标语，动态调整。"]
     ];
-    for (const s of spots) insSt.run(s[0], s[1], s[2], s[3]);
+    for (const s of spots) await insSt.run(s[0], s[1], s[2], s[3]);
   }
 
   // ── 幂等加列（2028-09-29：展板数据字段）──
-  function ensureColumn(table: string, column: string, ddl: string) {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  async function ensureColumn(table: string, column: string, ddl: string) {
+    const cols = await db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === column)) await db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
-  ensureColumn("class8_profile", "quote", "quote TEXT NOT NULL DEFAULT ''");
-  ensureColumn("class8_profile", "subtitle", "subtitle TEXT NOT NULL DEFAULT ''");
-  ensureColumn("class8_groups", "emoji", "emoji TEXT NOT NULL DEFAULT ''");
-  ensureColumn("class8_events", "photos", "photos TEXT NOT NULL DEFAULT '[]'");
+  await ensureColumn("class8_profile", "quote", "quote TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("class8_profile", "subtitle", "subtitle TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("class8_groups", "emoji", "emoji TEXT NOT NULL DEFAULT ''");
+  await ensureColumn("class8_events", "photos", "photos TEXT NOT NULL DEFAULT '[]'");
   _done = true;
 }

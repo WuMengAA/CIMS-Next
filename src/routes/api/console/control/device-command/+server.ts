@@ -20,10 +20,10 @@ import { addAudit } from "$lib/server/console-ext.js";
  */
 export async function POST(event: RequestEvent) {
 	const cookieToken = event.cookies.get("admin_token");
-	let u = cookieToken ? verifyToken(cookieToken) : null;
+	let u = cookieToken ? await verifyToken(cookieToken) : null;
 	if (!u) {
 		const auth = event.request.headers.get("authorization") ?? "";
-		if (auth.toLowerCase().startsWith("bearer ")) u = verifyToken(auth.slice(7).trim());
+		if (auth.toLowerCase().startsWith("bearer ")) u = await verifyToken(auth.slice(7).trim());
 	}
 	if (!u) return json({ error: "请先登录" }, { status: 401 });
 	if (!userCan(u, "manageDevices")) return json({ error: "无权限（需设备管理档）" }, { status: 403 });
@@ -48,7 +48,7 @@ export async function POST(event: RequestEvent) {
 		const d = (await r.json().catch(() => ({}))) as { state?: string; detail?: string };
 		const state = r.status === 200 ? "sent" : r.status === 409 ? "offline" : "error";
 
-		addAudit({
+		await addAudit({
 			actor: u.displayName || u.username,
 			role: u.role,
 			action: "device-command",
@@ -59,7 +59,7 @@ export async function POST(event: RequestEvent) {
 		if (state === "sent") return json({ ok: true, state, uid, action });
 		return json({ ok: false, state, uid, action, detail: d.detail || (state === "offline" ? "设备不在线" : "云端响应异常") }, { status: state === "offline" ? 409 : 502 });
 	} catch {
-		addAudit({ actor: u.displayName || u.username, role: u.role, action: "device-command", target: "console", detail: `下发 ${action} → ${uid} 失败（云端不可达）` });
+		await addAudit({ actor: u.displayName || u.username, role: u.role, action: "device-command", target: "console", detail: `下发 ${action} → ${uid} 失败（云端不可达）` });
 		return json({ ok: false, state: "error", uid, action, detail: "云端不可达" }, { status: 502 });
 	}
 }

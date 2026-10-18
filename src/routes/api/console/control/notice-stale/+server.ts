@@ -15,15 +15,15 @@ import type { RequestEvent } from "@sveltejs/kit";
 import { listStaleDeliveries } from "$lib/server/console-ext.js";
 import { guardControl } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
+export async function GET(event: RequestEvent) {
 	const g = guardControl(event);
 	if ("error" in g) return g.error;
 
 	const q = event.url.searchParams;
 	return json({
 		stale: listStaleDeliveries(
-			Number(q.get("minutes") ?? 10) || 10,
-			Number(q.get("limit") ?? 100) || 100
+			Number(await q.get("minutes") ?? 10) || 10,
+			Number(await q.get("limit") ?? 100) || 100
 		)
 	});
 }

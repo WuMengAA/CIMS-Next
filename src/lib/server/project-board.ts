@@ -463,10 +463,10 @@ function rowToIssue(r: any): BoardIssue {
 	};
 }
 
-export function listIssues(
+export async function listIssues(
 	slug: string,
 	opts: { state?: "open" | "closed" | "all"; q?: string; limit?: number } = {}
-): BoardIssue[] {
+): Promise<BoardIssue[]> {
 	const db = getDb();
 	const state = opts.state ?? "all";
 	const limit = Math.min(opts.limit ?? 200, 500);
@@ -481,7 +481,7 @@ export function listIssues(
 		const like = `%${opts.q.trim()}%`;
 		params.push(like, like);
 	}
-	const rows = db
+	const rows = await db
 		.prepare(
 			`SELECT i.*, (SELECT COUNT(*) FROM board_issue_comments c WHERE c.issue_id = i.id) AS comment_count
 			 FROM board_issues i
@@ -490,12 +490,12 @@ export function listIssues(
 			 LIMIT ${limit}`
 		)
 		.all(...params);
-	return (rows as any[]).map(rowToIssue);
+	return (await rows as any[]).map(rowToIssue);
 }
 
-export function issueStats(slug: string): { open: number; closed: number; total: number } {
+export async function issueStats(slug: string): Promise<{ open: number; closed: number; total: number }> {
 	const db = getDb();
-	const rows = db
+	const rows = await db
 		.prepare(`SELECT state, COUNT(*) AS n FROM board_issues WHERE project_slug = ? GROUP BY state`)
 		.all(slug) as any[];
 	let open = 0;
@@ -507,13 +507,13 @@ export function issueStats(slug: string): { open: number; closed: number; total:
 	return { open, closed, total: open + closed };
 }
 
-export function getIssue(slug: string, number: number): { issue: BoardIssue; comments: BoardIssueComment[] } | null {
+export async function getIssue(slug: string, number: number): Promise<{ issue: BoardIssue; comments: BoardIssueComment[] } | null> {
 	const db = getDb();
-	const row = db
+	const row = await db
 		.prepare(`SELECT * FROM board_issues WHERE project_slug = ? AND number = ?`)
 		.get(slug, number) as any;
 	if (!row) return null;
-	const comments = db
+	const comments = await db
 		.prepare(`SELECT * FROM board_issue_comments WHERE issue_id = ? ORDER BY created_at ASC`)
 		.all(row.id) as any[];
 	return {
@@ -528,22 +528,22 @@ export function getIssue(slug: string, number: number): { issue: BoardIssue; com
 	};
 }
 
-export function createIssue(input: {
+export async function createIssue(input: {
 	slug: string;
 	title: string;
 	body?: string;
 	author: string;
 	labels?: string[];
-}): BoardIssue {
+}): Promise<BoardIssue> {
 	const db = getDb();
 	const ts = nowIso();
-	db.exec("BEGIN IMMEDIATE");
+	await db.exec("BEGIN IMMEDIATE");
 	try {
-		const row = db
+		const row = await db
 			.prepare(`SELECT COALESCE(MAX(number), 0) AS n FROM board_issues WHERE project_slug = ?`)
 			.get(input.slug) as any;
 		const next = Number(row?.n ?? 0) + 1;
-		db.prepare(
+		await db.prepare(
 			`INSERT INTO board_issues (project_slug, number, title, body, author, state, labels, pinned, created_at, updated_at, closed_at, closed_by)
 			 VALUES (?, ?, ?, ?, ?, 'open', ?, 0, ?, ?, '', '')`
 		).run(
@@ -556,77 +556,77 @@ export function createIssue(input: {
 			ts,
 			ts
 		);
-		db.exec("COMMIT");
-		const created = db
+		await db.exec("COMMIT");
+		const created = await db
 			.prepare(`SELECT * FROM board_issues WHERE project_slug = ? AND number = ?`)
 			.get(input.slug, next) as any;
 		return rowToIssue(created);
 	} catch (err) {
-		db.exec("ROLLBACK");
+		await db.exec("ROLLBACK");
 		throw err;
 	}
 }
 
-export function setIssueState(
+export async function setIssueState(
 	slug: string,
 	number: number,
 	state: "open" | "closed",
 	by: string
-): BoardIssue | null {
+): Promise<BoardIssue | null> {
 	const db = getDb();
 	const ts = nowIso();
-	const res = db
+	const res = await db
 		.prepare(
 			`UPDATE board_issues
 			 SET state = ?, updated_at = ?, closed_at = ?, closed_by = ?
 			 WHERE project_slug = ? AND number = ?`
 		)
 		.run(state, ts, state === "closed" ? ts : "", state === "closed" ? by : "", slug, number);
-	if (res.changes === 0) return null;
-	const row = db
+	if ((await res).changes === 0) return null;
+	const row = await db
 		.prepare(`SELECT * FROM board_issues WHERE project_slug = ? AND number = ?`)
 		.get(slug, number) as any;
 	return rowToIssue(row);
 }
 
-export function setIssueLabels(slug: string, number: number, labels: string[]): BoardIssue | null {
+export async function setIssueLabels(slug: string, number: number, labels: string[]): Promise<BoardIssue | null> {
 	const db = getDb();
-	const res = db
+	const res = await db
 		.prepare(`UPDATE board_issues SET labels = ?, updated_at = ? WHERE project_slug = ? AND number = ?`)
 		.run(JSON.stringify(labels), nowIso(), slug, number);
-	if (res.changes === 0) return null;
-	const row = db
+	if ((await res).changes === 0) return null;
+	const row = await db
 		.prepare(`SELECT * FROM board_issues WHERE project_slug = ? AND number = ?`)
 		.get(slug, number) as any;
 	return rowToIssue(row);
 }
 
-export function addIssueComment(
+export async function addIssueComment(
 	slug: string,
 	number: number,
 	input: { author: string; body: string }
-): BoardIssueComment | null {
+): Promise<BoardIssueComment | null> {
 	const db = getDb();
-	const issue = db
+	const issue = await db
 		.prepare(`SELECT id FROM board_issues WHERE project_slug = ? AND number = ?`)
 		.get(slug, number) as any;
 	if (!issue) return null;
 	const ts = nowIso();
-	const res = db
+	const res = await db
 		.prepare(`INSERT INTO board_issue_comments (issue_id, author, body, created_at) VALUES (?, ?, ?, ?)`)
 		.run(issue.id, input.author, input.body, ts);
-	db.prepare(`UPDATE board_issues SET updated_at = ? WHERE id = ?`).run(ts, issue.id);
-	return { id: Number(res.lastInsertRowid), issueId: Number(issue.id), author: input.author, body: input.body, createdAt: ts };
+	await db.prepare(`UPDATE board_issues SET updated_at = ? WHERE id = ?`).run(ts, issue.id);
+	return { id: Number((await res).lastInsertRowid), issueId: Number(issue.id), author: input.author, body: input.body, createdAt: ts };
 }
 
-export function deleteIssue(slug: string, number: number): boolean {
+export async function deleteIssue(slug: string, number: number): Promise<boolean> {
 	const db = getDb();
-	const issue = db
+	const issue = await db
 		.prepare(`SELECT id FROM board_issues WHERE project_slug = ? AND number = ?`)
 		.get(slug, number) as any;
 	if (!issue) return false;
-	db.prepare(`DELETE FROM board_issue_comments WHERE issue_id = ?`).run(issue.id);
-	const res = db.prepare(`DELETE FROM board_issues WHERE id = ?`).run(issue.id);
+	await db.prepare(`DELETE FROM board_issue_comments WHERE issue_id = ?`).run(issue.id);
+	const res = await db.prepare(`DELETE FROM board_issues WHERE id = ?`).run(issue.id);
 	return res.changes > 0;
 }
 
@@ -656,12 +656,12 @@ export interface BoardSummary {
 }
 
 /** 把「内容项」与「展板」合并成前台需要的扁平结构。 */
-export function summarizeBoard(
+export async function summarizeBoard(
 	item: { slug: string; title: string; excerpt?: string; category?: string; date?: string; repoUrl?: string },
 	board: ProjectBoard | null
-): BoardSummary {
+): Promise<BoardSummary> {
 	const p = progressOf(board);
-	const issues = issueStats(item.slug);
+	const issues = await issueStats(item.slug);
 	const releases = board?.releases ?? [];
 	const latest = releases[0] ?? null;
 	return {

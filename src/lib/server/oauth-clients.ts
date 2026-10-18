@@ -143,7 +143,7 @@ const parseList = (s: string): string[] => {
 	}
 };
 
-function nowIso(): string {
+async function nowIso(): Promise<string> {
 	return new Date().toISOString();
 }
 
@@ -151,17 +151,17 @@ function nowIso(): string {
  * 把 JSON 清单里库中不存在的客户端补进库（幂等；已存在的跳过）。
  * 只在启动时跑一次，之后管理员的改动不会被配置文件回踩。
  */
-function seedFromConfig(db: ReturnType<typeof getDb>): void {
-	const ts = nowIso();
-	const has = db.prepare(`SELECT 1 FROM oauth_clients WHERE id = ?`);
-	const insert = db.prepare(
+async function seedFromConfig(db: ReturnType<typeof getDb>): Promise<void> {
+	const ts = await nowIso();
+	const has = await db.prepare(`SELECT 1 FROM oauth_clients WHERE id = ?`);
+	const insert = await db.prepare(
 		`INSERT OR IGNORE INTO oauth_clients
 		 (id, name, description, secret, redirect_uris, loopback, scopes, default_scope, enabled, builtin, created_at, updated_at)
 		 VALUES (?,?,?,?,?,?,?,?,1,?,?,?)`
 	);
 	for (const c of readConfig()) {
-		if (has.get(c.id)) continue;
-		insert.run(
+		if (await has.get(c.id)) continue;
+		await insert.run(
 			c.id,
 			c.name,
 			c.description ?? "",
@@ -226,35 +226,35 @@ let stamp = 0;
  *
  * 这里每次读清单时顺手补：只在库里为空时写入，**不覆盖**站长的任何手动改动。
  */
-function ensureBuiltinSecrets(db: ReturnType<typeof getDb>): void {
-	const upd = db.prepare(`UPDATE oauth_clients SET secret = ? WHERE id = ? AND (secret IS NULL OR secret = '')`);
+async function ensureBuiltinSecrets(db: ReturnType<typeof getDb>): Promise<void> {
+	const upd = await db.prepare(`UPDATE oauth_clients SET secret = ? WHERE id = ? AND (secret IS NULL OR secret = '')`);
 	for (const c of readConfig()) {
 		const want = clientSecret(c);
 		if (!want) continue;
-		upd.run(want, c.id);
+		await upd.run(want, c.id);
 	}
 }
 
-function invalidate(): void {
+async function invalidate(): Promise<void> {
 	stamp += 1;
 	cache = null;
 }
 
-function allClients(): OAuthClientRecord[] {
+async function allClients(): Promise<OAuthClientRecord[]> {
 	if (cache) return cache.list;
 	const db = getDb();
-	seedFromConfig(db);
-	ensureBuiltinSecrets(db);
-	invalidate(); // 上一步可能改了库，缓存必须失效，否则读到的还是旧（空）密钥
-	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as unknown as ClientRow[];
+	await seedFromConfig(db);
+	await ensureBuiltinSecrets(db);
+	await invalidate(); // 上一步可能改了库，缓存必须失效，否则读到的还是旧（空）密钥
+	const rows = await db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as unknown as ClientRow[];
 	const list = rows.map(rowToRecord);
 	cache = { stamp, list };
 	return list;
 }
 
-export function getClient(clientId: string): OAuthClientRecord | null {
+export async function getClient(clientId: string): Promise<OAuthClientRecord | null> {
 	const id = (clientId ?? "").trim();
-	return allClients().find((c) => c.id === id) ?? null;
+	return await (await allClients()).find((c) => c.id === id) ?? null;
 }
 
 /** 客户端的密钥：库里存的值 → 环境变量 → 历史默认 → 空串。空串 = 未配置，该客户端不发放令牌。 */
@@ -287,8 +287,8 @@ export function isClientActive(rec: OAuthClientRecord | null): boolean {
 	return !!rec && rec.enabled !== false && hasSecret(rec);
 }
 
-export function validateClient(clientId: string, secret: string): boolean {
-	const rec = getClient(clientId);
+export async function validateClient(clientId: string, secret: string): Promise<boolean> {
+	const rec = await getClient(clientId);
 	if (!rec || rec.enabled === false) return false;
 	const expected = clientSecret(rec);
 	if (!expected) return false;
@@ -359,25 +359,25 @@ export function generateSecret(): string {
  * @param fingerprint 设备指纹（稳定身份键，如 cims_agent_uid）。
  * @returns { clientId, clientSecret }；同一指纹重复注册返回同一对（幂等）。
  */
-export function registerDeviceClient(fingerprint: string): {
+export async function registerDeviceClient(fingerprint: string): Promise<{
 	clientId: string;
 	clientSecret: string;
-} {
+}> {
 	const fp = (fingerprint || "").trim().toLowerCase();
 	const id = "xjk_dev_" + fp.replace(/[^a-z0-9_\-.]/g, "_").slice(0, 48);
 	if (!id.match(/^[a-z0-9]/)) {
 		throw new Error("设备指纹非法：无法派生 client_id");
 	}
 	const db = getDb();
-	const existing = db.prepare("SELECT secret FROM oauth_clients WHERE id = ?").get(id) as
+	const existing = await db.prepare("SELECT secret FROM oauth_clients WHERE id = ?").get(id) as
 		| { secret: string }
 		| undefined;
 	if (existing && existing.secret) {
 		return { clientId: id, clientSecret: existing.secret };
 	}
 	const secret = generateSecret();
-	const ts = nowIso();
-	db.prepare(
+	const ts = await nowIso();
+	await db.prepare(
 		"INSERT OR REPLACE INTO oauth_clients" +
 			" (id, name, description, secret, redirect_uris, loopback, scopes, default_scope, enabled, builtin, created_at, updated_at)" +
 			" VALUES (?, ?, ?, ?, ?, 1, ?, ?, 1, 0, ?, ?)"
@@ -429,10 +429,10 @@ export interface OAuthClientView extends OAuthClientRecord {
  * 管理页视觉层用。密钥在这里是存在于服务端的，序列化到 HTML 必须靠调用方剔除——
  * 页面数据会被塞进首屏 HTML，让 secret 出现在 props 里等于公开。
  */
-export function listClientsForAdmin(): OAuthClientView[] {
+export async function listClientsForAdmin(): Promise<OAuthClientView[]> {
 	const db = getDb();
-	seedFromConfig(db);
-	const rows = db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as unknown as ClientRow[];
+	await seedFromConfig(db);
+	const rows = await db.prepare(`SELECT * FROM oauth_clients ORDER BY builtin DESC, created_at ASC`).all() as unknown as ClientRow[];
 	return rows.map((r) => ({
 		...rowToRecord(r),
 		// 库里的值就是真值；留空才回落到 .env / 历史默认
@@ -464,7 +464,7 @@ export interface ClientInput {
 }
 
 /** 新建 / 更新一个客户端。id 为空表示新建。 */
-export function saveClient(input: ClientInput): { ok: true } | { ok: false; error: string } {
+export async function saveClient(input: ClientInput): Promise<{ ok: true } | { ok: false; error: string }> {
 	const id = (input.id ?? "").trim();
 	const name = (input.name ?? "").trim();
 
@@ -474,16 +474,16 @@ export function saveClient(input: ClientInput): { ok: true } | { ok: false; erro
 		return { ok: false, error: "标识只能用小写字母、数字、下划线、连字符、点（2–64 位，且以字母数字开头）" };
 	}
 
-	const ts = nowIso();
+	const ts = await nowIso();
 	const db = getDb();
-	const existing = db.prepare(`SELECT builtin, secret FROM oauth_clients WHERE id = ?`).get(id) as
+	const existing = await db.prepare(`SELECT builtin, secret FROM oauth_clients WHERE id = ?`).get(id) as
 		| { builtin: number; secret: string }
 		| undefined;
 
 	if (!existing) {
 		// 新建时留空密钥 → 自动生成一枚，避免建完就「未配置」而看起来像坏了
 		const secret = (input.secret ?? "").trim() || generateSecret();
-		db.prepare(
+		await db.prepare(
 			`INSERT INTO oauth_clients
 			 (id, name, description, secret, redirect_uris, loopback, scopes, default_scope, enabled, builtin, created_at, updated_at)
 			 VALUES (?,?,?,?,?,?,?,?,?,0,?,?)`
@@ -517,45 +517,45 @@ export function saveClient(input: ClientInput): { ok: true } | { ok: false; erro
 		];
 		if (secret) vals.push(secret);
 		vals.push(id);
-		db.prepare(`UPDATE oauth_clients SET ${cols} WHERE id = ?`).run(...vals);
+		await db.prepare(`UPDATE oauth_clients SET ${cols} WHERE id = ?`).run(...vals);
 	}
-	invalidate();
+	await invalidate();
 	return { ok: true };
 }
 
 /** 重置密钥（返回新密钥，仅此一次展示）。 */
-export function resetClientSecret(id: string): { ok: true; secret: string } | { ok: false; error: string } {
+export async function resetClientSecret(id: string): Promise<{ ok: true; secret: string } | { ok: false; error: string }> {
 	const db = getDb();
-	const row = db.prepare(`SELECT builtin FROM oauth_clients WHERE id = ?`).get(id) as { builtin: number } | undefined;
+	const row = await db.prepare(`SELECT builtin FROM oauth_clients WHERE id = ?`).get(id) as { builtin: number } | undefined;
 	if (!row) return { ok: false, error: "客户端不存在" };
 
 	const secret = generateSecret();
-	db.prepare(`UPDATE oauth_clients SET secret = ?, updated_at = ? WHERE id = ?`).run(secret, nowIso(), id);
-	invalidate();
+	await db.prepare(`UPDATE oauth_clients SET secret = ?, updated_at = ? WHERE id = ?`).run(secret, await nowIso(), id);
+	await invalidate();
 	return { ok: true, secret };
 }
 
 /** 启停开关。设为停用会保留配置，只掐断发放令牌。 */
-export function setClientEnabled(id: string, enabled: boolean): { ok: boolean; error?: string } {
+export async function setClientEnabled(id: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
 	const db = getDb();
-	const row = db.prepare(`SELECT 1 FROM oauth_clients WHERE id = ?`).get(id);
+	const row = await db.prepare(`SELECT 1 FROM oauth_clients WHERE id = ?`).get(id);
 	if (!row) return { ok: false, error: "客户端不存在" };
-	db.prepare(`UPDATE oauth_clients SET enabled = ?, updated_at = ? WHERE id = ?`).run(
+	await db.prepare(`UPDATE oauth_clients SET enabled = ?, updated_at = ? WHERE id = ?`).run(
 		enabled ? 1 : 0,
-		nowIso(),
+		await nowIso(),
 		id
 	);
-	invalidate();
+	await invalidate();
 	return { ok: true };
 }
 
 /** 删除客户端。内置兜底客户端（已发布在外的桌面端）禁止删除，避免整站登录一起失效。 */
-export function deleteClient(id: string): { ok: boolean; error?: string } {
+export async function deleteClient(id: string): Promise<{ ok: boolean; error?: string }> {
 	const db = getDb();
-	const row = db.prepare(`SELECT builtin FROM oauth_clients WHERE id = ?`).get(id) as { builtin: number } | undefined;
+	const row = await db.prepare(`SELECT builtin FROM oauth_clients WHERE id = ?`).get(id) as { builtin: number } | undefined;
 	if (!row) return { ok: false, error: "客户端不存在" };
 	if (row.builtin === 1) return { ok: false, error: "内置客户端不允许删除，可改为「停用」" };
-	db.prepare(`DELETE FROM oauth_clients WHERE id = ?`).run(id);
-	invalidate();
+	await db.prepare(`DELETE FROM oauth_clients WHERE id = ?`).run(id);
+	await invalidate();
 	return { ok: true };
 }

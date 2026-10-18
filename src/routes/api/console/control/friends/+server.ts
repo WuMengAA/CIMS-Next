@@ -24,16 +24,16 @@ import {
 } from "$lib/server/console-ext.js";
 import { guardControl, readControlBody } from "$lib/server/guard-control.js";
 
-export function GET(event: RequestEvent) {
-	const g = guardControl(event);
+export async function GET(event: RequestEvent) {
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 	const u = g.user;
 
 	const kw = event.url.searchParams.get("q");
 	if (kw !== null && kw.trim() !== "") {
-		return json({ results: searchUsers(u.id, kw) });
+		return json({ results: await searchUsers(u.id, kw) });
 	}
-	const list = listFriends(u.id);
+	const list = await listFriends(u.id);
 	return json({
 		friends: list.filter((f) => f.status === "accepted"),
 		incoming: list.filter((f) => f.status === "pending" && !f.outgoing),
@@ -42,7 +42,7 @@ export function GET(event: RequestEvent) {
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "chatClass");
+	const g = await guardControl(event, "chatClass");
 	if ("error" in g) return g.error;
 	const u = g.user;
 	const actor = u.displayName || u.username;
@@ -54,19 +54,19 @@ export async function POST(event: RequestEvent) {
 	if (peerId === u.id) return json({ error: "不能添加自己为好友" }, { status: 400 });
 
 	// 对端必须真实存在（否则攒出孤儿关系）。
-	const peer = getUserBrief(peerId);
+	const peer = await getUserBrief(peerId);
 	if (!peer) return json({ error: "对方账号不存在" }, { status: 404 });
 	const peerName = peer.displayName || peer.username;
 
 	if (action === "request") {
-		const f = requestFriend({ id: u.id, name: actor }, peerId, peerName, String(body.message || ""));
-		addAudit({ actor, role: u.role, action: "friend_request", target: peerName, detail: "发起好友申请" });
+		const f = await requestFriend({ id: u.id, name: actor }, peerId, peerName, String(body.message || ""));
+		await addAudit({ actor, role: u.role, action: "friend_request", target: peerName, detail: "发起好友申请" });
 		return json({ ok: true, friend: f }, { status: 201 });
 	}
 	if (action === "accept" || action === "reject") {
-		const ok = respondFriend(u.id, peerId, action === "accept");
+		const ok = await respondFriend(u.id, peerId, action === "accept");
 		if (!ok) return json({ error: "没有待处理的申请（或你不是收件人）" }, { status: 404 });
-		addAudit({
+		await addAudit({
 			actor,
 			role: u.role,
 			action: "friend_" + action,
@@ -76,8 +76,8 @@ export async function POST(event: RequestEvent) {
 		return json({ ok: true });
 	}
 	if (action === "remove") {
-		const ok = removeFriend(u.id, peerId);
-		addAudit({ actor, role: u.role, action: "friend_remove", target: peerName, detail: "删除好友/撤回申请" });
+		const ok = await removeFriend(u.id, peerId);
+		await addAudit({ actor, role: u.role, action: "friend_remove", target: peerName, detail: "删除好友/撤回申请" });
 		return json({ ok });
 	}
 	return json({ error: "未知 action（request / accept / reject / remove）" }, { status: 400 });

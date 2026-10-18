@@ -14,7 +14,7 @@ import type { PageServerLoad } from "./$types";
 // 不满足条件时，不留在本页静默降级，而是**重定向回集控概览**（该页会按 can.remote 显式禁用入口）。
 // 未登录仍与兄弟页一致去登录页。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u) throw redirect(303, "/admin/login");
 	if (!userCan(u, "viewConsole") || !canDevice(u.role, "remote")) throw redirect(303, "/admin/console");
 	return {

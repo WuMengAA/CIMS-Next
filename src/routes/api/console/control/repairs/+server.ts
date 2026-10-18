@@ -72,7 +72,7 @@ async function cloudRepairs(path: string, init?: RequestInit): Promise<{ status:
 }
 
 export async function GET(event: RequestEvent) {
-	const g = guardControl(event);
+	const g = await guardControl(event);
 	if ("error" in g) return g.error;
 
 	if (!repairsBase()) {
@@ -88,7 +88,7 @@ export async function GET(event: RequestEvent) {
 }
 
 export async function POST(event: RequestEvent) {
-	const g = guardControl(event, "manage");
+	const g = await guardControl(event, "manage");
 	if ("error" in g) return g.error;
 
 	// 输入校验必须在「云端是否可用」之前：非法输入恒为 400（客户端错误，重试无意义），

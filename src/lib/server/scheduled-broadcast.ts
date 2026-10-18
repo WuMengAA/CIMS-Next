@@ -35,8 +35,8 @@ export type ScheduledInput = {
 };
 
 /** 列表（含停用，按 next_run 排序）。 */
-export function listScheduledBroadcasts(): ScheduledBroadcast[] {
-	return getDb()
+export async function listScheduledBroadcasts(): Promise<ScheduledBroadcast[]> {
+	return await getDb()
 		.prepare("SELECT * FROM scheduled_broadcasts ORDER BY next_run_at ASC, id DESC")
 		.all() as ScheduledBroadcast[];
 }
@@ -69,7 +69,7 @@ function computeNextRun(t: Pick<ScheduledBroadcast, "schedule_type" | "weekday" 
 }
 
 /** 建/改（upsert by id=0 建，id>0 改）。返回完整行。 */
-export function saveScheduledBroadcast(id: number, input: ScheduledInput): { ok: boolean; error?: string; item?: ScheduledBroadcast } {
+export async function saveScheduledBroadcast(id: number, input: ScheduledInput): Promise<{ ok: boolean; error?: string; item?: ScheduledBroadcast }> {
 	const type = String(input.schedule_type ?? "once");
 	if (!["once", "daily", "weekly"].includes(type)) return { ok: false, error: "类型无效" };
 	const runAt = String(input.run_at ?? "").trim();
@@ -85,7 +85,7 @@ export function saveScheduledBroadcast(id: number, input: ScheduledInput): { ok:
 		};
 		const nextRun = computeNextRun(base);
 		if (id > 0) {
-			db.prepare(
+			await db.prepare(
 				`UPDATE scheduled_broadcasts SET name=?, schedule_type=?, weekday=?, run_at=?, target_class_id=?, title=?, content=?, enabled=?, next_run_at=?, updated_at=? WHERE id=?`
 			).run(
 				String(input.name ?? ""),
@@ -101,7 +101,7 @@ export function saveScheduledBroadcast(id: number, input: ScheduledInput): { ok:
 				id
 			);
 		} else {
-			db.prepare(
+			await db.prepare(
 				`INSERT INTO scheduled_broadcasts (name, schedule_type, weekday, run_at, target_class_id, title, content, enabled, next_run_at, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			).run(
@@ -118,9 +118,9 @@ export function saveScheduledBroadcast(id: number, input: ScheduledInput): { ok:
 				ts
 			);
 		}
-		const item = db
+		const item = await db
 			.prepare("SELECT * FROM scheduled_broadcasts WHERE id = ?")
-			.get(id > 0 ? id : (db.prepare("SELECT last_insert_rowid() AS r").get() as { r: number }).r) as ScheduledBroadcast;
+			.get(id > 0 ? id : (await db.prepare("SELECT last_insert_rowid() AS r").get() as { r: number }).r) as ScheduledBroadcast;
 		return { ok: true, item };
 	} catch (err) {
 		console.warn("[scheduled-broadcast] 保存失败：", err);
@@ -129,9 +129,9 @@ export function saveScheduledBroadcast(id: number, input: ScheduledInput): { ok:
 }
 
 /** 启停。 */
-export function toggleScheduledBroadcast(id: number, enabled: boolean): boolean {
+export async function toggleScheduledBroadcast(id: number, enabled: boolean): Promise<boolean> {
 	try {
-		const info = getDb()
+		const info = await getDb()
 			.prepare("UPDATE scheduled_broadcasts SET enabled = ?, updated_at = ? WHERE id = ?")
 			.run(enabled ? 1 : 0, nowIso(), id) as { changes?: number };
 		return !!info?.changes;
@@ -141,9 +141,9 @@ export function toggleScheduledBroadcast(id: number, enabled: boolean): boolean 
 }
 
 /** 删除。 */
-export function deleteScheduledBroadcast(id: number): boolean {
+export async function deleteScheduledBroadcast(id: number): Promise<boolean> {
 	try {
-		const info = getDb().prepare("DELETE FROM scheduled_broadcasts WHERE id = ?").run(id) as { changes?: number };
+		const info = await getDb().prepare("DELETE FROM scheduled_broadcasts WHERE id = ?").run(id) as { changes?: number };
 		return !!info?.changes;
 	} catch {
 		return false;
@@ -151,24 +151,24 @@ export function deleteScheduledBroadcast(id: number): boolean {
 }
 
 /** 调度器扫描：找出 next_run_at <= now 且 enabled 的条目。 */
-export function dueScheduledBroadcasts(now = new Date()): ScheduledBroadcast[] {
-	return getDb()
+export async function dueScheduledBroadcasts(now = new Date()): Promise<ScheduledBroadcast[]> {
+	return await getDb()
 		.prepare("SELECT * FROM scheduled_broadcasts WHERE enabled = 1 AND next_run_at != '' AND next_run_at <= ?")
 		.all(now.toISOString()) as ScheduledBroadcast[];
 }
 
 /** 标记已执行（更新 last_run_at + 重算 next_run；once 型直接禁用防重跑）。 */
-export function markScheduledRun(id: number): void {
+export async function markScheduledRun(id: number): Promise<void> {
 	try {
 		const db = getDb();
-		const it = db.prepare("SELECT * FROM scheduled_broadcasts WHERE id = ?").get(id) as ScheduledBroadcast | undefined;
+		const it = await db.prepare("SELECT * FROM scheduled_broadcasts WHERE id = ?").get(id) as ScheduledBroadcast | undefined;
 		if (!it) return;
 		const ts = nowIso();
 		if (it.schedule_type === "once") {
-			db.prepare("UPDATE scheduled_broadcasts SET enabled = 0, last_run_at = ?, updated_at = ? WHERE id = ?").run(ts, ts, id);
+			await db.prepare("UPDATE scheduled_broadcasts SET enabled = 0, last_run_at = ?, updated_at = ? WHERE id = ?").run(ts, ts, id);
 		} else {
 			const next = computeNextRun({ schedule_type: it.schedule_type, weekday: it.weekday, run_at: it.run_at, last_run_at: ts });
-			db.prepare("UPDATE scheduled_broadcasts SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?").run(ts, next, ts, id);
+			await db.prepare("UPDATE scheduled_broadcasts SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?").run(ts, next, ts, id);
 		}
 	} catch (err) {
 		console.warn("[scheduled-broadcast] 标记执行失败：", err);

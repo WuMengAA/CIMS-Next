@@ -5,7 +5,7 @@ import type { PageServerLoad } from "./$types";
 
 // 发布通知（Svelte 版）：viewConsole 门槛 + 广播范围下发（服务端强制收敛可达范围）。
 export const load: PageServerLoad = async ({ cookies }: { cookies: import("@sveltejs/kit").Cookies }) => {
-	const u = verifyToken(cookies.get("admin_token") ?? "");
+	const u = await verifyToken(cookies.get("admin_token") ?? "");
 	if (!u || !userCan(u, "viewConsole")) throw redirect(303, "/admin/login");
 	return {
 		role: u.role,

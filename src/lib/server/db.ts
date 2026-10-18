@@ -1,11 +1,16 @@
 /**
- * SQLite 数据层 —— 基于 Node 22 内置的 `node:sqlite`（零第三方依赖）。
+ * 站点数据访问层 —— 统一异步门面（Facade）。
  *
  * 设计要点：
- * - 单例连接（`getDb()`），进程内复用；WAL 模式兼顾读写并发。
- * - 三张核心表：users（账号与资料）、sessions（登录会话）、activities（多用户活动流）。
- * - 首次启动自动建表；若 content/users.json 存在且 users 表为空，则一次性迁移入库
- *   （保留原有 scrypt 口令哈希与 salt，用户无需重置密码）。
+ * - `getDb()` 始终**同步**返回一个「门面」对象，底层后端由环境变量 DB_BACKEND 决定：
+ *     · sqlite（默认）：基于 Node 内置 `node:sqlite`，行为与旧版完全一致（Phase 1）；
+ *     · pg（Phase 2 实现）：PostgreSQL，独立库 + 独立角色，与 cims/voicehub_dev 隔离。
+ * - 门面把同步的 node:sqlite 包装成 await 友好的接口：
+ *     `prepare(sql)` 返回 Stmt，`Stmt.get/all/run` 与 `exec` 均返回 Promise。
+ *   调用形态完全不变（? 占位符、`.changes` / `.lastInsertRowid` 照旧），
+ *   上层只需在调用处加 `await`、把所在函数标 `async`。
+ * - SQLite 后端用一把进程内异步锁串行化所有语句，等价于旧版「单线程同步」语义，
+ *   因此 BEGIN/COMMIT 事务不会被并发请求交错破坏（Phase 1 行为零变化）。
  *
  * 数据库文件：content/stelarith.db（已被 .gitignore 排除，属运行时数据）。
  */
@@ -14,6 +19,29 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 // 运行时数据路径统一由 paths.ts 推导 —— 环境隔离只需改 STELARITH_DATA_ROOT 一处。
 import { CONTENT_DIR, DB_FILE, USERS_JSON, describeDataLayout } from "./paths.js";
+
+// ───────────────────────────── 统一异步门面类型 ─────────────────────────────
+export type DbRow = Record<string, unknown>;
+
+export interface RunResult {
+	changes: number;
+	/** 与旧版 DatabaseSync 语义对齐：恒为 number（后端内部从 bigint 收敛）。 */
+	lastInsertRowid: number;
+}
+
+export interface Stmt {
+	get(...params: unknown[]): Promise<DbRow | undefined>;
+	all(...params: unknown[]): Promise<DbRow[]>;
+	run(...params: unknown[]): Promise<RunResult>;
+}
+
+export interface DbFacade {
+	readonly backend: "sqlite" | "pg";
+	prepare(sql: string): Stmt;
+	exec(sql: string): Promise<void>;
+	/** 取底层原生句柄（仅初始化 / 迁移 / PRAGMA 探测用，禁止业务代码使用）。 */
+	raw(): DatabaseSync;
+}
 
 let _db: DatabaseSync | null = null;
 
@@ -691,8 +719,72 @@ function seed(db: DatabaseSync) {
 	}
 }
 
-export function getDb(): DatabaseSync {
-	return ensureDb();
+// ───────────────────────────── SQLite 后端实现 ─────────────────────────────
+// 进程内异步锁：把所有语句串成一条 Promise 链，等价于旧版「单线程同步」语义，
+// 保证 BEGIN/COMMIT 事务不会被并发请求的语句交错（详见文件头注释）。
+let _sqliteLock: Promise<unknown> = Promise.resolve();
+function sqliteLocked<T>(fn: () => T | Promise<T>): Promise<T> {
+	const run = _sqliteLock.then(fn, fn);
+	// 无论成功失败都让锁继续向前，避免一次报错卡死后续所有语句。
+	_sqliteLock = run.then(
+		() => undefined,
+		() => undefined
+	);
+	return run;
+}
+
+class SqliteBackend implements DbFacade {
+	readonly backend = "sqlite" as const;
+	private handle(): DatabaseSync {
+		return ensureDb();
+	}
+	prepare(sql: string): Stmt {
+		const stmt = this.handle().prepare(sql);
+		return {
+			get: async (...params: unknown[]) =>
+				await sqliteLocked(() => stmt.get(...(params as unknown as Parameters<typeof stmt.get>)) as DbRow | undefined),
+			all: async (...params: unknown[]) =>
+				await sqliteLocked(() => stmt.all(...(params as unknown as Parameters<typeof stmt.all>)) as DbRow[]),
+			run: async (...params: unknown[]) => {
+				const r = await sqliteLocked(() => stmt.run(...(params as unknown as Parameters<typeof stmt.run>)) as RunResult);
+				return { changes: r.changes, lastInsertRowid: Number(r.lastInsertRowid) };
+			}
+		};
+	}
+	async exec(sql: string): Promise<void> {
+		await sqliteLocked(() => {
+			this.handle().exec(sql);
+		});
+	}
+	raw(): DatabaseSync {
+		return this.handle();
+	}
+}
+
+let _facade: DbFacade | null = null;
+
+function createFacade(): DbFacade {
+	const backend = (process.env.DB_BACKEND ?? "sqlite").trim().toLowerCase();
+	switch (backend) {
+		case "":
+		case "sqlite":
+			return new SqliteBackend();
+		case "pg":
+		case "postgres":
+		case "postgresql":
+			// TODO(Phase 2): 接 pg 后端 + SCHEMA 翻译（?→$n、AUTOINCREMENT→IDENTITY、INSERT OR IGNORE→ON CONFLICT DO NOTHING 等）。
+			throw new Error(
+				"DB_BACKEND=pg 尚未在 Phase 2 实现。当前分支 feat/site-pg 仅完成 Phase 1（SQLite 异步化）。"
+			);
+		default:
+			throw new Error(`未知 DB_BACKEND: ${backend}（仅支持 sqlite / pg）`);
+	}
+}
+
+/** 取统一数据访问门面（同步返回；prepare/exec 的具体调用需 await）。 */
+export function getDb(): DbFacade {
+	if (!_facade) _facade = createFacade();
+	return _facade;
 }
 
 /** 导出供 auth 复用，避免重复实现。 */

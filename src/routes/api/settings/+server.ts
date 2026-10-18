@@ -8,7 +8,7 @@ export function GET() {
 }
 
 export async function POST({ request }) {
-	const user = getApiUser(request);
+	const user = await getApiUser(request);
 	if (!user) return json({ error: "未登录" }, { status: 401 });
 	// T11（2026-10-03）：原先只判「已登录」—— 任何 viewer 都能改全站名/标语/页脚/社交链接，
 	// 等于把整站文案写权限发给最低档角色。写动作必须是站长级能力。
