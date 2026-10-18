@@ -1,0 +1,65 @@
+# Stelarith 站点云端编排：网站 + PostgreSQL + Nginx/TLS。
+# 过渡态：uploads 走本地卷（目标态再叠 R2 直写，本期不做——R2 需绑卡订阅）。
+#
+# 用法：
+#   cp .env.example .env   # 编辑 POSTGRES_PASSWORD / ORIGIN / ADMIN_PASSWORD / 域名证书
+#   docker compose up -d --build
+#   # 首次需把 content/ 灌入 sitedata 卷（见 README「首次播种」）
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stelarith_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须在 .env 设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-stelarith}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stelarith_app} -d ${POSTGRES_DB:-stelarith}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "5432" # 不对外，仅站点容器内网访问
+
+  site:
+    build:
+      context: ..            # 工程根（stelarith/），.dockerignore 控体积
+      dockerfile: deploy/site/Dockerfile
+      args:
+        BUILD_ID: ${BUILD_ID:-}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_BACKEND: pg
+      DATABASE_URL: postgres://${POSTGRES_USER:-stelarith_app}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-stelarith}
+      PORT: "8090"
+      HOST: "0.0.0.0"
+      STELARITH_ENV: ${STELARITH_ENV:-prod}
+      STELARITH_DATA_ROOT: /data
+      ORIGIN: ${ORIGIN:-https://localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      BUILD_ID: ${BUILD_ID:-}
+    volumes:
+      - sitedata:/data      # content/ 与 uploads/ 平级于此（STELARITH_DATA_ROOT）
+    expose:
+      - "8090" # 不对外，仅 nginx 反代
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - site
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro   # fullchain.pem / privkey.pem
+
+volumes:
+  pgdata:
+  sitedata:

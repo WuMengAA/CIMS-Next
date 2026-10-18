@@ -1,0 +1,24 @@
+# 构建上下文排除：控体积 + 隔离（不把宿主数据/密钥/旧产物/无关工程带进镜像）
+# 注意：本文件位于构建上下文根（stelarith/），由 deploy/site/docker-compose.yml 的 context: .. 使用。
+node_modules
+build
+build.next
+build.old-*
+build.failed-*
+build.bak-*
+build-backup-*
+.svelte-kit
+.git
+_parity
+.dev-data
+# 运行时数据不进镜像：由 STELARITH_DATA_ROOT 挂卷提供（content + uploads）
+content
+uploads
+*.db
+*.db-wal
+*.db-shm
+# 密钥/日志
+.env
+.env.*
+!.env.example
+*.log
