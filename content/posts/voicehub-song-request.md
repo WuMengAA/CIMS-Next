@@ -1,7 +1,7 @@
 ---
 title: 云端校园点歌排期站
 date: '2026-10-16'
-status: draft
+status: published
 category: 校园点歌
 tags:
   - 点歌

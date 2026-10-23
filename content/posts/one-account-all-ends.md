@@ -1,7 +1,7 @@
 ---
 title: 统一登录：一个账号进所有端
 date: '2026-10-16'
-status: draft
+status: published
 category: 站务
 tags:
   - OAuth
