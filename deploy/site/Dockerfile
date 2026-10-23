@@ -25,6 +25,11 @@ COPY . .
 # 版本标识：保证 client/server hydration 一致（绝不能用 Date.now()，见 svelte.config.js 注释）
 ARG BUILD_ID
 ENV BUILD_ID=${BUILD_ID}
+# 内容版本（git commit）：.dockerignore 排除 .git，构建期 git 命令不可用，
+# 由宿主 docker compose build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) 注入。
+# 不传则 CONTENT_COMMIT=dev，页脚隐藏 commit 段、更新提示条不启用（安全退化）。
+ARG GIT_COMMIT
+ENV GIT_COMMIT=${GIT_COMMIT}
 RUN pnpm build
 
 # ── 阶段 2：仅生产依赖 ─────────────────────────────────────────────────────

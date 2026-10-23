@@ -29,6 +29,8 @@ services:
       dockerfile: deploy/site/Dockerfile
       args:
         BUILD_ID: ${BUILD_ID:-}
+        # 内容版本注入：.dockerignore 排除 .git，须宿主构建时显式传入
+        GIT_COMMIT: ${GIT_COMMIT:-}
     restart: unless-stopped
     depends_on:
       postgres:
