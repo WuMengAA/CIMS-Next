@@ -1,9 +1,8 @@
 <script lang="ts">
+	// 新闻聚合 · 终末地 reading 列表（2026-10-21）
+	import "../endfield-kit.css";
 	import Container from "$lib/components/container.svelte";
 	import Seo from "$lib/components/Seo.svelte";
-	import PageHeader from "$lib/components/page-header.svelte";
-	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Rss, ExternalLink, Newspaper, RefreshCw, Sparkles } from "@lucide/svelte";
 	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
@@ -16,70 +15,44 @@
 	}
 </script>
 
-<!-- RSS alternate 由布局统一提供，此处不再重复输出 -->
-<Seo
-	title="新闻聚合"
-	description="聚合自知名新闻与博客订阅源的热门内容。"
-	path="/news"
-/>
+<Seo title="新闻聚合" description="聚合自知名新闻与博客订阅源的热门内容。" path="/news" />
 
 <Container>
-	<PageHeader title="新闻聚合" description="聚合自知名新闻与博客订阅源，一站速览。" />
-
-	<div class="mb-5 flex flex-wrap items-center gap-3">
-		<a
-			href="/rss.xml"
-			target="_blank"
-			rel="noopener noreferrer"
-			class="inline-flex items-center gap-1.5 rounded-full border border-border/60 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-		>
-			<Rss class="size-3.5" /> 订阅博客 RSS
-		</a>
-		<div class="flex flex-wrap items-center gap-1.5">
-			{#each data.sources as s (s.name)}
-				<Badge variant="outline" class="text-[10px]">{s.name}</Badge>
-			{/each}
+	<header class="ex-sheet-head">
+		<div>
+			<p class="ex-eyebrow slash">News / Feed</p>
+			<h1 class="ex-bar-title">新闻聚合</h1>
 		</div>
-	</div>
+		<a class="ex-btn small" href="/rss.xml" target="_blank" rel="noopener noreferrer">订阅 RSS</a>
+	</header>
 
 	{#if data.error}
-		<div class="rounded-xl border border-dashed border-border/60 p-10 text-center text-sm text-muted-foreground">
-			<Newspaper class="mx-auto mb-2 size-8" />
-			{data.error}
-		</div>
+		<p class="ex-empty">{data.error}</p>
 	{:else if data.items.length === 0}
-		<div class="rounded-xl border border-dashed border-border/60 p-10 text-center text-sm text-muted-foreground">
-			<Newspaper class="mx-auto mb-2 size-8" />
-			暂无聚合内容（可能源暂不可达，或尚未抓取完成，稍后刷新看看～）
-		</div>
+		<p class="ex-empty">暂无聚合内容（可能源暂不可达，或尚未抓取完成，稍后刷新看看）。</p>
 	{:else}
-		<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
-			{#each data.items as it (it.guid || it.link || it.title)}
-				<a
-					href={it.link}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="group flex flex-col gap-1.5 p-4 transition-colors hover:bg-accent/40"
-				>
-					<div class="flex flex-wrap items-center gap-2">
-						{#if it.internal}
-							<Badge class="border-primary/30 bg-primary/15 text-[10px] text-primary"><Sparkles class="mr-1 size-3" />精选</Badge>
-						{:else if it.source}
-							<Badge variant="secondary" class="text-[10px]">{it.source}</Badge>
-						{/if}
-						{#if it.category}<Badge variant="outline" class="text-[10px]">{it.category}</Badge>{/if}
-						<span class="ml-auto text-xs text-muted-foreground">{fmtDate(it.pubDate)}</span>
-					</div>
-					<h2 class="flex items-center gap-1 font-heading text-base font-medium group-hover:text-primary">
-						{it.title}
-						<ExternalLink class="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
-					</h2>
-					{#if it.description}<p class="line-clamp-2 text-sm text-muted-foreground">{it.description}</p>{/if}
-				</a>
+		<ol class="ex-records">
+			{#each data.items as it, i (it.guid || it.link || it.title)}
+				<li>
+					<a class="ex-record ex-in-come" style="--i:{i}" href={it.link} target="_blank" rel="noopener noreferrer">
+						<span class="ex-tag" class:is-current={it.internal}>{it.internal ? "精选" : it.source || "外源"}</span>
+						<time class="ex-field">{fmtDate(it.pubDate)}</time>
+						<span class="name ex-read">{it.title}{#if it.description}<span class="desc">{it.description}</span>{/if}</span>
+						<span class="ex-field">{it.category || ""} ↗</span>
+					</a>
+				</li>
 			{/each}
-		</div>
-		<p class="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
-			<RefreshCw class="size-3.5" /> 内容每 10 分钟聚合刷新一次：外部订阅源约占 7 成（标注出处、版权归原作者），站内精选约占 3 成。
-		</p>
+		</ol>
+		<p class="foot ex-field">内容每 10 分钟聚合刷新：外部订阅源约占 7 成（版权归原作者），站内精选约占 3 成。</p>
 	{/if}
 </Container>
+
+<style>
+	.foot { margin-top: 1.5rem; }
+	.name .desc {
+		display: block;
+		margin-top: 0.2rem;
+		font-size: 0.85em;
+		color: var(--ex-ink-2);
+	}
+</style>

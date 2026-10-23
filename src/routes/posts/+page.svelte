@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { Input } from "$lib/components/ui/input/index.js";
-	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Search, Pin, FileText } from "@lucide/svelte";
+	// 博客列表 · 终末地 reading 范式（2026-10-21）
+	// 页头 ex-sheet-head + 搜索 ex-search + 分类 ex-chip + 文章 ex-records 记录行。
+	// 保留原搜索/分类筛选/置顶逻辑与数据绑定，仅视觉终末地化。
+	import "../endfield-kit.css";
 	import Container from "$lib/components/container.svelte";
-	import PageHeader from "$lib/components/page-header.svelte";
 	import Seo from "$lib/components/Seo.svelte";
 
 	let { data }: { data: { posts: any[]; categories: string[] } } = $props();
@@ -25,6 +25,8 @@
 			return matchCategory && matchKeyword;
 		})
 	);
+
+	const no = (i: number) => "No." + String(i + 1).padStart(3, "0");
 </script>
 
 <Seo
@@ -34,20 +36,30 @@
 />
 
 <Container>
-	<PageHeader title="博客" description="记录开发、追番、工具与生活的随笔。" />
+	<header class="ex-sheet-head">
+		<div>
+			<p class="ex-eyebrow slash">Blog / Posts</p>
+			<h1 class="ex-bar-title">博客</h1>
+		</div>
+		<p class="ex-field">共 {data.posts.length} 篇</p>
+	</header>
 
-	<div class="relative">
-		<Search class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-		<Input bind:value={keyword} placeholder="搜索文章" class="pl-9" />
-	</div>
+	<label class="ex-search">
+		<input
+			type="search"
+			bind:value={keyword}
+			placeholder="搜索标题、标签、摘要"
+			aria-label="搜索文章"
+		/>
+	</label>
 
-	<div class="flex flex-wrap gap-2">
+	<div class="chips">
 		{#each data.categories as c (c)}
 			<button
 				type="button"
-				class="rounded-full border px-3 py-1 text-xs transition-colors {activeCategory === c
-					? 'border-primary bg-primary/15 text-primary'
-					: 'border-border/60 text-muted-foreground hover:border-primary/40 hover:text-foreground'}"
+				class="ex-chip"
+				class:is-active={activeCategory === c}
+				aria-pressed={activeCategory === c}
 				onclick={() => (activeCategory = c)}
 			>
 				{c}
@@ -55,33 +67,34 @@
 		{/each}
 	</div>
 
-	<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
-		{#each filtered as post (post.slug)}
-			<a
-				href="/posts/{post.slug}"
-				class="group flex flex-col gap-2 p-5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-			>
-				<div class="flex flex-wrap items-center gap-2">
-					{#if post.pinned}
-						<Badge variant="secondary" class="gap-1 text-xs">
-							<Pin class="size-3" />
-							置顶
-						</Badge>
-					{/if}
-					<span class="text-xs text-muted-foreground">{post.date} · {post.words.toLocaleString()} 字</span>
-					<Badge variant="outline" class="ml-auto text-xs">{post.category}</Badge>
-				</div>
-				<h2 class="font-heading text-lg font-medium group-hover:text-primary">
-					{post.title}
-				</h2>
-				<p class="line-clamp-2 text-sm text-muted-foreground">{post.excerpt}</p>
-			</a>
-		{/each}
-		{#if filtered.length === 0}
-			<div class="flex flex-col items-center gap-2 p-12 text-muted-foreground">
-				<FileText class="size-8" />
-				<p class="text-sm">没有找到相关文章</p>
-			</div>
-		{/if}
-	</div>
+	{#if filtered.length > 0}
+		<ol class="ex-records">
+			{#each filtered as post, i (post.slug)}
+				<li>
+					<a class="ex-record" href="/posts/{post.slug}">
+						<span class="ex-tag" class:is-current={post.pinned}>{post.pinned ? "置顶" : no(i)}</span>
+						<time class="ex-field">{post.date}</time>
+						<span class="name ex-read">{post.title}</span>
+						<span class="ex-field">{post.words ? post.words.toLocaleString() + " 字" : ""}</span>
+					</a>
+				</li>
+			{/each}
+		</ol>
+	{:else}
+		<p class="ex-empty">没有找到相关文章。换个关键词或分类试试。</p>
+	{/if}
 </Container>
+
+<style>
+	.ex-search {
+		display: block;
+		margin-top: 1.5rem;
+		max-width: 28rem;
+	}
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin: 1.25rem 0 1.75rem;
+	}
+</style>

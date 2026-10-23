@@ -1,0 +1,30 @@
+# Cloudflare Tunnel 配置（运行在「源站主机」上，不是 Docker 容器内）
+# ─────────────────────────────────────────────────────────────────────────
+# 前置：
+#   1) CF Zero Trust → Networks → Tunnels → Create Tunnel，取名（如 stelarith-site）
+#   2) 选源站系统，按页面提示装 cloudflared，并拿到「tunnel token」或 credentials 文件
+#   3) 把本文件放到源站主机的 /root/.cloudflared/config.yml
+#   4) 用 token 方式最简单：cloudflared tunnel --token <TOKEN>  （无需下面的 tunnel/credentials-file）
+#      或用 named tunnel：cloudflared tunnel --config /root/.cloudflared/config.yml run
+#
+# 安全要点：
+#   - 源站主机**不开放任何入站端口**（80/443 都不必对外），只出网连 CF，IP 彻底隐藏。
+#   - TLS 由 CF 边缘终止，本机只跑明文 HTTP（8090），无需在源站放证书。
+#   - 下面 hostname 改为你的正式域名；service 指向源站本机对 cloudflared 可达的地址。
+
+# ── named tunnel 方式才需要这两项（token 方式可整段删除）─────────────────────
+# tunnel: REPLACE_WITH_TUNNEL_ID
+# credentials-file: /root/.cloudflared/REPLACE_WITH_TUNNEL_ID.json
+
+ingress:
+  # 主站点：转发到本地 site 容器（HTTP；TLS 已由 CF 边缘终止）
+  # 若按「Tunnel 模式」把 site 改为 127.0.0.1:8090 仅本机可达，这里就填 127.0.0.1:8090
+  - hostname: your-domain.example
+    service: http://127.0.0.1:8090
+
+  # 如需 www 也走同一后端（并在 CF DNS 加对应 CNAME/记录）
+  - hostname: www.your-domain.example
+    service: http://127.0.0.1:8090
+
+  # 兜底：未匹配的 Host 一律 404，避免泄露
+  - service: http_status:404

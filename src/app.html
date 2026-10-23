@@ -18,6 +18,8 @@
 				var d = document.documentElement;
 				// 「JS 真的在执行」的证据。只有它存在，才允许把内容藏起来做入场动画。
 				d.classList.add("js");
+				// 皮肤维度（经典/终末地 beta）：opt-in 终末地时首帧加 .theme-endfield，避免刷新闪烁
+				try { if (localStorage.getItem("stelarith-skin") === "endfield") d.classList.add("theme-endfield"); } catch (e) {}
 				// 兜底闸：3 秒内 hydration 没接管（脚本被延迟 / 加载失败 / 执行报错），
 				// 强制放行全部 .reveal —— 宁可丢掉动画，也绝不呈现空白页。
 				// 现有的 noscript / @media (scripting:none) / prefers-reduced-motion

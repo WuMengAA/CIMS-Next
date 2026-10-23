@@ -3,8 +3,7 @@
 	// （尤其 `.dark .hljs` 这份代码高亮深色改写）稳落在最后。
 	// 双主题下只 import 亮色的 highlight 主题，深色见 layout.css 末尾。
 	import "katex/dist/katex.min.css";
-	import "@fontsource-variable/inter";
-	import "@fontsource-variable/lora";
+	// Inter/Lora 已下线（全站 Saira + Noto Sans SC 走 jsDelivr CDN，见 <svelte:head> 的 <link>）
 	import "highlight.js/styles/github.css";
 	import "./layout.css";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
@@ -147,6 +146,9 @@
 	</script>
 
 <svelte:head>
+	<!-- 终末地字体走 jsDelivr CDN（不走本机）：Saira 全轴宽体(wdth+wght) + Noto Sans SC 中文黑体 -->
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/saira/standard.css" />
+	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/noto-sans-sc/index.css" />
 	<link rel="icon" href={favicon} />
 	<!-- color-scheme 由 mode-watcher 在运行时写 html 的 inline style（随主题变），
 	     这里不再写死 content="dark" —— 写死会让亮色模式下浏览器仍按深色渲染

@@ -30,14 +30,16 @@ const config = {
 		adapter: adapter({ out: BUILD_OUT }),
 		version: { name: BUILD_ID },
 		// ── CSRF origin 校验 ──────────────────────────────────────────────────
-		// 集控面板以内网多来源访问（127.0.0.1 / localhost / 局域网 IP）为前提。
-		// adapter-node 在未设置 ORIGIN 时会默认按 https 推导自身 origin，
-		// 导致 http 直连的表单提交被判为跨站而返回 403
-		// （"Cross-site POST form submissions are forbidden"），表现为登录按钮点击无响应。
-		// 故内网部署关闭 origin 校验。
-		// ⚠️ 若日后将此站点直接暴露于公网，请改回 checkOrigin: true 并正确配置 ORIGIN。
+		// 站点已通过 Cloudflare Tunnel 接入公网（正式域名 www.245959623.xyz），
+		// .env 的 ORIGIN 已设为该正式域名，故开启 origin 校验以防御 CSRF。
+		// 内网调试期曾因多来源访问（127.0.0.1 / localhost / 局域网 IP）+ ORIGIN 未配置，
+		// 导致 http 直连表单提交被判跨站返回 403，彼时临时关闭（checkOrigin: false）；
+		// 公网暴露后必须开启，否则等于无 CSRF 防护。
+		// ⚠️ 前置硬条件：运行时 ORIGIN 必须等于浏览器实际访问的域名
+		//   （https://www.245959623.xyz），否则所有 POST/表单会被判跨站 403。
+		//   源站真实 .env（非 .env.example）的 ORIGIN 若为 localhost，必须先改。
 		csrf: {
-			checkOrigin: false
+			checkOrigin: true
 		}
 	}
 };

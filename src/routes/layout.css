@@ -4,18 +4,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 字体走 jsDelivr CDN（Saira 全轴 + Noto Sans SC），见 +layout.svelte <svelte:head> 的 <link>；不再本地托管。 */
+
 :root {
 	/* ───────────────────────────────────────────────────────────────────────────
-	   Stelarith 设计令牌 —— 亮色（默认）
+	   Stelarith 经典主题 · 亮色（默认皮肤）
 	   ───────────────────────────────────────────────────────────────────────────
-	   全站原为「dark-only」。改为双主题时，把深色值整体下沉到 .dark，
-	   :root 让给亮色——这样「没有 .dark 类」就等于亮色，
-	   与 app.html 的 SSR 兜底（<html class="dark">）配合：
-	   首屏给深色，脚本按用户选择增删类名，两条路径同一套令牌。
-
-	   亮色取值遵循同一套暖灰审美（背景用原深色主题的前景色 #faf9f5 反转），
-	   primary 由 #cc785c 加深到 #a8482b —— 原橙在浅底上只有 ~3.4:1，
-	   作为链接/行内代码文字不达 AA（对比度已用脚本实测，全部 ≥4.5:1）。
+	   暖灰审美：background 用原深色前景 #faf9f5 反转，primary #a8482b（加深保证 AA）。
+	   终末地 beta 皮肤见下方 .theme-endfield（opt-in：<html> 加 .theme-endfield 类）。
 	   ─────────────────────────────────────────────────────────────────────────── */
 	--radius: 0.5rem;
 	--background: #faf9f5;
@@ -30,8 +26,7 @@
 	--secondary: #eceae3;
 	--secondary-foreground: #1b1b19;
 	--muted: #f0eee8;
-	/* 次要文字色：#6b6a62 在侧栏选中底（#e8e6df）上只有 4.35:1，差一点点到 AA。
-	   压深到 #63625a 后，页面底/卡片/侧栏底/侧栏选中/嵌套卡 五种底色上最低 4.91:1。 */
+	/* 次要文字压深到 #63625a：五种底色上最低 4.91:1（AA）。 */
 	--muted-foreground: #63625a;
 	--accent: #f0eee8;
 	--accent-foreground: #1b1b19;
@@ -55,9 +50,7 @@
 	--sidebar-border: oklch(0% 0 0 / 0.14);
 	--sidebar-ring: #a8482b;
 
-	/* --- 语义补充令牌：给 layout.css 里原本写死的"白/黑 alpha"用 ---
-	   深色下这些是"加白"，亮色下必须变成"加黑"，否则分隔线、代码块底、
-	   表格斑马纹在浅底上会整体消失（原实现全是 oklch(100% 0 0 / x)）。 */
+	/* 语义补充令牌：亮色加黑 alpha（分隔/代码底/斑马纹） */
 	--hairline: oklch(0% 0 0 / 0.10);
 	--hairline-strong: oklch(0% 0 0 / 0.16);
 	--tint-1: oklch(0% 0 0 / 0.03);
@@ -69,12 +62,12 @@
 	--scrollbar-thumb-hover: oklch(0% 0 0 / 0.30);
 	--sheen: rgba(255, 255, 255, 0.55);
 	--shadow-card: rgba(0, 0, 0, 0.12);
-	/* 背景特效（极光/网格/粒子）在浅底上过强会发脏，按主题缩放强度 */
+	/* 背景特效强度：亮色压到 ~55% 防发脏 */
 	--bg-mode-scale: 0.55;
 }
 
 .dark {
-	/* Claude/Stelarith 设计令牌 —— 深色（原 dark-only 取值，逐字保留） */
+	/* Stelarith 经典主题 · 深色 */
 	--background: #1b1b19;
 	--foreground: #faf9f5;
 	--card: oklch(28% 0.004 106.6);
@@ -124,6 +117,112 @@
 	--bg-mode-scale: 1;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   终末地 beta 皮肤（opt-in，2026-10-23）：<html> 加 .theme-endfield 时覆盖经典令牌。
+   与经典皮肤共用亮/暗（.dark）维度：.theme-endfield=亮(standard)，.theme-endfield.dark=暗(nightshift 黄)。
+   注意：只覆盖 layout.css 的 shadcn 令牌页（侧栏/admin/account/表单…）；
+   已用 ex- 终末地部件重写的页（首页/reading）由 endfield-kit.css 全局供给，暂恒终末地（beta）。
+   ══════════════════════════════════════════════════════════════════════════ */
+.theme-endfield {
+	--radius: 0;
+	--background: #f4f4f2;
+	--foreground: #161616;
+	--card: #ffffff;
+	--card-nested: #e4e4e0;
+	--card-foreground: #161616;
+	--popover: #ffffff;
+	--popover-foreground: #161616;
+	--primary: #fffa00;
+	--primary-foreground: #161616;
+	--secondary: #e4e4e0;
+	--secondary-foreground: #161616;
+	--muted: #e4e4e0;
+	--muted-foreground: #5c5c5c;
+	--accent: #e4e4e0;
+	--accent-foreground: #161616;
+	--destructive: #b3261e;
+	--destructive-solid: #8c1d18;
+	--destructive-foreground: #ffffff;
+	--success: #3f6212;
+	--success-foreground: #ffffff;
+	--warning: #7a4f00;
+	--warning-foreground: #ffffff;
+	--border: #d9d9d6;
+	--input: #d9d9d6;
+	--ring: #fffa00;
+
+	--sidebar: #f4f4f2;
+	--sidebar-foreground: #161616;
+	--sidebar-primary: #fffa00;
+	--sidebar-primary-foreground: #161616;
+	--sidebar-accent: #fffa00;
+	--sidebar-accent-foreground: #161616;
+	--sidebar-border: #d9d9d6;
+	--sidebar-ring: #fffa00;
+
+	--hairline: oklch(0% 0 0 / 0.10);
+	--hairline-strong: oklch(0% 0 0 / 0.16);
+	--tint-1: oklch(0% 0 0 / 0.03);
+	--tint-2: oklch(0% 0 0 / 0.05);
+	--tint-3: oklch(0% 0 0 / 0.07);
+	--code-bg: #f4f3ee;
+	--prose-body: #3a3a35;
+	--scrollbar-thumb: oklch(0% 0 0 / 0.18);
+	--scrollbar-thumb-hover: oklch(0% 0 0 / 0.30);
+	--sheen: rgba(255, 255, 255, 0.55);
+	--shadow-card: rgba(0, 0, 0, 0.05);
+	--bg-mode-scale: 0.55;
+}
+.theme-endfield.dark {
+	--background: #191919;
+	--foreground: #ededed;
+	--card: #222222;
+	--card-nested: #2a2a2a;
+	--card-foreground: #ededed;
+	--popover: #222222;
+	--popover-foreground: #ededed;
+	--primary: #fffa00;
+	--primary-foreground: #161616;
+	--secondary: #2e2e2e;
+	--secondary-foreground: #ededed;
+	--muted: #2e2e2e;
+	--muted-foreground: #a3a3a3;
+	--accent: #2e2e2e;
+	--accent-foreground: #ededed;
+	--destructive: #ff8a7a;
+	--destructive-solid: #db2b33;
+	--destructive-foreground: #ededed;
+	--success: #788c5d;
+	--success-foreground: #141413;
+	--warning: #d8b25c;
+	--warning-foreground: #141413;
+	--border: #353535;
+	--input: #353535;
+	--ring: #fffa00;
+
+	--sidebar: #191919;
+	--sidebar-foreground: #ededed;
+	--sidebar-primary: #fffa00;
+	--sidebar-primary-foreground: #161616;
+	--sidebar-accent: #fffa00;
+	--sidebar-accent-foreground: #161616;
+	--sidebar-border: #353535;
+	--sidebar-ring: #fffa00;
+
+	--hairline: oklch(100% 0 0 / 0.12);
+	--hairline-strong: oklch(100% 0 0 / 0.2);
+	--tint-1: oklch(100% 0 0 / 0.04);
+	--tint-2: oklch(100% 0 0 / 0.06);
+	--tint-3: oklch(100% 0 0 / 0.08);
+	--code-bg: #1f1f1f;
+	--prose-body: oklch(95% 0.01 90);
+	--scrollbar-thumb: oklch(100% 0 0 / 0.15);
+	--scrollbar-thumb-hover: oklch(100% 0 0 / 0.25);
+	--sheen: rgba(255, 255, 255, 0.35);
+	--shadow-card: rgba(0, 0, 0, 0.35);
+	--bg-mode-scale: 1;
+}
+
 @theme inline {
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
@@ -160,8 +259,8 @@
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-ring: var(--sidebar-ring);
 
-	--font-sans: "Inter Variable", "PingFang SC", "Microsoft YaHei", sans-serif;
-	--font-heading: "Lora Variable", "Tiempos Headline", Georgia, "Songti SC", serif;
+	--font-sans: 'Saira Variable', 'Noto Sans SC Variable', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+	--font-heading: 'Saira Variable', 'Noto Sans SC Variable', 'Microsoft YaHei', 'PingFang SC', sans-serif;
 	--font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
 	--radius-sm: calc(var(--radius) * 0.6);
@@ -316,11 +415,11 @@
 .prose {
 	--tw-prose-body: var(--prose-body);
 	--tw-prose-headings: var(--foreground);
-	--tw-prose-links: var(--primary);
+	--tw-prose-links: var(--foreground);
 	--tw-prose-bold: var(--foreground);
-	--tw-prose-code: var(--primary);
+	--tw-prose-code: var(--foreground);
 	--tw-prose-quotes: var(--foreground);
-	--tw-prose-bullets: var(--primary);
+	--tw-prose-bullets: var(--foreground);
 	--tw-prose-hr: var(--hairline);
 	--tw-prose-th-borders: var(--hairline-strong);
 	--tw-prose-td-borders: var(--hairline);
@@ -333,6 +432,26 @@
 .prose a,
 .prose code:not(pre code) {
 	overflow-wrap: anywhere;
+}
+/* 终末地链接：墨字 + 黄色下划块（亮色，hover 黄块涨满盖住字）；
+   深色下黄块会吞浅色字，改为 1.5px 黄色细线。 */
+.prose a {
+	text-decoration: none;
+	background-image: linear-gradient(var(--primary), var(--primary));
+	background-size: 100% 0.32em;
+	background-position: 0 100%;
+	background-repeat: no-repeat;
+	transition: background-size 0.15s ease;
+}
+.prose a:hover {
+	background-size: 100% 100%;
+}
+.dark .prose a {
+	background-image: none;
+	text-decoration: underline;
+	text-decoration-thickness: 1.5px;
+	text-decoration-color: var(--primary);
+	text-underline-offset: 0.2em;
 }
 /* 图片/视频永不超出正文宽度（含用户插入的宽图、B 站外链图） */
 .prose img,
@@ -392,7 +511,7 @@
 	font-size: 0.8125rem; /* code 13px */
 }
 .prose blockquote {
-	border-inline-start: 2px solid var(--primary);
+	border-inline-start: 3px solid var(--foreground);
 	padding-inline-start: 1rem;
 	font-style: normal;
 }
@@ -617,16 +736,30 @@ html:where(.js) .reveal {
 }
 
 
-/* --- 高级感效果（React Bits 风格、纯 CSS，克制） --- */
+/* ── 侧边栏去纯色：纸底上叠极淡工业网格（终末地 grid ground）──
+   让侧栏有纸质层级而非死板一块；右缘墨线由 shadcn 侧栏自带 border 承担。 */
+[data-slot="sidebar"] {
+	background-color: var(--sidebar);
+	background-image:
+		linear-gradient(to bottom, oklch(0% 0 0 / 0.04) 0 1px, transparent 1px),
+		linear-gradient(to right, oklch(0% 0 0 / 0.04) 0 1px, transparent 1px);
+	background-size: 24px 24px;
+}
+.dark [data-slot="sidebar"] {
+	background-image:
+		linear-gradient(to bottom, oklch(100% 0 0 / 0.05) 0 1px, transparent 1px),
+		linear-gradient(to right, oklch(100% 0 0 / 0.05) 0 1px, transparent 1px);
+}
+
+/* --- 高级感效果（React Bits 风格、纯 CSS、克制） --- */
 
 /* 渐变文字流光（Hero 标题） */
+/* 终末地规范：禁渐变/发光文字，降级为实心墨色粗体（去掉流光渐变）。 */
 .text-shimmer {
-	background: linear-gradient(110deg, var(--foreground) 20%, var(--primary) 40%, var(--foreground) 60%);
-	background-size: 220% 100%;
-	-webkit-background-clip: text;
-	background-clip: text;
-	color: transparent;
-	animation: shimmer-text 5s ease-in-out infinite;
+	background: none;
+	color: var(--foreground);
+	-webkit-text-fill-color: currentColor;
+	animation: none;
 }
 @keyframes shimmer-text {
 	0% { background-position: 0% 50%; }
@@ -635,43 +768,26 @@ html:where(.js) .reveal {
 }
 
 /* 主按钮流光扫描线 + 辉光 */
-.btn-shine {
-	position: relative;
-	overflow: hidden;
-}
-.btn-shine::after {
-	content: "";
-	position: absolute;
-	top: 0; left: -80%;
-	width: 50%; height: 100%;
-	background: linear-gradient(90deg, transparent, var(--sheen), transparent);
-	transform: skewX(-20deg);
-	transition: left 0.5s ease;
-	pointer-events: none;
-}
-.btn-shine:hover::after { left: 130%; }
-.btn-glow {
-	box-shadow: 0 0 0 rgba(204,120,92,0);
-	transition: box-shadow 0.35s ease, transform 0.2s ease;
-}
-.btn-glow:hover {
-	box-shadow: 0 4px 24px -4px rgba(204,120,92,0.55);
-	transform: translateY(-1px);
-}
+/* 终末地规范：按钮不扫光、不辉光、不上浮，保持素净（hover 交给按钮自身换色）。 */
+.btn-shine { position: relative; overflow: hidden; }
+.btn-shine::after { display: none; }
+.btn-glow { transition: none; }
+.btn-glow:hover { box-shadow: none; transform: none; }
 
 /* 卡片悬浮微互动：抬升 + 阴影 + 边框光变 */
 .card-hover {
 	transition: transform 0.3s var(--spring-curve), box-shadow 0.3s ease, border-color 0.3s ease;
 }
+/* 终末地规范：卡片不悬浮上跳、不投影，hover 仅边框/底色微变。 */
 .card-hover:hover {
-	transform: translateY(-4px);
-	box-shadow: 0 12px 34px -12px var(--shadow-card), 0 0 0 1px rgba(204,120,92,0.18);
-	border-color: rgba(204,120,92,0.45) !important;
+	transform: none;
+	box-shadow: none;
+	border-color: var(--primary);
 }
 
 /* 链接下划线动画 */
 .link-underline {
-	background-image: linear-gradient(var(--primary), var(--primary));
+	background-image: linear-gradient(var(--foreground), var(--foreground));
 	background-size: 0% 1px;
 	background-position: 0 100%;
 	background-repeat: no-repeat;
@@ -1412,19 +1528,15 @@ body > .modal-root-fix { z-index: 80; }
     display: flex; flex-direction: column; gap: 0.9rem;
     padding: 1.75rem;
     border: 1px solid var(--hairline);
-    border-radius: 1rem;
+    border-radius: 0;
     background: color-mix(in oklab, var(--muted) 26%, transparent);
     transition:
       border-color 0.55s var(--ease-expo),
-      transform 0.55s var(--ease-expo),
-      background-color 0.55s var(--ease-expo),
-      box-shadow 0.55s var(--ease-expo);
+      background-color 0.55s var(--ease-expo);
   }
   .ef-card:hover {
-    border-color: color-mix(in oklab, var(--accent) 55%, transparent);
-    transform: translateY(-4px);
-    background: color-mix(in oklab, var(--muted) 46%, transparent);
-    box-shadow: 0 20px 44px -24px color-mix(in oklab, var(--foreground) 32%, transparent);
+    border-color: var(--primary);
+    background: color-mix(in oklab, var(--muted) 40%, transparent);
   }
   .ef-card-icon {
     display: grid; place-items: center;
@@ -1562,24 +1674,14 @@ html.reveal-late .ef-draw {
 html { scroll-behavior: smooth; }
 
 /* 鼠标光晕：跟随光标的环境光斑（桌面端） */
-.cursor-glow {
-	position: fixed;
-	width: 360px;
-	height: 360px;
-	border-radius: 50%;
-	pointer-events: none;
-	z-index: 4;
-	background: radial-gradient(circle, color-mix(in oklab, var(--accent) 9%, transparent) 0%, transparent 68%);
-	transform: translate(-50%, -50%);
-	opacity: 0;
-	transition: opacity 0.5s var(--ease-buffer);
-	will-change: transform, opacity;
-}
+/* 终末地机械风：去掉跟随光标的环境光晕（霓虹感），直接不渲染。 */
+.cursor-glow { display: none; }
 .cursor-glow.on { opacity: 1; }
 
 /* 通用卡片/按钮 hover 灵动 */
 .ef-card, .ef-cta, .btn { transition: transform 0.45s var(--spring-curve), box-shadow 0.45s var(--ease-buffer), border-color 0.45s var(--ease-buffer), background-color 0.45s var(--ease-buffer); }
-.ef-card:hover, .ef-cta:hover { transform: translateY(-3px); }
+/* 终末地规范：卡片/CTA 不悬浮上跳，hover 仅底色/边框变化。 */
+.ef-card:hover, .ef-cta:hover { transform: none; }
 
 /* 链接下划线灵动 */
 a { text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 0.3s var(--ease-buffer), color 0.3s var(--ease-buffer); }

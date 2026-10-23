@@ -1,9 +1,8 @@
 <script lang="ts">
-	import { Badge } from "$lib/components/ui/badge/index.js";
-	import { Archive, ChevronRight } from "@lucide/svelte";
+	// 旧站归档 · 终末地 reading 列表（2026-10-21）
+	import "../endfield-kit.css";
+	import Seo from "$lib/components/Seo.svelte";
 	import Container from "$lib/components/container.svelte";
-	import PageHeader from "$lib/components/page-header.svelte";
-import Seo from "$lib/components/Seo.svelte";
 
 	const versions = [
 		{ tag: "v19", title: "Astro 一体化主站", tech: "Astro + React", year: "2026" },
@@ -15,34 +14,35 @@ import Seo from "$lib/components/Seo.svelte";
 	];
 </script>
 
-<Seo title="旧站归档"
-	description="旧站内容归档。"
-	path="/archives"
-/>
+<Seo title="旧站归档" description="旧站内容归档。" path="/archives" />
 
 <Container>
-	<header class="flex flex-col gap-2">
-		<div class="flex items-center gap-2">
-			<Archive class="size-6 text-primary" />
-			<h1 class="font-heading text-3xl font-semibold tracking-tight">旧站归档</h1>
+	<header class="ex-sheet-head">
+		<div>
+			<p class="ex-eyebrow slash">Archive / Legacy</p>
+			<h1 class="ex-bar-title">旧站归档</h1>
 		</div>
-		<p class="text-sm text-muted-foreground">
-			Stelarith 走过 20 次重构，这里保存着历代的存档与设计。
-		</p>
+		<p class="ex-field">共 {versions.length} 代</p>
 	</header>
 
-	<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
-		{#each versions as v (v.tag)}
-			<div class="flex items-center gap-4 p-5">
-				<Badge variant="secondary" class="shrink-0 font-mono">{v.tag}</Badge>
-				<div class="min-w-0 flex-1">
-					<p class="truncate font-heading text-base font-medium">
-						{v.title}
-					</p>
-					<p class="truncate text-xs text-muted-foreground">{v.tech} · {v.year}</p>
+	<ol class="ex-records">
+		{#each versions as v, i (v.tag)}
+			<li>
+				<div class="ex-record as-row ex-in-come" style="--i:{i}">
+					<span class="ex-tag">{v.tag}</span>
+					<time class="ex-field">{v.year}</time>
+					<span class="name ex-read">{v.title}</span>
+					<span class="ex-field">{v.tech}</span>
 				</div>
-				<ChevronRight class="size-4 shrink-0 text-muted-foreground/40" />
-			</div>
+			</li>
 		{/each}
-	</div>
+	</ol>
 </Container>
+
+<style>
+	.as-row {
+		display: flex;
+		gap: 1rem;
+		align-items: baseline;
+	}
+</style>

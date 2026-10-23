@@ -1,40 +1,45 @@
-		<script lang="ts">
-	import { Button } from "$lib/components/ui/button/index.js";
-	import { Heart, Send, MessageCircle, Rocket, Globe } from "@lucide/svelte";
-	import { Github, Twitter } from "$lib/components/icons/index.js";
-	import CountUp from "$lib/components/count-up.svelte";
-	import ContinueReading from "$lib/components/continue-reading.svelte";
-	import { resolveFeatureIcon } from "$lib/feature-icons.js";
-	import { reveal } from "$lib/actions/reveal.js";
-import { splitReveal } from "$lib/actions/split-reveal.js";
-	import { page } from "$app/state";
-	import type { PageProps } from "./$types";
+<script lang="ts">
+	// ── 首页 · 终末地 showcase 范式（2026-10-21）─────────────────────────────
+	// 视觉来自 endfield-ui-skill（assets/endfield-kit.css，.ex 作用域隔离）。
+	// 保留站点真实数据源与 Seo / ContinueReading。
+	// 动效：kit 的 ex-in-* CSS 类（首屏自动播）+ fx.js 的数字落定/画框视差；
+	//   fx.js 顶层有 matchMedia，SSR 会崩，故 onMount 内**动态 import**（仅客户端）。
+	//   只接 wireReadouts / wireParallax，**绝不接 wireTheme**（主题沿用站点 mode-watcher）。
 	import Seo from "$lib/components/Seo.svelte";
+	import ContinueReading from "$lib/components/continue-reading.svelte";
+	import "./endfield-kit.css";
+	import { onMount } from "svelte";
+	import type { PageProps } from "./$types";
 
 	let { data }: PageProps = $props();
 
-	const iconMap: Record<string, any> = {
-		"github": Github, "twitter": Twitter, "x": Twitter,
-		"爱发电": Heart, "ifdian": Heart, "heart": Heart,
-		"哔哩哔哩": Send, "bilibili": Send, "b站": Send,
-		"qq": MessageCircle, "qq群": MessageCircle, "telegram": Send, "tg": Send
-	};
-	const socials = $derived(
-		(data.settings.socials || []).map((s) => ({ ...s, icon: iconMap[s.name.toLowerCase()] || iconMap[s.name] || Globe }))
-	);
+	const s = $derived(data.settings);
+	const posts = $derived(data.posts || []);
+	const projects = $derived(data.projects || []);
+	const docs = $derived(data.docs || []);
+	const socials = $derived(data.settings.socials || []);
 	const features = $derived(data.settings.features || []);
+	const latest = $derived(posts[0]);
+	const no = (i: number) => String(i + 1).padStart(3, "0");
+
+	onMount(() => {
+		import("$lib/endfield-fx.js").then(({ wireReadouts, wireParallax }) => {
+			wireReadouts();
+			wireParallax(document.querySelector("[data-hero]"));
+		});
+	});
 </script>
 
 <Seo
 	title="首页"
-	description={data.settings.description || data.settings.heroTitle || "Stelarith"}
+	description={s.description || s.heroTitle || "Stelarith"}
 	path="/"
 	jsonLd={[
 		{
 			"@context": "https://schema.org",
 			"@type": "WebSite",
-			name: data.settings.title || "Stelarith",
-			description: data.settings.description || "",
+			name: s.title || "Stelarith",
+			description: s.description || "",
 			url: data.siteUrl || "",
 			inLanguage: "zh-CN",
 			potentialAction: {
@@ -46,171 +51,289 @@ import { splitReveal } from "$lib/actions/split-reveal.js";
 		{
 			"@context": "https://schema.org",
 			"@type": "Organization",
-			name: data.settings.title || "Stelarith",
+			name: s.title || "Stelarith",
 			url: data.siteUrl || "",
 			logo: `${data.siteUrl || ""}/avatars/default.svg`
 		}
 	]}
 />
 
-<div class="ef-shell flex flex-col py-12 md:py-20">
-	<!-- Hero：杂志编辑式（左对齐、Fraunces 超大标题、pill CTA） -->
-	<section class="parallax-hero flex flex-col items-start gap-6">
-		<div use:reveal class="reveal ef-label" style="--reveal-delay:0"><Rocket class="size-3.5 text-primary" />{data.settings.heroBadge}</div>
-		<h1 use:reveal class="reveal ef-hero-title font-heading" style="--reveal-delay:1">
-			<span use:splitReveal step={46} start={260}>Stelarith</span>
-			<span class="mt-3 block text-xl font-normal text-muted-foreground md:text-2xl">{data.settings.heroTitle}</span>
+<div class="ex ex-contours">
+	<!-- 三色条：品红 / 强调色 / 薄荷绿，页顶一次访问画出 -->
+	<div class="ex-tri ex-in-sweep" aria-hidden="true"><i></i><i></i><i></i></div>
+
+	<!-- ═══ Hero ═══ -->
+	<section class="hero" data-hero>
+		<p class="meta ex-field">
+			<span>{s.title || "Stelarith"}</span>
+			<span><b data-fx-load>{posts.length}</b> 篇文章</span>
+			<span><b data-fx-load>{projects.length}</b> 个项目</span>
+			<span><b data-fx-load>{docs.length}</b> 篇教程</span>
+		</p>
+
+		<h1 class="ex-wordmark">
+			<span class="solid ex-in-drive">STELARITH</span>
+			<span class="hollow ex-in-drive" style="animation-delay:140ms" aria-hidden="true">.WORKS</span>
 		</h1>
-		<p use:reveal class="reveal max-w-xl text-base leading-relaxed text-muted-foreground md:text-lg" style="--reveal-delay:2">{data.settings.heroSubtitle}</p>
-		<div use:reveal class="reveal mt-2 flex flex-wrap items-center gap-3" style="--reveal-delay:3">
-			<Button href="#social" class="ef-cta btn-glow btn-shine">关注我</Button>
-			<Button href="/changelog" variant="secondary" class="ef-cta btn-shine">看看最近更新</Button>
+
+		<div class="copy">
+			<p class="claim"><span class="ex-marker ex-in-stroke">{s.slogan || s.heroBadge || "代码 · 校园 · 热爱"}</span></p>
+			<p class="bio ex-read">{s.heroSubtitle}</p>
+			<p class="ex-actions">
+				{#if latest}
+					<a class="ex-btn go" href="/posts/{latest.slug}">读最新一篇 <span class="sub">No.{no(0)}</span></a>
+				{/if}
+				<a class="ex-btn" href="/posts">全部文章</a>
+				<a class="ex-btn" href="/projects">项目</a>
+			</p>
 		</div>
+
+		<figure class="ex-frame">
+			<div class="window">
+				<!-- 自绘等轴测线稿（占位）：后续换站点真实视觉。不用游戏官方素材。 -->
+				<svg viewBox="0 0 400 420" fill="none" stroke="currentColor" stroke-width="1.5" aria-label="Stelarith 主机台线稿">
+					<!-- 侧节点 + 连线 -->
+					<rect x="52" y="170" width="46" height="46" />
+					<line x1="98" y1="193" x2="120" y2="193" />
+					<rect x="302" y="210" width="46" height="46" />
+					<line x1="280" y1="233" x2="302" y2="233" />
+					<!-- 主机柜 -->
+					<rect x="120" y="70" width="160" height="250" />
+					<!-- 顶部显示窗 -->
+					<rect x="140" y="88" width="120" height="38" />
+					<text x="150" y="112" font-family="Saira, sans-serif" font-stretch="125%" font-size="13" letter-spacing="2" fill="currentColor" stroke="none">SYS / ONLINE</text>
+					<!-- 三道面板 + 黄状态灯 + 标签 -->
+					<line x1="120" y1="160" x2="280" y2="160" />
+					<line x1="120" y1="210" x2="280" y2="210" />
+					<line x1="120" y1="260" x2="280" y2="260" />
+					<rect x="252" y="176" width="16" height="10" fill="#fffa00" stroke="none" />
+					<rect x="252" y="226" width="16" height="10" fill="#fffa00" stroke="none" />
+					<rect x="252" y="276" width="16" height="10" fill="#fffa00" stroke="none" />
+					<line x1="140" y1="180" x2="180" y2="180" opacity=".5" />
+					<line x1="140" y1="230" x2="200" y2="230" opacity=".5" />
+					<line x1="140" y1="280" x2="170" y2="280" opacity=".5" />
+					<!-- 通风栅格 -->
+					<line x1="150" y1="292" x2="250" y2="292" opacity=".4" />
+					<line x1="150" y1="300" x2="250" y2="300" opacity=".4" />
+					<!-- 底座 -->
+					<line x1="96" y1="320" x2="304" y2="320" />
+					<!-- 参数标注 -->
+					<text x="24" y="360" font-family="Saira, sans-serif" font-stretch="125%" font-size="11" letter-spacing="2" fill="currentColor" stroke="none">STELARITH / NODE 01</text>
+					<text x="24" y="378" font-family="Saira, sans-serif" font-stretch="112%" font-size="10" letter-spacing="1" fill="currentColor" stroke="none" opacity=".6">16 CORE · 2,240 OPS · 99.9%</text>
+				</svg>
+			</div>
+			<figcaption class="ex-plate">{s.heroTitle || "Stelarith"}</figcaption>
+		</figure>
+
+		{#if posts.length > 1}
+			<div class="ex-ticker" aria-label="最近的文章">
+				<div class="track">
+					<ul>
+						{#each posts.slice(0, 6) as post, i}
+							<li><a href="/posts/{post.slug}"><b>No.{no(i)}</b>{post.title}</a></li>
+						{/each}
+					</ul>
+					<ul aria-hidden="true">
+						{#each posts.slice(0, 6) as post, i}
+							<li><a href="/posts/{post.slug}" tabindex="-1"><b>No.{no(i)}</b>{post.title}</a></li>
+						{/each}
+					</ul>
+				</div>
+			</div>
+		{/if}
 	</section>
 
-	<!-- 跑马灯：品牌关键词流动（编辑流体特征） -->
-	<div use:reveal class="reveal ef-marquee mt-14" style="--reveal-delay:0">
-		<div class="ef-marquee-track font-heading text-[11px] uppercase tracking-[0.24em] text-muted-foreground/70">
-			{#each [0, 1] as _}
-				<span>
-					<span>代码</span><span class="text-primary">✦</span>
-					<span>校园</span><span class="text-primary">✦</span>
-					<span>热爱</span><span class="text-primary">✦</span>
-					<span>Stelarith</span><span class="text-primary">✦</span>
-					<span>编辑流体</span><span class="text-primary">✦</span>
+	<!-- ═══ 最新一篇（空心大编号，悬停落定）═══ -->
+	{#if latest}
+		<section class="latest">
+			<a href="/posts/{latest.slug}" data-fx-host>
+				<span class="ex-hollow-no" aria-hidden="true" data-fx>{no(0)}</span>
+				<span class="body">
+					<span class="ex-field"><span class="flag">最新</span> {latest.date}</span>
+					<span class="title">{latest.title}</span>
+					<span class="ex-read digests">{latest.excerpt}</span>
+					<span class="ex-btn go">阅读全文</span>
 				</span>
-			{/each}
-		</div>
-	</div>
+			</a>
+		</section>
+	{/if}
 
-	<!-- 继续阅读 / 最近浏览（首访不渲染，回访直接续读） -->
+	<!-- ═══ 继续阅读 / 最近浏览 ═══ -->
 	<ContinueReading />
 
-	<!-- 品牌声明：杂志引用式（双向夹击遮罩 + 描绘线） -->
-	<section class="flex flex-col items-start gap-3 pt-20">
-		<div use:reveal class="reveal ef-label" style="--reveal-delay:0">关于本站</div>
-		<p use:reveal class="reveal-clamp font-heading text-2xl leading-snug md:text-3xl" style="--reveal-delay:1">{data.settings.slogan}</p>
-		<span use:reveal class="reveal ef-draw mt-2" style="--reveal-delay:2"></span>
+	<!-- ═══ 文章索引（记录行）═══ -->
+	<section class="index">
+		<p class="ex-eyebrow slash">Index / Posts</p>
+		<h2 class="ex-bar-title">全站文章</h2>
+		{#if posts.length > 0}
+			<ol class="ex-records">
+				{#each posts as post, i}
+					<li>
+						<a class="ex-record ex-in-come" style="--i:{i}" href="/posts/{post.slug}">
+							<span class="ex-tag">No.{no(i)}</span>
+							<time class="ex-field">{post.date}</time>
+							<span class="name ex-read">{post.title}</span>
+						</a>
+					</li>
+				{/each}
+			</ol>
+		{:else}
+			<p class="ex-empty">还没有发布文章。写好的笔记会按发布顺序编号，列在这里。</p>
+		{/if}
 	</section>
 
-	<!-- 统计栏：杂志大数字（保留 CountUp 滚动） -->
-	<section use:reveal class="reveal mt-16 grid gap-4 md:grid-cols-3" style="--reveal-delay:2">
-		<div class="ef-stat-card">
-			<span class="ef-stat-line"></span>
-			<div class="ef-big-num text-primary"><CountUp value={(data.posts || []).length} duration={1000} /></div>
-			<div class="ef-label">篇文章</div>
-			<span class="ef-stat-sub">文字的重量</span>
-		</div>
-		<div class="ef-stat-card">
-			<span class="ef-stat-line"></span>
-			<div class="ef-big-num text-primary"><CountUp value={(data.projects || []).length} duration={1100} /></div>
-			<div class="ef-label">个项目</div>
-			<span class="ef-stat-sub">想法的落地</span>
-		</div>
-		<div class="ef-stat-card">
-			<span class="ef-stat-line"></span>
-			<div class="ef-big-num text-primary"><CountUp value={(data.docs || []).length} duration={1200} /></div>
-			<div class="ef-label">篇教程</div>
-			<span class="ef-stat-sub">知识的传递</span>
-		</div>
-	</section>
-
-	<!-- 特性：编号排版（01/02/03，无框 hairline 行 · 逐行横向揭开） -->
-	<section class="parallax-slow mt-20">
-		<div use:reveal class="reveal ef-label" style="--reveal-delay:0">本站特性</div>
-		<span use:reveal class="reveal ef-draw mt-3" style="--reveal-delay:1"></span>
-		<div class="mt-6 flex flex-col divide-y divide-border/40">
-			{#each features as f, i (f.title)}
-				{@const FeatureIcon = resolveFeatureIcon(f.icon)}
-				<div use:reveal class="reveal-wipe ef-feature group grid gap-2 py-6 md:grid-cols-[2.75rem_1fr] md:items-baseline" style:--reveal-delay={i + 2}>
-					<span class="ef-num">{String(i + 1).padStart(2, "0")}</span>
-					<div>
-						<h2 class="font-heading text-xl transition-colors group-hover:text-primary md:text-2xl">
-							<FeatureIcon class="mr-2 inline size-4 text-primary" />
-							{f.title}
-						</h2>
-						<p class="mt-1 text-sm leading-relaxed text-muted-foreground">{f.description}</p>
-					</div>
-				</div>
-			{/each}
-		</div>
-	</section>
-
-	<!-- 最新内容：杂志列表（日期编号 + 衬线标题 + hairline） -->
-	<section use:reveal class="reveal parallax-mid mt-16" style="--reveal-delay:0">
-		<div class="flex items-baseline justify-between">
-			<h2 class="ef-label">最新内容</h2>
-			<a href="/changelog" class="text-sm text-muted-foreground transition-colors hover:text-primary">查看全部 →</a>
-		</div>
-
-		{#if data.posts.length > 0}
-			<div class="mt-4 flex flex-col">
-				{#each data.posts as post (post.slug)}
-					<a href="/posts/{post.slug}" class="ef-list-row group">
-						<span class="ef-num shrink-0">{post.date}</span>
-						<div class="min-w-0 flex-1">
-							<h3 class="truncate font-heading text-lg transition-colors group-hover:text-primary">{post.title}</h3>
-							<p class="line-clamp-1 text-xs text-muted-foreground">{post.excerpt}</p>
+	<!-- ═══ 本站特性（编号记录行）═══ -->
+	{#if features.length > 0}
+		<section class="index">
+			<p class="ex-eyebrow slash">Features</p>
+			<h2 class="ex-bar-title">本站特性</h2>
+			<ol class="ex-records">
+				{#each features as f, i}
+					<li>
+						<div class="ex-record as-row">
+							<span class="ex-tag">{String(i + 1).padStart(2, "0")}</span>
+							<span class="name ex-read"><b>{f.title}</b><span class="desc">{f.description}</span></span>
 						</div>
-						<span class="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-300 group-hover:opacity-100">→</span>
-					</a>
+					</li>
+				{/each}
+			</ol>
+		</section>
+	{/if}
+
+	<!-- ═══ 项目 / 教程（双栏记录行）═══ -->
+	{#if projects.length > 0 || docs.length > 0}
+		<section class="index duo">
+			{#if projects.length > 0}
+				<div>
+					<p class="ex-eyebrow slash">Projects</p>
+					<h2 class="ex-bar-title">项目</h2>
+					<ol class="ex-records">
+						{#each projects as p, i}
+							<li><a class="ex-record" href="/projects/{p.slug}"><span class="ex-tag">{String(i + 1).padStart(2, "0")}</span><span class="name ex-read">{p.title}</span></a></li>
+						{/each}
+					</ol>
+				</div>
+			{/if}
+			{#if docs.length > 0}
+				<div>
+					<p class="ex-eyebrow slash">Docs</p>
+					<h2 class="ex-bar-title">教程</h2>
+					<ol class="ex-records">
+						{#each docs as d, i}
+							<li><a class="ex-record" href="/docs/{d.slug}"><span class="ex-tag">{String(i + 1).padStart(2, "0")}</span><span class="name ex-read">{d.title}</span></a></li>
+						{/each}
+					</ol>
+				</div>
+			{/if}
+		</section>
+	{/if}
+
+	<!-- ═══ 关注（键值行）═══ -->
+	{#if socials.length > 0}
+		<section class="index" id="social">
+			<p class="ex-eyebrow slash">Follow</p>
+			<h2 class="ex-bar-title">{s.socialTitle || "关注我"}</h2>
+			<div class="socials">
+				{#each socials as so}
+					<a class="ex-kv" href={so.url} target="_blank" rel="noopener noreferrer"><span>{so.name}</span><span>↗</span></a>
 				{/each}
 			</div>
-		{/if}
+		</section>
+	{/if}
 
-		{#if data.projects.length > 0 || data.docs.length > 0}
-			<div class="mt-10 grid gap-x-10 md:grid-cols-2">
-				{#if data.projects.length > 0}
-					<div>
-						<h3 class="ef-label">项目</h3>
-						<div class="mt-2 flex flex-col">
-							{#each data.projects as project (project.slug)}
-								<a href="/projects/{project.slug}" class="ef-list-row group">
-									<span class="min-w-0 flex-1 truncate font-heading text-sm transition-colors group-hover:text-primary">{project.title}</span>
-									<span class="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-300 group-hover:opacity-100">→</span>
-								</a>
-							{/each}
-						</div>
-					</div>
-				{/if}
-				{#if data.docs.length > 0}
-					<div>
-						<h3 class="ef-label">教程</h3>
-						<div class="mt-2 flex flex-col">
-							{#each data.docs as doc (doc.slug)}
-								<a href="/docs/{doc.slug}" class="ef-list-row group">
-									<span class="min-w-0 flex-1 truncate font-heading text-sm transition-colors group-hover:text-primary">{doc.title}</span>
-									<span class="shrink-0 text-muted-foreground opacity-0 transition-opacity duration-300 group-hover:opacity-100">→</span>
-								</a>
-							{/each}
-						</div>
-					</div>
-				{/if}
-			</div>
-		{/if}
-	</section>
-
-	<!-- 社交：pill 行 -->
-	<section id="social" use:reveal class="reveal mt-16 flex flex-col items-start gap-4" style="--reveal-delay:0">
-		<h2 class="ef-label">{data.settings.socialTitle}</h2>
-		<div class="flex flex-wrap items-center gap-2">
-			{#each socials as s (s.name)}
-				<a
-					href={s.url}
-					target="_blank"
-					rel="noopener noreferrer"
-					class="ef-cta flex h-10 items-center gap-2 border border-border/60 bg-card px-4 text-sm text-foreground transition-colors hover:border-primary/40 hover:text-primary"
-				>
-					<s.icon class="size-4" />
-					{s.name}
-				</a>
-			{/each}
-		</div>
-	</section>
-	<div class="mt-16 border-t border-border/40 pt-6">
-		<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-			<span>© {new Date().getFullYear()} Stelarith</span>
-			<span class="ef-label">代码 · 校园 · 热爱</span>
-		</div>
-	</div>
+	<!-- ═══ 页脚 ═══ -->
+	<footer class="foot ex-field">
+		<span>© {new Date().getFullYear()} {s.title || "Stelarith"}</span>
+		<span>代码 · 校园 · 热爱</span>
+	</footer>
 </div>
+
+<style>
+	/* ── 页面布局（移植自终末地 showcase 模板）──
+	   视觉全部来自 endfield-kit.css 的 .ex-* 变量与部件，这里只管版式。 */
+	.hero {
+		--mx: 0;
+		--my: 0;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 42%);
+		grid-template-rows: auto 1fr auto auto;
+		column-gap: clamp(1.5rem, 4vw, 3.5rem);
+		min-height: min(40rem, calc(100dvh - 3px));
+		padding-top: 1.25rem;
+		border-bottom: 1px solid var(--ex-rule);
+		overflow: hidden;
+	}
+	.hero > .meta {
+		grid-column: 1;
+		margin: 0;
+		padding-inline: var(--ex-pad);
+	}
+	.hero > .meta > * + *::before {
+		content: '/';
+		margin-inline: 0.75em;
+		color: var(--ex-rule);
+	}
+	.hero .ex-wordmark {
+		/* 覆盖 kit 默认 clamp(3rem,10vw,11rem)：STELARITH 有 9 个字母，
+		   kit 值在宽屏会把一个单词折断成 STELA/RITH。收紧到能一行放下。 */
+		--ex-wordmark: clamp(2.2rem, 5.2vw, 5rem);
+		grid-column: 1;
+		align-self: end;
+		margin-top: 2rem;
+		padding-left: var(--ex-pad);
+	}
+	.hero .ex-wordmark > * { white-space: nowrap; }
+	.hero .copy {
+		grid-column: 1;
+		padding: 1.75rem var(--ex-pad) 2.25rem;
+	}
+	.hero .copy p { margin: 0; }
+	.hero .claim { font-size: clamp(1.15rem, 2.2vw, 1.6rem); }
+	.hero .bio { max-width: 30rem; margin-top: 0.9rem; color: var(--ex-ink-2); }
+	.hero .ex-actions { margin-top: 1.5rem; }
+	.hero .ex-frame {
+		grid-column: 2;
+		grid-row: 1 / 4;
+		margin: 0 var(--ex-pad) 2.25rem 0;
+	}
+	.hero .ex-frame::before {
+		transform: translate(calc(var(--mx) * 12px), calc(var(--my) * 10px));
+	}
+	.hero .ex-frame svg {
+		width: 100%;
+		height: 100%;
+		transform: translate(calc(var(--mx) * -14px), calc(var(--my) * -8px));
+		transition: transform 0.4s var(--ex-ease);
+	}
+	.hero .ex-ticker { grid-column: 1 / -1; }
+
+	.latest { background: var(--ex-panel); border-bottom: 1px solid var(--ex-rule); }
+	.latest > a {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: clamp(1.5rem, 5vw, 4rem);
+		padding: clamp(1.75rem, 4vw, 3rem) var(--ex-pad);
+	}
+	.latest .body { display: flex; flex-direction: column; align-items: flex-start; gap: 0.9rem; max-width: 44rem; }
+	.latest .title { font-size: clamp(1.6rem, 3.4vw, 2.6rem); font-weight: 800; line-height: 1.2; }
+	.latest .flag { padding: 0.05em 0.6em; background: var(--ex-signal); color: var(--ex-on-signal); font-weight: 700; }
+	.latest .digests { color: var(--ex-ink-2); line-height: 1.8; }
+
+	.index { padding: clamp(2rem, 4vw, 3rem) var(--ex-pad) 3rem; }
+	.index.duo { display: grid; gap: 2.5rem; }
+	@media (min-width: 768px) { .index.duo { grid-template-columns: 1fr 1fr; gap: 3rem; } }
+	.as-row { display: flex; gap: 1rem; align-items: baseline; }
+	.as-row .desc { display: block; margin-top: 0.25rem; font-size: 0.9em; color: var(--ex-ink-2); }
+	.socials { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem; }
+	.foot {
+		display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between;
+		padding: 1.5rem var(--ex-pad); border-top: 1px solid var(--ex-rule); color: var(--ex-ink-2);
+	}
+
+	@media (max-width: 899px) {
+		.hero { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; min-height: 0; }
+		.hero .ex-frame { grid-column: 1; grid-row: auto; height: 18rem; margin: 0 calc(var(--ex-pad) + 1rem) 2.25rem var(--ex-pad); }
+		.latest > a { grid-template-columns: minmax(0, 1fr); }
+	}
+</style>

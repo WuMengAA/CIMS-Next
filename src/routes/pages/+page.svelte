@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { FileText } from "@lucide/svelte";
+	// 独立页面列表 · 终末地 reading 列表（2026-10-21）
+	import "../endfield-kit.css";
 	import Seo from "$lib/components/Seo.svelte";
 	import Container from "$lib/components/container.svelte";
-	import PageHeader from "$lib/components/page-header.svelte";
 
 	let { data }: { data: { pages: any[]; canEdit?: boolean } } = $props();
 </script>
@@ -10,30 +10,38 @@
 <Seo title="页面" description="独立页面与自定义内容。" path="/pages" />
 
 <Container>
-	<PageHeader title="页面" description="独立页面与自定义内容。" />
+	<header class="ex-sheet-head">
+		<div>
+			<p class="ex-eyebrow slash">Pages</p>
+			<h1 class="ex-bar-title">页面</h1>
+		</div>
+		<p class="ex-field">共 {data.pages.length} 个</p>
+	</header>
 
 	{#if data.pages.length === 0}
-		<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed p-12 text-center text-muted-foreground">
-			<FileText class="size-8" />
-			<p class="text-sm">还没有页面。</p>
-			{#if data.canEdit}
-				<a href="/admin/pages/new" class="text-primary hover:underline">新建页面</a>
-			{/if}
-		</div>
+		<p class="ex-empty">
+			还没有页面。{#if data.canEdit}<a href="/admin/pages/new">去新建第一个</a>{/if}
+		</p>
 	{:else}
-		<div class="flex flex-col divide-y divide-border/40 rounded-xl border border-border/60 bg-card">
-			{#each data.pages as page (page.slug)}
-				<a href="/pages/{page.slug}" class="group flex items-center gap-3 p-4 transition-colors hover:bg-accent/40">
-					<FileText class="size-4 shrink-0 text-muted-foreground" />
-					<div class="flex-1">
-						<h3 class="font-medium group-hover:text-primary">{page.title}</h3>
-						{#if page.excerpt}
-							<p class="line-clamp-1 text-xs text-muted-foreground">{page.excerpt}</p>
-						{/if}
-					</div>
-					<span class="text-xs text-muted-foreground">{page.date}</span>
-				</a>
+		<ol class="ex-records">
+			{#each data.pages as page, i (page.slug)}
+				<li>
+					<a class="ex-record ex-in-come" style="--i:{i}" href="/pages/{page.slug}">
+						<span class="ex-tag">{String(i + 1).padStart(2, "0")}</span>
+						<time class="ex-field">{page.date || ""}</time>
+						<span class="name ex-read">{page.title}{#if page.excerpt}<span class="desc">{page.excerpt}</span>{/if}</span>
+					</a>
+				</li>
 			{/each}
-		</div>
+		</ol>
 	{/if}
 </Container>
+
+<style>
+	.name .desc {
+		display: block;
+		margin-top: 0.2rem;
+		font-size: 0.85em;
+		color: var(--ex-ink-2);
+	}
+</style>

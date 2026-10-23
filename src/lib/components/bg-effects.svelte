@@ -5,7 +5,8 @@
 	interface BgCfg { style: string; color1: string; color2: string; color3: string; intensity: number; speed: number; particles: boolean }
 	let { config }: { config?: BgCfg } = $props();
 
-	const cfg = $derived(config || { style: "aurora", color1: "#cc785c", color2: "#cc785c", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true });
+	// 默认改为 contours（终末地等高线 ground）——替代原 aurora 霓虹光晕 + 粒子。
+	const cfg = $derived(config || { style: "contours", color1: "#c8542e", color2: "#c8542e", color3: "#0ea5e9", intensity: 0.5, speed: 1, particles: true });
 
 	// CSS vars for the effect layers
 	const styleVars = $derived({
@@ -27,8 +28,29 @@
 			pointer-events: none;
 			overflow: hidden;
 		}
-		/* 强度统一乘 --bg-mode-scale：亮色主题下这些暖色光晕叠在浅底上会发脏，
-		   由主题令牌把整体强度压到 ~55%（深色主题为 1，保持原观感）。 */
+		/* 等高线 ground（终末地）：两角淡墨流线，不闭合，像地形图上的水流。
+		   替代原 aurora 霓虹光晕；静态无动画，reduced-motion 天然满足、也更轻。 */
+		.bg-stage .contours {
+			position: absolute;
+			inset: 0;
+			background-image: url('/contours/contour-a.svg'), url('/contours/contour-b.svg');
+			background-repeat: no-repeat;
+			background-position: right -9rem top -7rem, left -6rem bottom -14rem;
+			background-size: 52rem auto, 40rem auto;
+			opacity: calc(var(--bg-alpha) * 0.9);
+		}
+		/* 暗色底上墨线不可见，反成浅线并压更淡 */
+		.dark .bg-stage .contours {
+			filter: invert(1);
+			opacity: calc(var(--bg-alpha) * 0.5);
+		}
+		@media (max-width: 719px) {
+			.bg-stage .contours {
+				background-image: url('/contours/contour-a.svg');
+				background-position: right -12rem top -4rem;
+				background-size: 34rem auto;
+			}
+		}
 		.bg-stage .aurora {
 			position: absolute;
 			inset: -20%;
@@ -101,7 +123,7 @@
 	{:else if cfg.style === "rainbow"}
 		<div class="rainbow"></div>
 	{:else}
-		<div class="aurora"></div>
-		{#if cfg.particles}<Starfield color={cfg.color2} count={60} lineDist={130} speed={cfg.speed} />{/if}
+		<!-- 默认 & aurora → 等高线 ground（替代霓虹光晕 + 粒子，更轻更安静） -->
+		<div class="contours"></div>
 	{/if}
 </div>

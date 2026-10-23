@@ -1,7 +1,7 @@
 /**
  * 2028届八班网站 · 测试种子数据（占位，后续由班主任在后台覆盖）。
  *
- * 8 个小组、52 名同学（人数有出入，预留空位）；4 次考试 × 9 学科成绩。
+ * 8 个小组、52 名同学（人数有出入，预留空位）；1 次考试 × 9 学科成绩。
  */
 import { getDb } from "../db.js";
 import { ensureClass8Schema } from "./class8-db.js";
@@ -18,11 +18,9 @@ const GROUP_GOALS = [
   "理综实验题专项突破"
 ];
 const SUBJECTS = ["语文", "数学", "英语", "物理", "化学", "生物", "政治", "历史", "地理"];
+// 考试次数：2026-10-22 用户要求 4→1。保留「第一次月考」。
 const EXAMS = [
-  { title: "第一次月考", exam_date: "2026-09-12", seq: 1 },
-  { title: "期中考试", exam_date: "2026-11-05", seq: 2 },
-  { title: "第二次月考", exam_date: "2026-12-10", seq: 3 },
-  { title: "期末考试", exam_date: "2027-01-15", seq: 4 }
+  { title: "第一次月考", exam_date: "2026-09-12", seq: 1 }
 ];
 /** 组内人数分布（合计 52）：6,7,6,7,6,6,7,7 */
 const SIZES = [6, 7, 6, 7, 6, 6, 7, 7];
@@ -41,7 +39,7 @@ export async function seedClass8IfEmpty(): Promise<void> {
 
   await db.prepare("UPDATE class8_profile SET class_name=?, slogan=?, concept=?, intro=?, teacher=? WHERE id=1").run(
     "2028届8班",
-    "入室即静，入座即学",
+    "励思笃行，八班同行，格物拓疆，聚力争强",
     "环境育人 · 可视化管理 · 小组自治 · 目标驱动",
     "高二上学期，我们以小组为单元、以成长看板为镜，把每一天的努力显性化。（当前为测试占位内容）",
     "待填写"
@@ -171,8 +169,19 @@ export async function ensureRealClass8Data(): Promise<void> {
     });
   }
 
+  // 旧种子清理（一次性、幂等）：2026-10-22 用户要求考试次数 4→1。
+  // 精准删早先 4-考试种子里多出的「期中/二考/期末」，只留「第一次月考」；
+  // 按 title 删，不影响后台后续新增的考试（不会误锁成 1 条）。
+  for (const t of ["期中考试", "第二次月考", "期末考试"]) {
+    const rows = (await db.prepare("SELECT id FROM class8_exams WHERE title=?").all(t) as { id: number }[]);
+    for (const row of rows) {
+      await db.prepare("DELETE FROM class8_scores WHERE exam_id=?").run(row.id);
+      await db.prepare("DELETE FROM class8_exams WHERE id=?").run(row.id);
+    }
+  }
+
   // 档案：真实寄语 / 副标题
-  await db.prepare("UPDATE class8_profile SET class_name='2028届8班', slogan='携手共进，顶峰相见', concept='环境育人 · 小组自治 · 目标驱动 · 可视记录', intro='高二八班，以小组为单元、以成长看板为镜，把每一天的努力显性化。', teacher='待填写', quote='一朵花独绽不是春天，百花齐放才是春色满园。高二八班，不比基础比进步，不比聪明比勤奋！', subtitle='小组风采展' WHERE id=1").run();
+  await db.prepare("UPDATE class8_profile SET class_name='2028届8班', slogan='励思笃行，八班同行，格物拓疆，聚力争强', concept='环境育人 · 小组自治 · 目标驱动 · 可视记录', intro='高二八班，以小组为单元、以成长看板为镜，把每一天的努力显性化。', teacher='待填写', quote='一朵花独绽不是春天，百花齐放才是春色满园。高二八班，不比基础比进步，不比聪明比勤奋！', subtitle='小组风采展' WHERE id=1").run();
 
   // 学科领航人（幂等：空则灌）
   if ((await db.prepare("SELECT COUNT(*) AS n FROM class8_leaders").get() as { n: number }).n === 0) {

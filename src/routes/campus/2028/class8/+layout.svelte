@@ -19,7 +19,7 @@
     { href: "/campus/2028/class8/classroom3d", label: "3D教室" }
   ];
 
-  let sloganBar = $state("入室即静，入座即学");
+  let sloganBar = $state("励思笃行，八班同行，格物拓疆，聚力争强");
   onMount(() => {
     const p = data?.profile;
     if (p && p.slogan) sloganBar = p.slogan;

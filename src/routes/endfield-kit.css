@@ -1,0 +1,2212 @@
+/* ==========================================================================
+   endfield.css: an "Endfield-flavoured" interface kit
+   --------------------------------------------------------------------------
+   Framework-free. Every class starts with ex- so it can sit beside anything.
+   Light by default; dark with <html data-theme="dark">, or follows the system
+   when <html> has no data-theme at all.
+
+   Read ../SKILL.md first. In short:
+     - paper, ink and one yellow; yellow means "here" or "you can act on this"
+     - cut corners on whatever can be pressed; hairlines, not boxes
+     - real fields (numbers, dates, counts) in the wide face, tabular figures
+     - motion is short, hard and mechanical, and switches off under
+       prefers-reduced-motion
+
+   Fonts are not loaded here. Self-host them (see references/tokens.md):
+     a wide geometric sans for Latin and figures (Saira, variable width and
+     weight) and a heavy-capable Chinese sans (Noto Sans SC / 思源黑体).
+   ========================================================================== */
+
+/* 字体走 jsDelivr CDN（Saira 全轴 + Noto Sans SC），见 +layout.svelte <svelte:head>；不再本地托管。 */
+
+/* ---------- 1. tokens ---------- */
+
+:root {
+  --ex-paper: #f4f4f2; /* the page */
+  --ex-panel: #ffffff; /* sheets, plates, inputs */
+  --ex-ink: #161616; /* text and every line that matters */
+  --ex-ink-2: #5c5c5c; /* secondary text, field labels */
+  --ex-rule: #d9d9d6; /* 1px hairlines */
+  --ex-chip: #e4e4e0; /* quiet fills: chips, idle buttons */
+  --ex-signal: #fffa00; /* THE yellow: "here" / "act on this" / "look at this" */
+  --ex-on-signal: #161616; /* text on yellow, in both themes */
+  --ex-trace: var(--ex-ink); /* a line that means "here": ink by day, yellow by night */
+  --ex-tag-bg: var(--ex-ink); /* number tags */
+  --ex-tag-fg: var(--ex-panel);
+  --ex-danger: #b3261e; /* deleting things. Nothing else. */
+  --ex-tri-a: #ff00f0; /* the three-colour strip: magenta, yellow, mint */
+  --ex-tri-b: var(--ex-signal);
+  --ex-tri-c: #00ffa2;
+  --ex-mark: color-mix(in srgb, var(--ex-signal) 55%, transparent); /* highlighter */
+  --ex-contour: color-mix(in srgb, var(--ex-ink) 9%, transparent);
+  --ex-hatch: repeating-linear-gradient(-45deg, transparent 0 5px, color-mix(in srgb, var(--ex-ink) 22%, transparent) 5px 6.5px);
+
+  /* type. Endfield pairs a wide, geometric Latin face (labels, figures, often
+     upper case) with a plain Chinese sans in several weights. Saira stands in
+     for the Latin side: its width axis goes up to 125%. */
+  --ex-font-ui: 'Saira Variable', 'Noto Sans SC Variable', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  /* what people read: Chinese heavy sans via CDN (Noto Sans SC Variable), system fallback */
+  --ex-font-text: 'Noto Sans SC Variable', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  /* code only */
+  --ex-font-mono: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
+  /* how wide the Latin face is set: fields a little wide, labels and the
+     wordmark fully wide, like the official site's wide capitals */
+  --ex-wide: 112%;
+  --ex-wider: 125%;
+
+  --ex-t-h1: 2.5rem;
+  --ex-t-title: 1.875rem;
+  --ex-t-h2: 1.375rem;
+  --ex-t-body: 1.0625rem;
+  --ex-t-ui: 0.9375rem;
+  --ex-t-field: 0.8125rem;
+
+  --ex-measure: 40rem; /* a reading line, about 38 Chinese characters */
+  --ex-pad: clamp(1rem, 4vw, 2.5rem);
+  --ex-cut-k: 1; /* every corner cut scales with this (variant: tight 0.6, wide 1.6) */
+  --ex-cut: calc(7px * var(--ex-cut-k)); /* the corner cut off small entrances */
+
+  --ex-ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+  --ex-snap: cubic-bezier(0.16, 1, 0.3, 1); /* arrives fast, settles */
+  --ex-mech: cubic-bezier(0.7, 0, 0.2, 1); /* starts slow, closes hard, like a shutter */
+
+  color-scheme: light;
+}
+
+/* 暗色主题：切到站点 mode-watcher 的 .dark 机制（终末地原用 data-theme，此处不再用）。
+   nightshift 夜班变体：强调色改荧光绿 lime #B8FF3D（standard 亮色为黄 #fffa00），
+   纸 neutral / plain 底纹 / compact 密度 / calm 动效；其余暗色值沿用终末地深色主题。 */
+.dark {
+  --ex-paper: #191919;
+  --ex-panel: #222222;
+  --ex-ink: #ededed;
+  --ex-ink-2: #a3a3a3;
+  --ex-rule: #353535;
+  --ex-chip: #2e2e2e;
+  --ex-signal: #fffa00;
+  --ex-trace: var(--ex-signal);
+  --ex-tag-bg: #3a3a3a;
+  --ex-tag-fg: var(--ex-ink);
+  --ex-danger: #ff8a7a;
+  --ex-mark: color-mix(in srgb, var(--ex-signal) 22%, transparent);
+  color-scheme: dark;
+}
+
+/* 终末地原「跟随系统 prefers-color-scheme」已移除：本站由 mode-watcher 统一管理
+   亮/暗（<html class="dark">），不再走系统 media，避免两套机制叠加冲突。 */
+
+/* ---------- 2. base ---------- */
+
+.ex,
+.ex *,
+.ex *::before,
+.ex *::after {
+  box-sizing: border-box;
+}
+
+.ex {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--ex-paper);
+  color: var(--ex-ink);
+  font-family: var(--ex-font-ui);
+  font-size: var(--ex-t-ui);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+.ex a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ex :is(a, button, summary, label[for]) {
+  cursor: pointer;
+}
+
+.ex ::selection {
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+}
+
+.ex :focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.ex :is(h1, h2, h3, h4) {
+  font-family: var(--ex-font-ui); /* 压过站点 layout.css 的 h1..h4{font-heading:Lora}，保持终末地黑体标题 */
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+/* Reading text: plain sans, regular weight, generous leading. */
+.ex-read {
+  font-family: var(--ex-font-text);
+  font-weight: 400;
+}
+
+/* Two faint patches of open, flowing contour lines: upper right, lower left.
+   Put .ex-contours on <body> and keep the two SVGs next to this file. */
+.ex-contours::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--ex-contour);
+  -webkit-mask:
+    url('/contours/contour-a.svg') right -9rem top -7rem / 52rem auto no-repeat,
+    url('/contours/contour-b.svg') left -6rem bottom -14rem / 40rem auto no-repeat;
+  mask:
+    url('/contours/contour-a.svg') right -9rem top -7rem / 52rem auto no-repeat,
+    url('/contours/contour-b.svg') left -6rem bottom -14rem / 40rem auto no-repeat;
+}
+
+@media (max-width: 719px) {
+  .ex-contours::before {
+    -webkit-mask: url('/contours/contour-a.svg') right -12rem top -4rem / 34rem auto no-repeat;
+    mask: url('/contours/contour-a.svg') right -12rem top -4rem / 34rem auto no-repeat;
+  }
+}
+
+/* ---------- 3. marks that carry meaning ---------- */
+
+/* The three-colour strip: the top edge of a page, or under an article title. Nowhere else. */
+.ex-tri {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  height: 3px;
+}
+.ex-tri > i:nth-child(1) {
+  background: var(--ex-tri-a);
+}
+.ex-tri > i:nth-child(2) {
+  background: var(--ex-tri-b);
+}
+.ex-tri > i:nth-child(3) {
+  background: var(--ex-tri-c);
+}
+
+/* A field of a record: number, date, count, path. Wide, geometric, tabular. */
+.ex-field {
+  font-family: var(--ex-font-ui);
+  font-size: var(--ex-t-field);
+  font-stretch: var(--ex-wide);
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ex-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A small, wide, upper-case label above or beside a heading: "// OVERVIEW".
+   Add .slash for the double-slash prefix the game puts on titles. */
+.ex-eyebrow {
+  font-family: var(--ex-font-ui);
+  font-size: 0.7rem;
+  font-stretch: var(--ex-wider);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-transform: uppercase;
+  color: var(--ex-ink-2);
+}
+.ex-eyebrow.slash::before {
+  content: '// ';
+  letter-spacing: 0;
+}
+
+/* English small and wide above, Chinese heavy below: LORE / 世界观资料. */
+.ex-pair {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.15;
+}
+.ex-pair > :last-child {
+  font-weight: 800;
+}
+
+/* Fields in a row, divided by hairlines; a wrapped line starts clean. */
+.ex-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  clip-path: inset(-6px -100vw -6px 0);
+}
+.ex-facts > * {
+  margin: 0 calc(0.75rem + 1px) 0 calc(-0.75rem - 1px);
+  padding: 0 0.75rem;
+  border-left: 1px solid var(--ex-rule);
+}
+
+/* Small entrances with one corner cut: number tag, key/value block, chip.
+   The cut is painted in the background so the focus ring stays whole. */
+.ex-tag,
+.ex-kv,
+.ex-chip {
+  --fill: var(--ex-chip);
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--ex-font-ui);
+  font-size: var(--ex-t-field);
+  font-stretch: var(--ex-wide);
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--ex-ink);
+  background: linear-gradient(-45deg, transparent calc(var(--ex-cut) - 0.5px), var(--fill) var(--ex-cut));
+  border: 0;
+}
+
+.ex-tag {
+  --fill: var(--ex-tag-bg);
+  /* the right padding grows with the cut, so the text keeps clear of it */
+  padding: 0.1rem calc(0.45rem + var(--ex-cut)) 0.1rem 0.5rem;
+  color: var(--ex-tag-fg);
+}
+
+.ex-chip {
+  gap: 0.35em;
+  padding: 0.15rem calc(0.5rem + var(--ex-cut)) 0.15rem 0.55rem;
+}
+
+.ex-chip .n {
+  color: var(--ex-ink-2);
+}
+
+.ex-kv > * {
+  padding: 0.1rem 0.5rem;
+}
+.ex-kv > :first-child {
+  color: var(--ex-ink-2);
+  border-right: 1px solid color-mix(in srgb, var(--ex-ink) 16%, transparent);
+}
+.ex-kv > :last-child {
+  padding-right: 0.8rem;
+}
+
+/* "Here", or "this one is on": the yellow fill. */
+.ex-tag.is-current,
+a.ex-tag:hover,
+a.ex-kv:hover,
+a.ex-chip:hover,
+button.ex-chip:hover,
+.ex-chip[aria-pressed='true'],
+.ex-chip.is-active {
+  --fill: var(--ex-signal);
+  color: var(--ex-on-signal);
+}
+a.ex-kv:hover > :first-child,
+.ex-chip.is-active .n,
+.ex-chip[aria-pressed='true'] .n {
+  color: var(--ex-on-signal);
+}
+
+/* A highlighter stroke under one line that says what this is. */
+.ex-marker {
+  padding: 0.1em 0.45em;
+  background: linear-gradient(var(--ex-signal), var(--ex-signal)) left / 100% 100% no-repeat;
+  color: var(--ex-on-signal);
+  font-weight: 800;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* A state: live is solid ink, waiting is dashed, needs-a-look is a yellow block. */
+.ex-state {
+  display: inline-block;
+  padding: 0 0.5em;
+  border: 1px solid currentColor;
+  font-family: var(--ex-font-ui);
+  font-stretch: var(--ex-wide);
+  font-size: 0.7rem;
+  line-height: 1.6;
+  white-space: nowrap;
+  vertical-align: 0.15em;
+}
+.ex-state.is-draft {
+  color: var(--ex-ink-2);
+  border-style: dashed;
+}
+.ex-state.is-hidden {
+  border-style: dashed;
+}
+.ex-state.is-alert {
+  border-color: var(--ex-signal);
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+  font-weight: 700;
+}
+
+/* Something needs reading: a yellow flag before the words. Red is not used. */
+.ex-notice {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--ex-ink);
+  background: var(--ex-panel);
+}
+.ex-notice::before {
+  content: attr(data-flag);
+  flex: none;
+  padding: 0 0.4em;
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.ex-notice:not([data-flag])::before {
+  content: '注意';
+}
+.ex-notice:is([hidden], :empty) {
+  display: none;
+}
+
+/* ---------- 4. buttons ---------- */
+
+/* A block with one corner cut. Pointing at it drives yellow across from the
+   left behind a bright edge. The cut is a mask, so the focus ring sits inside. */
+.ex-btn {
+  --fill: var(--ex-chip);
+  --wipe: var(--ex-signal);
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.55rem 1.5rem 0.55rem 1rem;
+  border: 0;
+  background: var(--fill);
+  -webkit-mask: linear-gradient(-45deg, transparent calc(0.5rem * var(--ex-cut-k)), #000 calc(0.5rem * var(--ex-cut-k) + 0.5px));
+  mask: linear-gradient(-45deg, transparent calc(0.5rem * var(--ex-cut-k)), #000 calc(0.5rem * var(--ex-cut-k) + 0.5px));
+  color: var(--ex-ink);
+  font-family: var(--ex-font-ui);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.12s 0.06s,
+    transform 0.1s;
+}
+.ex-btn:focus-visible {
+  outline-offset: -4px;
+}
+.ex-btn.go {
+  --fill: var(--ex-ink);
+  color: var(--ex-panel);
+}
+.ex-btn.small {
+  padding: 0.3rem 1.1rem 0.3rem 0.75rem;
+  font-size: 0.8rem;
+}
+.ex-btn.danger {
+  --wipe: var(--ex-danger);
+  color: var(--ex-danger);
+}
+.ex-btn .sub {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.ex-btn::before,
+.ex-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  transform: translateX(-101%);
+  transition: transform 0.28s var(--ex-mech);
+}
+.ex-btn::before {
+  background: var(--wipe);
+}
+.ex-btn::after {
+  z-index: 0;
+  background: linear-gradient(var(--ex-on-signal), var(--ex-on-signal)) left / 3px 100% no-repeat;
+  opacity: 0;
+}
+.ex-btn:is(:hover, :focus-visible):not(:disabled),
+:is(a, .ex-host):is(:hover, :focus-visible) span.ex-btn {
+  color: var(--ex-on-signal);
+}
+.ex-btn.danger:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--ex-panel);
+}
+.ex-btn:is(:hover, :focus-visible):not(:disabled)::before,
+:is(a, .ex-host):is(:hover, :focus-visible) span.ex-btn::before {
+  transform: none;
+}
+.ex-btn:hover:not(:disabled)::after,
+:is(a, .ex-host):hover span.ex-btn::after {
+  animation: ex-edge 0.3s var(--ex-mech);
+}
+/* (a <span class="ex-btn"> inside a bigger link wipes when the link is pointed at) */
+.ex-btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.985);
+}
+/* Off: it cannot be pressed now. */
+.ex-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Busy: pressed and still working (saving, sending). Hatched, and it waits. */
+.ex-btn[aria-busy='true'] {
+  background: var(--ex-hatch), var(--fill);
+  cursor: progress;
+  pointer-events: none;
+}
+/* Touch screens have no pointing, so "act on this" shows at rest: the main
+   action is yellow, and pressing does the wipe that hovering does elsewhere. */
+@media (hover: none) {
+  .ex-btn.go {
+    --fill: var(--ex-signal);
+    --wipe: color-mix(in srgb, var(--ex-signal), #000 12%);
+    color: var(--ex-on-signal);
+  }
+  .ex-btn:active:not(:disabled) {
+    color: var(--ex-on-signal);
+  }
+  .ex-btn.danger:active:not(:disabled) {
+    color: var(--ex-panel);
+  }
+  .ex-btn:active:not(:disabled)::before {
+    transform: none;
+    transition-duration: 0.1s;
+  }
+  /* 16px keeps iOS from zooming into a focused field */
+  .ex-form :is(input, select, textarea) {
+    font-size: 1rem;
+  }
+}
+
+@keyframes ex-edge {
+  0% {
+    transform: none;
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.ex-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0;
+}
+
+/* ---------- 5. lists ---------- */
+
+/* Records: one row each, columns are real fields (tag, date, name, count).
+   Pointing at a row drops a bar down its left edge and steps it in. */
+.ex-records {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ex-rule);
+}
+.ex-records > li {
+  border-bottom: 1px solid var(--ex-rule);
+}
+.ex-records a.ex-record,
+.ex-records .ex-record {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 0 1.1rem;
+  align-items: baseline;
+  padding: 0.9rem 0.7rem;
+  transition: background-color 0.15s;
+}
+.ex-record::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--ex-trace);
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 0.2s var(--ex-snap);
+}
+.ex-record > * {
+  transition: transform 0.25s var(--ex-snap);
+}
+a.ex-record:is(:hover, :focus-visible) {
+  background: var(--ex-paper);
+}
+a.ex-record:is(:hover, :focus-visible)::before {
+  transform: none;
+}
+a.ex-record:is(:hover, :focus-visible) > * {
+  transform: translateX(6px);
+}
+.ex-record .name {
+  font-size: var(--ex-t-body);
+  line-height: 1.5;
+}
+@media (max-width: 719px) {
+  .ex-records .ex-record {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    row-gap: 0.25rem;
+  }
+  .ex-record .name {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .ex-record .ex-tag {
+    justify-self: start;
+  }
+  /* the count stays on the first line, at the right */
+  .ex-record > .ex-field:last-child {
+    grid-column: -2;
+    grid-row: 1;
+    justify-self: end;
+  }
+}
+
+/* A column of label / figure pairs, for a margin or a panel. */
+.ex-ledger {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ex-rule);
+}
+.ex-ledger > li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--ex-rule);
+}
+.ex-ledger .warn {
+  padding: 0 0.4em;
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+  font-weight: 700;
+}
+
+/* ---------- 6. the reading page: a white sheet and a margin ---------- */
+
+.ex-spread {
+  display: grid;
+  grid-template-columns: minmax(0, calc(var(--ex-measure) + var(--ex-pad) * 2)) minmax(0, 1fr);
+  min-height: 100%;
+}
+.ex-sheet {
+  min-width: 0;
+  padding: clamp(2rem, 5vw, 3.5rem) var(--ex-pad) 4rem;
+  background: var(--ex-panel);
+  border-right: 1px solid var(--ex-rule);
+}
+.ex-margin {
+  min-width: 0;
+  padding: clamp(2rem, 5vw, 3.5rem) var(--ex-pad) 3rem;
+}
+@media (max-width: 959px) {
+  .ex-spread {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ex-sheet {
+    border-right: 0;
+    border-bottom: 1px solid var(--ex-rule);
+  }
+}
+
+/* A page's name with its count, ruled off in ink. */
+.ex-sheet-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin-bottom: 1.75rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--ex-ink);
+}
+.ex-sheet-head h1 {
+  margin: 0;
+  font-size: var(--ex-t-h1);
+  font-weight: 700;
+  line-height: 1.25;
+}
+.ex-sheet-head p {
+  margin: 0;
+}
+
+.ex-crumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.6em;
+  margin: 0 0 0.75rem;
+}
+.ex-crumb a {
+  border-bottom: 1px solid var(--ex-rule);
+}
+.ex-crumb > * + *::before {
+  content: '/';
+  margin-right: 0.6em;
+  color: var(--ex-rule);
+}
+
+.ex-lede {
+  max-width: var(--ex-measure);
+  margin: 1.25rem 0 0;
+  font-size: var(--ex-t-body);
+  line-height: 1.75;
+  color: var(--ex-ink-2);
+}
+
+.ex-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 2.5rem 0 0;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--ex-ink);
+  font-size: var(--ex-t-h2);
+  font-weight: 700;
+}
+.ex-group-head + .ex-records,
+.ex-sheet-head + .ex-records {
+  border-top: 0;
+}
+
+.ex-empty {
+  max-width: 30rem;
+  margin: 1.5rem 0 0;
+  line-height: 1.75;
+  color: var(--ex-ink-2);
+}
+
+/* Reading prose: plain Chinese sans, regular weight, generous leading; a link is ink over a yellow block
+   (a yellow line on dark, where the block would swallow light text). */
+.ex-prose {
+  max-width: var(--ex-measure);
+  font-family: var(--ex-font-text);
+  font-size: var(--ex-t-body);
+  line-height: 1.85;
+}
+.ex-prose :is(h2, h3) {
+  font-family: var(--ex-font-ui);
+}
+.ex-prose a {
+  text-decoration: underline;
+  text-decoration-color: var(--ex-signal);
+  text-decoration-thickness: 0.4em;
+  text-underline-offset: -0.18em;
+  text-decoration-skip-ink: none;
+}
+.dark .ex-prose a {
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.25em;
+}
+/* 原 prefers-color-scheme 回退已删：暗色由 .dark（mode-watcher）接管，见上方 .dark 块。 */
+.ex-prose strong {
+  font-weight: 700;
+}
+.ex-prose h2 {
+  font-size: var(--ex-t-h2);
+  font-weight: 700;
+  margin: 2.4em 0 0.8em;
+  padding-top: 0.9em;
+  border-top: 1px solid var(--ex-rule);
+}
+.ex-prose blockquote {
+  margin: 1.2em 0;
+  padding-left: 1.2em;
+  border-left: 3px solid var(--ex-ink);
+  color: var(--ex-ink-2);
+}
+.ex-prose code {
+  font-family: var(--ex-font-mono);
+  font-size: 0.86em;
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--ex-rule);
+  background: var(--ex-paper);
+}
+
+/* ---------- 7. the showcase voice ---------- */
+
+/* The name, as heavy and wide as the column takes: solid, then hollow. */
+.ex-wordmark {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  font-family: var(--ex-font-ui);
+  font-stretch: var(--ex-wider);
+  font-weight: 800;
+  line-height: 0.84;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+.ex-wordmark > * {
+  line-height: 0.84;
+}
+.ex-wordmark .solid {
+  font-size: var(--ex-wordmark, clamp(3rem, 10vw, 11rem));
+}
+.ex-wordmark .hollow {
+  margin-top: 0.12em;
+  font-size: calc(var(--ex-wordmark, clamp(3rem, 10vw, 11rem)) * 0.48);
+  color: transparent;
+  -webkit-text-stroke: 2px var(--ex-ink);
+}
+
+/* A big hollow number that ink pours into, left to right, when pointed at. */
+.ex-hollow-no {
+  font-family: var(--ex-font-ui);
+  font-stretch: var(--ex-wide);
+  font-size: clamp(5rem, 14vw, 14rem);
+  font-weight: 800;
+  line-height: 0.8;
+  letter-spacing: -0.03em;
+  color: transparent;
+  -webkit-text-stroke: 2px var(--ex-ink);
+  background: linear-gradient(var(--ex-ink), var(--ex-ink)) left / 0% 100% no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  transition: background-size 0.45s var(--ex-mech);
+}
+:is(a, .ex-host):is(:hover, :focus-visible) .ex-hollow-no {
+  background-size: 100% 100%;
+}
+
+/* A title with a hatched band running off beside it. */
+.ex-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin: 0 0 1.25rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+.ex-bar-title::after {
+  content: '';
+  flex: 1;
+  height: 0.8rem;
+  background: var(--ex-hatch);
+  border-left: 0.8rem solid var(--ex-ink);
+}
+
+/* A picture in a frame with two corners cut, a hatched shadow set off behind
+   it, and an ink plate carrying one line. */
+.ex-frame {
+  position: relative;
+  margin: 0 1rem 1rem 0;
+  min-height: 16rem;
+}
+.ex-frame::before {
+  content: '';
+  position: absolute;
+  inset: 1.5rem -1rem -1rem 1.5rem;
+  background: var(--ex-hatch);
+}
+.ex-frame .window {
+  position: absolute;
+  inset: 0;
+  --frame-cut: calc(3.25rem * var(--ex-cut-k));
+  clip-path: polygon(var(--frame-cut) 0, 100% 0, 100% calc(100% - var(--frame-cut)), calc(100% - var(--frame-cut)) 100%, 0 100%, 0 var(--frame-cut));
+  background: var(--ex-panel);
+  overflow: hidden;
+}
+.ex-frame .window > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: 50% 100%;
+}
+.ex-plate {
+  position: absolute;
+  left: -1.25rem;
+  bottom: 1.75rem;
+  max-width: 78%;
+  margin: 0;
+  padding: 0.55rem 1.4rem 0.6rem 0.9rem;
+  background: linear-gradient(-45deg, transparent calc(0.6rem * var(--ex-cut-k)), var(--ex-ink) calc(0.6rem * var(--ex-cut-k) + 0.5px));
+  color: var(--ex-panel);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* A band of recent items passing by; pointing at it stops it. */
+.ex-ticker {
+  background: var(--ex-ink);
+  color: var(--ex-panel);
+  overflow: hidden;
+}
+.ex-ticker .track {
+  display: flex;
+  width: max-content;
+}
+.ex-ticker ul {
+  display: flex;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ex-ticker a {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1.5rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+.ex-ticker b {
+  padding: 0 0.45em;
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+}
+.ex-ticker a:hover {
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+}
+
+/* ---------- 8. the console voice ---------- */
+
+/* The command bar: dark in both themes, so the yellow block of "where you are"
+   reads the same everywhere. */
+.ex-cmdbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0 1.5rem;
+  padding-inline: var(--ex-pad);
+  background: #161616;
+  color: #ededed;
+}
+.ex-cmdbar .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding-block: 0.6rem;
+  font-stretch: var(--ex-wider);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.ex-cmdbar .seal {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  background: linear-gradient(-45deg, transparent calc(0.45rem * var(--ex-cut-k)), var(--ex-signal) calc(0.45rem * var(--ex-cut-k) + 0.5px));
+  color: var(--ex-on-signal);
+  font-size: 1.3rem;
+  letter-spacing: 0;
+}
+.ex-cmdbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  margin-right: auto;
+}
+.ex-cmdbar nav a {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 3.4rem;
+  padding: 0.3rem 1.15rem 0.3rem 0.8rem;
+  color: #b8b8b8;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.ex-cmdbar nav a small {
+  font-size: 0.6rem;
+  font-stretch: var(--ex-wider);
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.ex-cmdbar nav a::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  background: var(--ex-signal);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.22s var(--ex-mech);
+}
+.ex-cmdbar nav a:hover {
+  color: #fff;
+  background: #232323;
+}
+.ex-cmdbar nav a:not([aria-current]):hover::after {
+  transform: none;
+}
+.ex-cmdbar nav a[aria-current] {
+  color: var(--ex-on-signal);
+  background: linear-gradient(-45deg, transparent calc(var(--ex-cut) + 2px), var(--ex-signal) calc(var(--ex-cut) + 2.5px));
+}
+.ex-cmdbar .count {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.3rem;
+  min-width: 1.4em;
+  padding: 0 0.3em;
+  background: var(--ex-signal);
+  color: var(--ex-on-signal);
+  outline: 2px solid #161616;
+  font-size: 0.66rem;
+  font-weight: 700;
+  text-align: center;
+}
+.ex-cmdbar .util {
+  display: flex;
+  align-items: center;
+  gap: 1.1rem;
+  font-size: 0.78rem;
+  color: #b8b8b8;
+}
+
+/* A console page's name: heavy, with a hatched band beside it. */
+.ex-head {
+  display: grid;
+  grid-template-columns: auto minmax(2rem, 1fr);
+  align-items: center;
+  gap: 0.4rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.ex-head::after {
+  content: '';
+  grid-column: 2;
+  grid-row: 1;
+  height: 0.9rem;
+  background: var(--ex-hatch);
+  border-left: 0.9rem solid var(--ex-ink);
+}
+.ex-head h1 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 0;
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+.ex-head h1 small {
+  font-size: 0.7rem;
+  font-stretch: var(--ex-wider);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ex-ink-2);
+}
+.ex-head p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ex-ink-2);
+}
+
+/* A panel: a plate on the paper with a heavy ink tab on its top edge, which
+   runs out along the whole edge when the panel is pointed at.
+   Add one of .cut-tl / .cut-tr / .cut-bl / .cut-br to cut away the corner that
+   faces a central dial, so panels follow its curve instead of forming a grid. */
+.ex-panel {
+  --cutaway: calc(1.6rem * var(--ex-cut-k));
+  position: relative;
+  min-width: 0;
+  padding: 1rem 1.15rem 1.15rem;
+  background: var(--ex-panel);
+  border: 1px solid var(--ex-rule);
+}
+.ex-panel::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  height: 5px;
+  background: var(--ex-ink);
+  transform: scaleX(0.14);
+  transform-origin: left;
+  transition: transform 0.4s var(--ex-mech);
+  pointer-events: none;
+}
+.ex-panel.tab-right::before {
+  transform-origin: right;
+}
+.ex-panel:is(:hover, :focus-within)::before {
+  transform: none;
+}
+.ex-panel:is(.cut-tl, .cut-tr, .cut-bl, .cut-br) {
+  border: 0;
+}
+.ex-panel.cut-br {
+  background: linear-gradient(-45deg, transparent var(--cutaway), var(--ex-panel) calc(var(--cutaway) + 0.5px));
+}
+.ex-panel.cut-bl {
+  background: linear-gradient(45deg, transparent var(--cutaway), var(--ex-panel) calc(var(--cutaway) + 0.5px));
+}
+.ex-panel.cut-tr {
+  background: linear-gradient(-135deg, transparent var(--cutaway), var(--ex-panel) calc(var(--cutaway) + 0.5px));
+}
+.ex-panel.cut-tl {
+  background: linear-gradient(135deg, transparent var(--cutaway), var(--ex-panel) calc(var(--cutaway) + 0.5px));
+}
+.ex-panel > h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin: 0 0 0.6rem;
+  font-size: 1rem;
+  font-weight: 800;
+}
+.ex-panel > h2 > :is(a, small) {
+  margin-left: auto;
+  color: var(--ex-ink-2);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+/* A lead from a panel to whatever it describes: a hairline ending in a square.
+   Put .lead-right (or .lead-left) on a panel; set --lead to its length. */
+.ex-panel:is(.lead-right, .lead-left)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: var(--lead, 3rem);
+  height: 7px;
+  margin-top: -3.5px;
+  pointer-events: none;
+}
+.ex-panel.lead-right::after {
+  left: 100%;
+  background:
+    linear-gradient(var(--ex-ink), var(--ex-ink)) center / 100% 1px no-repeat,
+    linear-gradient(var(--ex-ink), var(--ex-ink)) right center / 7px 7px no-repeat;
+}
+.ex-panel.lead-left::after {
+  right: 100%;
+  background:
+    linear-gradient(var(--ex-ink), var(--ex-ink)) center / 100% 1px no-repeat,
+    linear-gradient(var(--ex-ink), var(--ex-ink)) left center / 7px 7px no-repeat;
+}
+
+/* Big figures, three to a panel. Pointing at one drives yellow under it. */
+.ex-figs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--ex-rule);
+}
+.ex-figs > * {
+  display: grid;
+  gap: 0.1rem;
+  align-content: start;
+  justify-items: start;
+}
+.ex-figs b {
+  font-size: 2.4rem;
+  font-stretch: var(--ex-wide);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(var(--ex-signal), var(--ex-signal)) left / 0% 100% no-repeat;
+  transition: background-size 0.22s var(--ex-mech);
+}
+.ex-figs span {
+  font-size: 0.85rem;
+  color: var(--ex-ink-2);
+}
+.ex-figs > :is(a:hover, a:focus-visible) b,
+.ex-figs .is-alert b {
+  background-size: 100% 100%;
+  color: var(--ex-on-signal);
+}
+
+/* Rows of work inside a panel, edge to edge. */
+.ex-rows {
+  margin: 0 -1.15rem;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ex-rule);
+}
+.ex-rows > li {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 1rem;
+  align-items: center;
+  padding: 0.8rem 1.15rem;
+  border-bottom: 1px solid var(--ex-rule);
+  transition: background-color 0.15s;
+}
+.ex-rows > li::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--ex-trace);
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 0.2s var(--ex-snap);
+}
+.ex-rows > li:hover {
+  background: var(--ex-paper);
+}
+.ex-rows > li:is(:hover, :focus-within)::before {
+  transform: none;
+}
+.ex-rows > li:last-child {
+  border-bottom: 0;
+}
+.ex-rows .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.9rem;
+  font-family: var(--ex-font-ui);
+  font-stretch: var(--ex-wide);
+  font-size: 0.75rem;
+  color: var(--ex-ink-2);
+}
+.ex-rows .acts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+/* ---------- 9. forms ---------- */
+
+.ex-form .field {
+  display: grid;
+  gap: 0.35rem;
+}
+.ex-form .field > span {
+  font-size: var(--ex-t-field);
+  font-weight: 600;
+}
+.ex-form .field small {
+  color: var(--ex-ink-2);
+  font-size: 0.82rem;
+}
+.ex-form :is(input:not([type='checkbox'], [type='radio'], [type='range']), select, textarea) {
+  width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--ex-rule);
+  border-radius: 0;
+  background: var(--ex-panel);
+  color: var(--ex-ink);
+  font: inherit;
+  transition: border-color 0.15s;
+}
+.ex-form :is(input, select, textarea):hover {
+  border-color: var(--ex-ink-2);
+}
+.ex-form :is(input, select, textarea):focus-visible {
+  border-color: var(--ex-ink);
+  outline: 2px solid var(--ex-trace);
+  outline-offset: -1px;
+}
+.ex-form :is(input[type='checkbox'], input[type='radio']) {
+  accent-color: var(--ex-ink);
+}
+
+/* ---------- 10. motion ---------- */
+
+/* Things that open a page: driven in behind a shutter, uncovered from a cut
+   corner, switched on from the top down. All of it is under a second. */
+@media (prefers-reduced-motion: no-preference) {
+  .ex-in-drive {
+    animation: ex-drive 620ms var(--ex-mech) both;
+  }
+  .ex-in-stroke {
+    animation: ex-stroke 420ms var(--ex-mech) 420ms both;
+  }
+  .ex-in-power {
+    animation: ex-power 520ms var(--ex-mech) backwards;
+    animation-delay: calc(var(--i, 0) * 100ms + 120ms);
+  }
+  .ex-in-come {
+    animation: ex-come 320ms var(--ex-snap) both;
+    animation-delay: calc(var(--i, 0) * 38ms);
+  }
+  .ex-tri.ex-in-sweep {
+    transform-origin: left;
+    animation: ex-sweep 600ms var(--ex-ease) both;
+  }
+  .ex-ticker .track {
+    animation: ex-pass 60s linear infinite;
+  }
+  .ex-ticker:is(:hover, :focus-within) .track {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes ex-drive {
+  from {
+    clip-path: inset(0 100% 0 0);
+    transform: translateX(-0.12em);
+  }
+  to {
+    clip-path: inset(0 -5% 0 0);
+    transform: none;
+  }
+}
+@keyframes ex-stroke {
+  from {
+    background-size: 0% 100%;
+  }
+}
+@keyframes ex-power {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(-6px);
+  }
+}
+@keyframes ex-come {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(0 -2% 0 0);
+  }
+}
+@keyframes ex-sweep {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes ex-pass {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+/* Going from page to page (same-origin navigations): the new page is drawn
+   across the old one by a slanted shutter. */
+@media (prefers-reduced-motion: no-preference) {
+  @view-transition {
+    navigation: auto;
+  }
+  ::view-transition-old(root) {
+    animation: none;
+  }
+  ::view-transition-new(root) {
+    animation: ex-shutter 360ms var(--ex-mech) both;
+  }
+}
+@keyframes ex-shutter {
+  from {
+    clip-path: polygon(0 0, 0 0, -14% 100%, -14% 100%);
+  }
+  to {
+    clip-path: polygon(0 0, 114% 0, 100% 100%, -14% 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* the ticker stops and becomes a strip you can scroll */
+  .ex-ticker {
+    overflow-x: auto;
+  }
+  .ex-ticker ul[aria-hidden] {
+    display: none;
+  }
+  .ex *,
+  .ex *::before,
+  .ex *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ---------- 11. the dial (built by dial.js) ---------- */
+
+.ex-dial {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-family: var(--ex-font-ui);
+}
+.ex-dial .orbit {
+  fill: none;
+  stroke: var(--ex-ink-2);
+  stroke-dasharray: 2 10;
+}
+.ex-dial .plate {
+  fill: var(--ex-panel);
+  stroke: var(--ex-ink);
+  stroke-width: 1.5;
+  transition: fill 0.15s;
+}
+.ex-dial .zh {
+  font-size: 19px;
+  font-weight: 800;
+  fill: var(--ex-ink);
+}
+.ex-dial .en {
+  font-size: 8px;
+  font-stretch: var(--ex-wider);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  fill: var(--ex-ink-2);
+}
+.ex-dial .seg.is-here .plate {
+  fill: var(--ex-ink);
+}
+.ex-dial .seg.is-here :is(.zh, .en) {
+  fill: var(--ex-panel);
+}
+.ex-dial .seg.is-alert .plate {
+  stroke-width: 3;
+}
+.ex-dial .flag {
+  fill: var(--ex-signal);
+  stroke: var(--ex-on-signal);
+}
+.ex-dial .lock,
+.ex-dial .beam {
+  fill: none;
+  stroke: var(--ex-trace);
+  stroke-width: 3;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  transition: stroke-dashoffset 0.3s var(--ex-mech);
+}
+.ex-dial .beam {
+  stroke-width: 1.5;
+}
+.ex-dial .seg:is(:hover, :focus-visible) .plate {
+  fill: var(--ex-signal);
+}
+.ex-dial .seg:is(:hover, :focus-visible) :is(.zh, .en) {
+  fill: var(--ex-on-signal);
+}
+.ex-dial .seg:is(:hover, :focus-visible) :is(.lock, .beam) {
+  stroke-dashoffset: 0;
+}
+.ex-dial .seg:focus-visible {
+  outline: none;
+}
+.ex-dial .core-tag {
+  fill: var(--ex-signal);
+}
+.ex-dial .core-label {
+  font-size: 10px;
+  fill: var(--ex-ink-2);
+}
+.ex-dial .core-label.on-tag {
+  font-weight: 700;
+  fill: var(--ex-on-signal);
+}
+.ex-dial .core {
+  font-size: 46px;
+  font-stretch: var(--ex-wide);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  fill: var(--ex-ink);
+}
+.ex-dial .core .unit {
+  font-size: 14px;
+  letter-spacing: 0;
+}
+.ex-dial .gauge circle {
+  fill: none;
+  stroke-width: 11;
+}
+.ex-dial .gauge .track {
+  stroke: var(--ex-chip);
+}
+.ex-dial .gauge .arc {
+  stroke: var(--ex-ink-2);
+}
+.ex-dial .gauge text {
+  font-size: 10px;
+  fill: var(--ex-ink-2);
+}
+/* a reading that is nearly full: the arc goes to the colour of "here", with a yellow label */
+.ex-dial .gauge.is-alert .arc {
+  stroke: var(--ex-trace);
+}
+.ex-dial .gauge.is-alert text {
+  font-weight: 700;
+  fill: var(--ex-on-signal);
+}
+.ex-dial .gauge .flag {
+  fill: var(--ex-signal);
+  stroke: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .ex-dial .orbit {
+    transform-box: view-box;
+    transform-origin: 300px 300px;
+  }
+  .ex-dial .seg {
+    animation: ex-assemble 360ms var(--ex-snap) backwards;
+    animation-delay: calc(var(--i) * 45ms + 80ms);
+    transform-box: view-box;
+    transform-origin: 300px 300px;
+  }
+}
+@keyframes ex-assemble {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+/* ---------- 12. app parts: phone screens, H5, PWA ----------
+   The same parts as the Flutter kit (templates/flutter), for the web. */
+
+/* Top bar: no fill, not centred, no shadow. Eyebrow + bold Chinese, a hairline
+   below, at most one or two text buttons on the right. */
+.ex-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: calc(0.75rem + env(safe-area-inset-top, 0px)) var(--ex-pad) 0.75rem;
+  border-bottom: 1px solid var(--ex-rule);
+  background: var(--ex-paper);
+}
+.ex-topbar > .ex-pair {
+  margin-right: auto;
+}
+.ex-topbar .ex-pair > :last-child {
+  font-size: 1.25rem;
+}
+/* the back key: a small cut square, not a round icon button */
+.ex-back {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  border: 0;
+  background: linear-gradient(-45deg, transparent calc(var(--ex-cut) - 0.5px), var(--ex-chip) var(--ex-cut));
+  color: var(--ex-ink);
+  font: 700 1.25rem/1 var(--ex-font-ui);
+}
+
+/* Bottom tab bar: 3 to 5 items, words not just icons; the current one is a
+   whole yellow block with a cut corner. */
+.ex-tabbar {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 10;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  background: var(--ex-panel);
+  border-top: 1px solid var(--ex-rule);
+}
+.ex-tabbar a {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-height: 52px;
+  color: var(--ex-ink);
+  font: 500 0.875rem/1.3 var(--ex-font-ui);
+  transition: background-color 0.28s var(--ex-mech);
+}
+.ex-tabbar small {
+  font-size: 0.5625rem;
+  font-weight: 600;
+  font-stretch: var(--ex-wider);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ex-ink-2);
+}
+.ex-tabbar [aria-current='page'] {
+  background: linear-gradient(-45deg, transparent calc(var(--ex-cut) - 0.5px), var(--ex-signal) var(--ex-cut));
+  color: var(--ex-on-signal);
+  font-weight: 700;
+}
+.ex-tabbar [aria-current='page'] small {
+  color: var(--ex-on-signal);
+}
+/* keep content clear of a fixed tab bar */
+.ex-has-tabbar {
+  padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 600px) {
+  /* tablets: the tab bar stands up along the left edge */
+  .ex-tabbar.can-rail {
+    inset: 0 auto 0 0;
+    width: 6.5rem;
+    grid-auto-flow: row;
+    grid-auto-rows: 64px;
+    align-content: start;
+    padding: calc(1rem + env(safe-area-inset-top, 0px)) 8px 1rem;
+    border-top: 0;
+    border-right: 1px solid var(--ex-rule);
+  }
+  .ex-has-tabbar:has(.ex-tabbar.can-rail) {
+    padding-bottom: 0;
+    padding-left: 6.5rem;
+  }
+}
+
+/* Side rail for the reading page: stacked nav, "// EN" over Chinese, the
+   current item a whole yellow block. Below 1100px it lies down as a top bar. */
+.ex-rail {
+  display: flex;
+  flex-direction: column;
+  padding: 1.5rem 0 1rem;
+  border-right: 1px solid var(--ex-rule);
+}
+.ex-rail .brand {
+  padding: 0 1.25rem 2rem;
+  font-stretch: var(--ex-wider);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.ex-rail a:not(.brand) {
+  padding: 0.4rem 1.25rem;
+  color: var(--ex-ink-2);
+}
+.ex-rail a:not(.brand):hover {
+  color: var(--ex-ink);
+}
+.ex-rail a[aria-current] {
+  color: var(--ex-on-signal);
+  font-weight: 700;
+  background: linear-gradient(-45deg, transparent calc(var(--ex-cut) - 0.5px), var(--ex-signal) var(--ex-cut));
+}
+@media (max-width: 1099px) {
+  .ex-rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 0.75rem var(--ex-pad);
+    border-right: 0;
+    border-bottom: 1px solid var(--ex-rule);
+  }
+  .ex-rail .brand {
+    padding: 0 1rem 0 0;
+  }
+  .ex-rail a:not(.brand) {
+    padding: 0.3rem 0.8rem;
+  }
+}
+
+/* Search: white field, "//" prefix, a 2px trace line at the bottom on focus. */
+.ex-search {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0 0.8rem;
+  border: 1px solid var(--ex-rule);
+  background: var(--ex-panel);
+}
+.ex-search::before {
+  content: '//';
+  color: var(--ex-ink-2);
+  font-weight: 700;
+}
+.ex-search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.75rem;
+  border: 0;
+  background: none;
+  color: var(--ex-ink);
+  font: inherit;
+  font-size: max(1rem, 16px);
+  outline: none;
+}
+.ex-search:focus-within {
+  border-bottom-color: var(--ex-trace);
+  box-shadow: inset 0 -1px 0 var(--ex-trace);
+}
+
+/* Square switch: on is a yellow track with an ink block. Use on a checkbox:
+   <input type="checkbox" role="switch" class="ex-switch"> */
+.ex-switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 26px;
+  margin: 0;
+  background: var(--ex-chip);
+  cursor: pointer;
+  transition: background-color 0.28s var(--ex-mech);
+}
+.ex-switch::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: var(--ex-panel);
+  transition: transform 0.28s var(--ex-mech);
+}
+.ex-switch:checked {
+  background: var(--ex-signal);
+}
+.ex-switch:checked::before {
+  background: var(--ex-on-signal);
+  transform: translateX(22px);
+}
+.ex-switch:focus-visible {
+  outline: 2px solid var(--ex-ink);
+  outline-offset: 2px;
+}
+
+/* Segmented choice: an ink frame; the current segment is ink with paper text.
+   Not yellow: yellow is kept for navigation and the main action.
+   Radios inside labels: <div class="ex-seg" role="radiogroup"><label><input type="radio" name="d"><span>标准</span></label>… */
+.ex-seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  border: 1px solid var(--ex-ink);
+}
+.ex-seg label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 44px;
+  padding: 0 0.6rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.28s var(--ex-mech),
+    color 0.28s var(--ex-mech);
+}
+.ex-seg input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.ex-seg label:has(:checked) {
+  background: var(--ex-ink);
+  color: var(--ex-paper);
+}
+.ex-seg label:has(:focus-visible) {
+  outline: 2px solid var(--ex-trace);
+  outline-offset: -4px;
+}
+
+/* Settings row: name and a line of help on the left, the control on the right. */
+.ex-setting {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--ex-rule);
+}
+.ex-setting > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.ex-setting b {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+}
+.ex-setting small {
+  color: var(--ex-ink-2);
+  font-size: 0.75rem;
+}
+
+/* Mechanical progress: 24 cells, lit cells yellow, a padded readout.
+   <div class="ex-progress" role="progressbar" aria-valuenow="63" style="--p: 0.63">
+     <span class="ex-eyebrow">Syncing / 同步中</span><span class="ex-field">063%</span><i></i>
+   </div>
+   Add .is-unknown when there is no figure: a run of yellow cells walks left to right. */
+.ex-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+.ex-progress > i {
+  --cells: 24;
+  grid-column: 1 / -1;
+  height: 10px;
+  background:
+    linear-gradient(90deg, var(--ex-signal) calc(var(--p, 0) * 100%), transparent 0),
+    var(--ex-chip);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--cells) - 2px), transparent 0 calc(100% / var(--cells)));
+  mask: repeating-linear-gradient(90deg, #000 0 calc(100% / var(--cells) - 2px), transparent 0 calc(100% / var(--cells)));
+}
+.ex-progress > .ex-field {
+  color: var(--ex-ink);
+}
+.ex-progress.is-unknown > i {
+  background:
+    linear-gradient(90deg, transparent 0 var(--run-at, 0%), var(--ex-signal) var(--run-at, 0%) calc(var(--run-at, 0%) + 25%), transparent 0),
+    var(--ex-chip);
+}
+
+/* Skeleton: plain chip blocks while something loads. No shimmer. */
+.ex-skeleton {
+  display: block;
+  height: 1em;
+  background: var(--ex-chip);
+}
+.ex-skeleton.line {
+  height: 0.8rem;
+  margin: 0.45rem 0;
+}
+
+/* Bottom sheet and dialog, on <dialog>. Open with showModal(); fx.js
+   wireDialogs() runs the open and close motion and handles Esc.
+   Sheet: top-left corner cut, a hatch band with a grabber, eyebrow + title.
+   Dialog: a panel with the heavy tab, bottom-right corner cut. */
+.ex-drawer,
+.ex-dialog {
+  padding: 0;
+  border: 0;
+  max-width: none;
+  background: transparent;
+  color: var(--ex-ink);
+  font-family: var(--ex-font-ui);
+}
+.ex-drawer::backdrop,
+.ex-dialog::backdrop {
+  background: rgb(22 22 22 / 0.5);
+}
+.dark :is(.ex-drawer, .ex-dialog)::backdrop {
+  background: rgb(0 0 0 / 0.63);
+}
+.ex-drawer {
+  inset: auto 0 0;
+  width: 100%;
+  max-height: 85dvh;
+  margin: 0;
+}
+.ex-drawer {
+  --sheet-cut: calc(1.6rem * var(--ex-cut-k));
+}
+.ex-drawer > .body {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(135deg, transparent var(--sheet-cut), var(--ex-panel) calc(var(--sheet-cut) + 0.5px));
+}
+.ex-drawer .grab {
+  display: grid;
+  place-items: center;
+  height: 18px;
+  margin-left: 1.6rem;
+  background: var(--ex-hatch);
+  /* the band follows the sheet's cut instead of hanging over it */
+  --band-cut: max(0px, calc(var(--sheet-cut) - 1.6rem / 1.4142));
+  -webkit-mask: linear-gradient(135deg, transparent var(--band-cut), #000 calc(var(--band-cut) + 0.5px));
+  mask: linear-gradient(135deg, transparent var(--band-cut), #000 calc(var(--band-cut) + 0.5px));
+}
+.ex-drawer .grab::after {
+  content: '';
+  width: 40px;
+  height: 4px;
+  background: var(--ex-ink);
+}
+.ex-drawer header {
+  /* the cut's legs are --sheet-cut × √2 long; start the eyebrow below where
+     the cut still reaches the text column, so a wide cut never touches it */
+  padding: max(0.75rem, calc(var(--sheet-cut) * 1.4142 - 18px - var(--ex-pad) + 1.1rem)) var(--ex-pad) 0.5rem;
+}
+.ex-drawer .ex-pair > :last-child {
+  font-size: 1.25rem;
+}
+/* one action per row inside a sheet; danger text is red */
+.ex-act {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 var(--ex-pad);
+  border: 0;
+  border-top: 1px solid var(--ex-rule);
+  background: none;
+  color: var(--ex-ink);
+  font: 600 1rem var(--ex-font-ui);
+  text-align: left;
+}
+.ex-act > :first-child {
+  flex: 1;
+}
+.ex-act::after {
+  content: '›';
+  color: var(--ex-ink-2);
+}
+.ex-act.danger {
+  color: var(--ex-danger);
+}
+.ex-act:active {
+  background: var(--ex-paper);
+}
+.ex-drawer .ex-actions {
+  padding: 0.75rem var(--ex-pad) 0;
+}
+.ex-drawer .ex-actions > .ex-btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.ex-dialog {
+  width: min(24rem, calc(100% - 2 * var(--ex-pad)));
+}
+.ex-dialog > .ex-panel {
+  padding: 1.25rem 1.25rem 1.1rem;
+}
+.ex-dialog h2 {
+  margin: 0.2rem 0 0.4rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+.ex-dialog p {
+  margin: 0 0 1rem;
+  color: var(--ex-ink-2);
+}
+.ex-dialog .ex-actions {
+  justify-content: flex-end;
+}
+
+/* Toast: a dark bar with a yellow flag down the left, one line, then gone.
+   fx.js toast('已保存。') makes one. */
+.ex-toast {
+  position: fixed;
+  left: var(--ex-pad);
+  right: var(--ex-pad);
+  bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+  z-index: 20;
+  max-width: 28rem;
+  margin-inline: auto;
+  padding: 0.75rem 0.9rem 0.75rem calc(6px + 0.9rem);
+  background:
+    linear-gradient(var(--ex-signal), var(--ex-signal)) left / 6px 100% no-repeat,
+    #161616;
+  color: #ededed;
+  font-weight: 600;
+}
+
+/* A data table: eyebrow head, hairlines between rows, figures right-aligned
+   in tabular figures, no zebra stripes. */
+.ex-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.ex-table th {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--ex-ink);
+  color: var(--ex-ink-2);
+  font-size: 0.7rem;
+  font-stretch: var(--ex-wider);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.ex-table td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--ex-rule);
+}
+.ex-table :is(th, td).num {
+  text-align: right;
+  font-stretch: var(--ex-wide);
+}
+.ex-table tbody tr:hover {
+  background: var(--ex-paper);
+  box-shadow: inset 4px 0 0 var(--ex-trace);
+}
+.ex-table-wrap {
+  overflow-x: auto;
+}
+
+/* Bars: grey columns; the one pointed at, or marked .is-here, turns to the
+   colour of "here"; a reading over its limit gets a yellow square on top.
+   <ol class="ex-bars"><li style="--v: 0.62"><span>10.12</span></li>… */
+.ex-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: end;
+  gap: 4px;
+  height: 8rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--ex-ink);
+}
+.ex-bars > li {
+  position: relative;
+  height: calc(var(--v, 0) * 100%);
+  min-height: 2px;
+  background: color-mix(in srgb, var(--ex-ink-2) 45%, transparent);
+  transition: background-color 0.15s;
+}
+.ex-bars > li:is(:hover, .is-here) {
+  background: var(--ex-trace);
+}
+.ex-bars > li.is-over::before {
+  content: '';
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  background: var(--ex-signal);
+  outline: 1px solid var(--ex-on-signal);
+}
+.ex-bars > li > span {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding-top: 0.3rem;
+  color: var(--ex-ink-2);
+  font-size: 0.65rem;
+  font-stretch: var(--ex-wide);
+  white-space: nowrap;
+}
+
+/* ---------- 13. leaving, and changes of state ----------
+   Every entrance has a way out. Exits run at about two-thirds of the entrance
+   and always use mech: they start slow and shut hard, like a gate. */
+@media (prefers-reduced-motion: no-preference) {
+  /* a block appears wiped in from the left: a notice, a toast, a new row */
+  .ex-in-wipe {
+    animation: ex-wipe-in 280ms var(--ex-mech) both;
+  }
+  /* a block leaves wiped out to the right (fx.js removeRow() uses it) */
+  .ex-out-wipe {
+    animation: ex-wipe-out 200ms var(--ex-mech) both;
+  }
+  .ex-drawer[open] > .body {
+    animation: ex-sheet-in 360ms var(--ex-mech) both;
+  }
+  .ex-drawer[open]::backdrop,
+  .ex-dialog[open]::backdrop {
+    animation: ex-fade 200ms linear both;
+  }
+  .ex-dialog[open] > * {
+    animation: ex-power 280ms var(--ex-mech) both;
+  }
+  .ex-drawer.is-closing > .body {
+    animation: ex-sheet-out 240ms var(--ex-mech) both;
+  }
+  .ex-dialog.is-closing > * {
+    animation: ex-shut 180ms var(--ex-mech) both;
+  }
+  :is(.ex-drawer, .ex-dialog).is-closing::backdrop {
+    animation: ex-fade 160ms linear reverse both;
+  }
+  .ex-toast {
+    animation: ex-wipe-in 280ms var(--ex-mech) both;
+  }
+  .ex-toast.is-closing {
+    animation: ex-wipe-out 160ms var(--ex-mech) both;
+  }
+  /* unknown progress: a run of yellow cells walks across, and stops when done */
+  .ex-progress.is-unknown > i {
+    animation: ex-run 1.2s steps(24) infinite;
+  }
+  /* "done": after a save, yellow passes once through the button and out */
+  .ex-btn.is-done {
+    color: var(--ex-on-signal);
+  }
+  .ex-btn.is-done::before {
+    animation: ex-done 600ms var(--ex-mech);
+  }
+}
+
+@keyframes ex-wipe-in {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0);
+  }
+}
+@keyframes ex-wipe-out {
+  from {
+    clip-path: inset(0);
+  }
+  to {
+    clip-path: inset(0 0 0 100%);
+  }
+}
+@keyframes ex-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes ex-sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+@keyframes ex-shut {
+  to {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+  }
+}
+@keyframes ex-fade {
+  from {
+    opacity: 0;
+  }
+}
+@property --run-at {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+@keyframes ex-run {
+  from {
+    --run-at: -25%;
+  }
+  to {
+    --run-at: 100%;
+  }
+}
+@keyframes ex-done {
+  0% {
+    transform: translateX(-101%);
+  }
+  45%,
+  60% {
+    transform: none;
+  }
+  100% {
+    transform: translateX(101%);
+  }
+}
+
+/* Switching themes: fx.js wireTheme() may uncover the new theme in a circle
+   from the toggle. The page shutter must not run at the same time. */
+:root.ex-theming::view-transition-old(root),
+:root.ex-theming::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(.ex-drawer, .ex-dialog)::backdrop {
+    animation: none !important;
+  }
+}
+
+/* ---------- 14. variants ----------
+   The same grammar with a different face, so two products built from this kit
+   do not look like one. Set the attributes on <html> (assets/variant.js reads
+   ?variant= or the single axes from the address, and data-ex-variant presets):
+     data-ex-accent   yellow (default) | lime | ice | amber
+     data-ex-paper    neutral (default) | warm | cool
+     data-ex-cut      standard (default) | tight | wide
+     data-ex-ground   contours (default) | grid | hatch | plain   (needs .ex-contours on <body>)
+     data-ex-density  standard (default) | compact | roomy
+     data-ex-motion   full (default) | calm   (calm: no entrances; responses stay)
+   Any other accent works if text in ink on it reaches 7:1 and it is not red
+   (red means deleting). Rules and presets: references/variation.md. */
+
+:root[data-ex-accent='lime'] {
+  --ex-signal: #fffa00;
+}
+:root[data-ex-accent='ice'] {
+  --ex-signal: #7de6ff;
+}
+:root[data-ex-accent='amber'] {
+  --ex-signal: #ffb31f;
+}
+
+:root[data-ex-paper='warm'] {
+  --ex-paper: #f3f1ea;
+  --ex-panel: #fffefa;
+  --ex-rule: #dcd8cc;
+  --ex-chip: #e7e3d8;
+}
+:root[data-ex-paper='cool'] {
+  --ex-paper: #f0f3f5;
+  --ex-panel: #ffffff;
+  --ex-rule: #d3dadf;
+  --ex-chip: #e0e6ea;
+}
+:root[data-ex-paper='warm'][data-theme='dark'] {
+  --ex-paper: #1b1a17;
+  --ex-panel: #24221e;
+  --ex-rule: #38352f;
+  --ex-chip: #302d28;
+}
+:root[data-ex-paper='cool'][data-theme='dark'] {
+  --ex-paper: #171a1c;
+  --ex-panel: #1f2326;
+  --ex-rule: #323a3f;
+  --ex-chip: #2a3034;
+}
+/* 原 prefers-color-scheme + data-ex-paper 变体回退已删：纸色变体（warm/cool）
+   本站用 neutral，其暗色由 .dark 块统一接管，不再走系统 media。 */
+
+:root[data-ex-cut='tight'] {
+  --ex-cut-k: 0.6;
+}
+:root[data-ex-cut='wide'] {
+  --ex-cut-k: 1.6;
+}
+
+:root[data-ex-density='compact'] {
+  font-size: 93.75%;
+}
+:root[data-ex-density='roomy'] {
+  font-size: 106.25%;
+}
+
+/* Ground: what lies faintly under the page. */
+:root[data-ex-ground='plain'] .ex-contours::before {
+  display: none;
+}
+:root[data-ex-ground='grid'] .ex-contours::before {
+  background:
+    linear-gradient(var(--ex-contour) 1px, transparent 1px) 0 0 / 3rem 3rem,
+    linear-gradient(90deg, var(--ex-contour) 1px, transparent 1px) 0 0 / 3rem 3rem;
+  -webkit-mask: radial-gradient(ellipse at 85% 10%, #000, transparent 70%);
+  mask: radial-gradient(ellipse at 85% 10%, #000, transparent 70%);
+}
+:root[data-ex-ground='hatch'] .ex-contours::before {
+  background: var(--ex-hatch);
+  opacity: 0.4;
+  -webkit-mask: linear-gradient(200deg, #000, transparent 35%), linear-gradient(20deg, #000, transparent 25%);
+  mask: linear-gradient(200deg, #000, transparent 35%), linear-gradient(20deg, #000, transparent 25%);
+}
+
+/* Calm motion: pages open without entrances; pointing, pressing, opening and
+   closing still answer. For tools used all day. */
+:root[data-ex-motion='calm'] :is(.ex-in-drive, .ex-in-stroke, .ex-in-power, .ex-in-come, .ex-in-sweep) {
+  animation: none !important;
+}
+
+/* nightshift 暗色为 plain 底纹：隐藏等高线（仅亮色 standard 显示 contours） */
+.dark .ex-contours::before { display: none; }
