@@ -55,7 +55,26 @@ function readJson<T>(file: string, fallback: T): T {
 	}
 }
 
-/** 版本倒序（同日期按版本号倒序）。 */
+/**
+ * semver 安全比较（降序返回正数）。
+ *
+ * 为什么不能直接用 localeCompare：字符串比较下 "1.10.0" < "1.9.0"（逐字符 '1' < '9'）——
+ * 版本号越往后越会排错。非 semver 串（如历史日期型版本 "2026.10.06"）逐段拆数字后
+ * 仍可得到稳定顺序；完全无法解析时回退 localeCompare。
+ */
+function compareVersionDesc(a: string, b: string): number {
+	const pa = a.split(/[.-]/).map((s) => Number(s));
+	const pb = b.split(/[.-]/).map((s) => Number(s));
+	const len = Math.max(pa.length, pb.length);
+	for (let i = 0; i < len; i++) {
+		const na = Number.isFinite(pa[i]) ? (pa[i] as number) : -1;
+		const nb = Number.isFinite(pb[i]) ? (pb[i] as number) : -1;
+		if (na !== nb) return nb - na;
+	}
+	return 0;
+}
+
+/** 版本倒序（同日期按版本号降序，semver 安全比较）。 */
 export function getChangelog(): ChangelogEntry[] {
 	const list = readJson<ChangelogEntry[]>(CHANGELOG_FILE, []);
 	if (!Array.isArray(list)) return [];
@@ -71,8 +90,18 @@ export function getChangelog(): ChangelogEntry[] {
 		}))
 		.sort((a, b) => {
 			if (a.date !== b.date) return b.date.localeCompare(a.date);
-			return b.version.localeCompare(a.version);
+			return compareVersionDesc(a.version, b.version);
 		});
+}
+
+/**
+ * 当前站点版本 = 最新一条**已发布** changelog 的 version。
+ * 单一数据源：版本号的权威值在 changelog.json；package.json 的 version 由
+ * vite 插件注入前端展示，两处必须对齐（发布时改两处，见 admin 发布流程）。
+ */
+export function getCurrentVersion(): string {
+	const latest = getPublicChangelog()[0];
+	return latest?.version ? `v${latest.version.replace(/^v/, "")}` : "";
 }
 
 /**

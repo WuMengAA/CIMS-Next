@@ -13,6 +13,8 @@
 	import AppSidebar from "$lib/components/app-sidebar.svelte";
 	import BgEffects from "$lib/components/bg-effects.svelte";
 	import ThemeToggle from "$lib/components/theme-toggle.svelte";
+	import SiteFooter from "$lib/components/site-footer.svelte";
+	import VersionBanner from "$lib/components/version-banner.svelte";
 	import ViewSwitch from "$lib/components/view-switch.svelte";
 	import SearchButton from "$lib/components/search-button.svelte";
 	import SearchPalette from "$lib/components/search-palette.svelte";
@@ -274,8 +276,13 @@
 					</div>
 				{/key}
 			{/if}
+			<!-- 全站页脚：双轨版本（semver + git commit）。后台 /admin 同走根 layout，一并展示。 -->
+			{#if !isImmersive}
+				<SiteFooter />
+			{/if}
 		</Sidebar.Inset>
 	</Sidebar.Provider>
 {/if}
 
+<VersionBanner />
 <div class="cursor-glow"></div>

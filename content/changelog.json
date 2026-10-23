@@ -1,5 +1,34 @@
 [
   {
+    "version": "1.0.0",
+    "date": "2026-10-23",
+    "title": "Stelarith v1.0.0 —— 独立站点元年",
+    "highlight": "版本号体系重构（站点 semver + git commit 内容版本双轨），PostgreSQL 后端、云端部署包、终末地主题 BETA 同期落地。",
+    "published": true,
+    "items": [
+      {
+        "kind": "change",
+        "text": "版本号体系重构：语义化版本（package.json / changelog）+ git commit 内容版本双轨，页脚与后台实时展示当前版本，内容更新可被发现并提示刷新"
+      },
+      {
+        "kind": "feat",
+        "text": "PostgreSQL 后端 Parity 全绿（42 表 / 2817 行零差异 / 5 复杂查询一致），内容层保持 JSON 不变"
+      },
+      {
+        "kind": "feat",
+        "text": "网站云端部署包 deploy/site：Docker + PostgreSQL + nginx 一键栈、周期备份、CF Tunnel 边缘接入"
+      },
+      {
+        "kind": "feat",
+        "text": "终末地主题 BETA：独立第二皮肤（经典默认 / 终末地 opt-in），右上角一键切换，欢迎反馈"
+      },
+      {
+        "kind": "chore",
+        "text": "移除星集控方案包（ext / admin-console 等 245 个文件），仓库收口为网站工程"
+      }
+    ]
+  },
+  {
     "version": "0.6.23-rc.2",
     "date": "2026-10-09",
     "title": "星集控 0.6.23-rc.2",
