@@ -126,6 +126,13 @@
 .ex-contours.ex-contours-fixed::before {
   z-index: 1;
 }
+/* nightshift 暗色也显示等高线：kit 原设计仅亮色 standard 显示（.dark 下 display:none，
+   见 endfield-kit.css「nightshift 暗色为 plain 底纹」），但用户明确要求暗色也要有——
+   亮/暗都是同一支 9% 淡墨纹（暗色为 9% 淡白），不存在可读性问题。
+   特异性 0-3-1 压过 kit 的 .dark .ex-contours::before（0-2-1）。 */
+.dark .ex-contours.ex-contours-fixed::before {
+  display: block;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    终末地 beta 皮肤（opt-in，2026-10-23）：<html> 加 .theme-endfield 时覆盖经典令牌。
