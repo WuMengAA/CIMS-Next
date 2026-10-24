@@ -148,9 +148,10 @@
 	</script>
 
 <svelte:head>
-	<!-- 终末地字体走 jsDelivr CDN（不走本机）：Saira 全轴宽体(wdth+wght) + Noto Sans SC 中文黑体 -->
-	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/saira/standard.css" />
-	<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/noto-sans-sc/index.css" />
+	<!-- 终末地字体自托管（static/fonts，不再走 jsDelivr——CSP 收紧 + 抗劫持/断网）：
+	     Saira 全轴宽体(wdth+wght) + Noto Sans SC 中文黑体 -->
+	<link rel="stylesheet" href="/fonts/saira.css" />
+	<link rel="stylesheet" href="/fonts/noto-sans-sc.css" />
 	<link rel="icon" href={favicon} />
 	<!-- color-scheme 由 mode-watcher 在运行时写 html 的 inline style（随主题变），
 	     这里不再写死 content="dark" —— 写死会让亮色模式下浏览器仍按深色渲染
