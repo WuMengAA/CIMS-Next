@@ -197,13 +197,22 @@
 		<ol class="space-y-0.5 border-l border-border/60">
 			{#each data.entries as e (e.version)}
 				<li>
-					<a
-						href={"#v-" + e.version}
-						class="block border-l-2 border-transparent py-1 pl-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-						class:text-foreground={activeVersion === e.version}
-						class:font-medium={activeVersion === e.version}
-						class:border-primary={activeVersion === e.version}
-					>
+				<a
+					href={"#v-" + e.version}
+					class="block border-l-2 border-transparent py-1 pl-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+					class:text-foreground={activeVersion === e.version}
+					class:font-medium={activeVersion === e.version}
+					class:border-primary={activeVersion === e.version}
+					onclick={(ev) => {
+						// 同 posts 目录：显式滚动绕开 SvelteKit hash 导航，一次到位
+						ev.preventDefault();
+						const el = document.getElementById("v-" + e.version);
+						if (el) {
+							el.scrollIntoView({ behavior: "smooth", block: "start" });
+							history.replaceState(null, "", "#v-" + e.version);
+						}
+					}}
+				>
 						<span class="font-mono">{e.version}</span>
 						<span class="ml-1 opacity-70">{e.date}</span>
 					</a>

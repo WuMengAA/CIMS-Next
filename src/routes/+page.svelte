@@ -58,7 +58,7 @@
 	]}
 />
 
-<div class="ex ex-contours">
+<div class="ex">
 	<!-- 三色条：品红 / 强调色 / 薄荷绿，页顶一次访问画出 -->
 	<div class="ex-tri ex-in-sweep" aria-hidden="true"><i></i><i></i><i></i></div>
 

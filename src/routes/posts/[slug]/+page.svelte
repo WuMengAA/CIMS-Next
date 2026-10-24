@@ -114,7 +114,20 @@
 					<ol>
 						{#each toc as t (t.id)}
 							<li class:lvl3={t.level === 3}>
-								<a href={"#" + t.id} class:active={activeId === t.id}>{t.text}</a>
+								<a
+									href={"#" + t.id}
+									class:active={activeId === t.id}
+									onclick={(e) => {
+										// SvelteKit 对同页 hash 链接的滚动不可靠（首点常只改 URL 不滚），
+										// 显式 scrollIntoView 绕开 router，一次到位。
+										e.preventDefault();
+										const el = document.getElementById(t.id);
+										if (el) {
+											el.scrollIntoView({ behavior: "smooth", block: "start" });
+											history.replaceState(null, "", "#" + t.id);
+										}
+									}}
+								>{t.text}</a>
 							</li>
 						{/each}
 					</ol>
@@ -149,6 +162,11 @@
 		flex-direction: column;
 		gap: 1.25rem;
 		padding-block: 2rem;
+	}
+	/* 锚点落点让位：跳过顶栏（与 layout 的 .rhine-docs 同规格，posts 详情页原来没配，
+	   跳转后标题会被固定顶栏压住） */
+	.detail .prose :is(h2, h3) {
+		scroll-margin-top: 5rem;
 	}
 	.body-grid {
 		display: grid;
