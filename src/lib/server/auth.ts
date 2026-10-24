@@ -137,7 +137,7 @@ export async function getUserTitles(userId: number): Promise<TitleKey[] | null> 
 /** 设置某用户的称号集合（完整覆盖写：先清后插）。传空数组 = 清空所有显式称号（回退角色预设）。 */
 export async function setUserTitles(userId: number, titles: TitleKey[]): Promise<void> {
 	const valid = new Set<string>(TITLE_KEYS);
-	const clean = Array.from(new Set(titles.filter(async (t) => valid.has(t))));
+	const clean = Array.from(new Set(titles.filter((t) => valid.has(t))));
 	const db = getDb();
 	// node:sqlite 的 DatabaseSync 没有 better-sqlite3 的 .transaction()，
 	// 用显式事务保证「清空 + 重插」的原子性。

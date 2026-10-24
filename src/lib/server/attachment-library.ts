@@ -118,7 +118,7 @@ export async function ensureRootFolders(userId: number): Promise<{ root: Folder;
 		.prepare("SELECT id, name, parent_id, purpose, created_at FROM attachment_folders WHERE owner_id = ? ORDER BY created_at")
 		.all(userId) as unknown as FolderRow[];
 
-	let root = existing.find(async (f) => f.parent_id == null && f.purpose === "general");
+	let root = existing.find((f) => f.parent_id == null && f.purpose === "general");
 	if (!root) {
 		const id = newId("fd");
 		await db.prepare(
@@ -127,7 +127,7 @@ export async function ensureRootFolders(userId: number): Promise<{ root: Folder;
 		).run(id, userId, "我的附件库", now, now);
 		root = { id, name: "我的附件库", parent_id: null, purpose: "general", created_at: now };
 	}
-	let hub = existing.find(async (f) => f.parent_id === root.id && f.purpose === "imagehub");
+	let hub = existing.find((f) => f.parent_id === root.id && f.purpose === "imagehub");
 	if (!hub) {
 		const id = newId("fd");
 		await db.prepare(

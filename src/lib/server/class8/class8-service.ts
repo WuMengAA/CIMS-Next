@@ -258,7 +258,7 @@ export async function exportAll() {
     profile: await getProfile(),
     groups: await listGroups(),
     exams: await listExams(),
-    scores: await (await listExams()).map(async function (e) { return { exam_id: e.id, rows: await listScoresByExam(e.id) }; }),
+    scores: await Promise.all((await listExams()).map(async (e) => ({ exam_id: e.id, rows: await listScoresByExam(e.id) }))),
     stars: await listStars(),
     events: await listEvents(),
     spots: await listSpots(),

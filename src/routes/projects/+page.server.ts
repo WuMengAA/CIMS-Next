@@ -2,7 +2,7 @@ import { listItems, toSummary } from "$lib/server/content-store.js";
 import { getBoards, summarizeBoard, mergedContrib } from "$lib/server/project-board.js";
 import { hasGithubToken } from "$lib/server/github.js";
 
-export function load() {
+export async function load() {
 	const projects = listItems("projects").filter((p) => p.status === "published").map(toSummary);
 
 	// 展板数据与内容项按 slug 对齐：内容项是「有哪些项目」，展板是「项目做到哪了」。

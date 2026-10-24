@@ -1096,7 +1096,7 @@ export async function requestFriend(
 		// 已是好友就不重新申请（避免把 accepted 打回 pending）；
 		// 被拒过则复用该行重新发起。
 		if (exist.status === "accepted") {
-			return await (await listFriends(me.id)).find(async (f) => f.peerId === peerId)!;
+			return (await listFriends(me.id)).find((f) => f.peerId === peerId)!;
 		}
 		await db.prepare("UPDATE console_friends SET status='pending', message=?, updated_at=? WHERE id=?")
 			.run(cut(message, 200), ts, exist.id);
