@@ -28,7 +28,16 @@
 	let skin = $state<Skin>("classic");
 	onMount(() => {
 		try {
-			skin = (localStorage.getItem("stelarith-skin") as Skin) === "endfield" ? "endfield" : "classic";
+			// ?skin=endfield|classic URL 参数优先（与 app.html 内联脚本同一套语义），
+			// 否则读 localStorage。DOM class 与 state 同步，防止 hydration 覆盖内联脚本的设置。
+			const urlSkin = new URLSearchParams(location.search).get("skin");
+			skin =
+				urlSkin === "endfield" || urlSkin === "classic"
+					? urlSkin
+					: (localStorage.getItem("stelarith-skin") as Skin) === "endfield"
+						? "endfield"
+						: "classic";
+			document.documentElement.classList.toggle("theme-endfield", skin === "endfield");
 		} catch { /* SSR/隐私模式：保持 classic */ }
 	});
 
