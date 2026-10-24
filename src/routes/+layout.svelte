@@ -213,14 +213,15 @@
 <!-- 客户端导航后播报新页面标题（仅读屏可闻） -->
 <div class="sr-only" role="status" aria-live="polite">{announced}</div>
 
+<!-- 终末地等高线背景：全站一层（kit 设计意图即挂 body；::before fixed + z-index:-1）。
+     必须挂在 isImmersive 两条分支之外的顶层，否则只有沉浸页有、正常页没有。
+     经典皮肤无 --ex-* 变量，color-mix 声明自然失效，不显示——符合预期。 -->
+<div class="ex ex-contours" aria-hidden="true"></div>
+
 {#if isImmersive}
 	<!-- 沉浸式全屏：档案库等脱离站点外壳，children 裸渲染占满视口 -->
 	{#key page.url.pathname}
-		<!-- 终末地等高线背景：全站一层（kit 设计意图即挂 body；::before fixed + z-index:-1）。
-	     经典皮肤无 --ex-* 变量，color-mix 声明自然失效，不显示——符合预期。 -->
-	<div class="ex ex-contours" aria-hidden="true"></div>
-
-	<div id="main-content" tabindex="-1" style="view-transition-name: none">
+		<div id="main-content" tabindex="-1" style="view-transition-name: none">
 			{@render children()}
 		</div>
 	{/key}
