@@ -2210,3 +2210,36 @@ a.ex-record:is(:hover, :focus-visible) > * {
 
 /* nightshift 暗色为 plain 底纹：隐藏等高线（仅亮色 standard 显示 contours） */
 .dark .ex-contours::before { display: none; }
+
+/* ── 编号分节正文（还原截图 04）：黄块编号 + 分节细线 ───────────────── */
+.ex-sections { counter-reset: ex-sec; }
+.ex-sections :is(h2) {
+  counter-increment: ex-sec;
+  position: relative;
+  margin-top: 2.6rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--ex-rule);
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+}
+.ex-sections :is(h2)::before {
+  content: counter(ex-sec, decimal-leading-zero);
+  flex: 0 0 auto;
+  font-family: var(--ex-font-ui);
+  font-weight: 800;
+  font-stretch: var(--ex-wider);
+  font-size: 0.7em;
+  line-height: 1;
+  color: var(--ex-on-signal);
+  background: var(--ex-signal);
+  padding: 0.34em 0.52em;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.ex-sections :is(h3) {
+  margin-top: 1.8rem;
+  padding-left: 0.7rem;
+  border-left: 3px solid var(--ex-trace);
+}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import "../../endfield-kit.css";
 	import { Badge } from "$lib/components/ui/badge/index.js";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { ArrowLeft, Rocket, Globe, Pencil, Star, GitFork, Clock, AlertTriangle, CircleDot, Package, GitCommitHorizontal, BookOpen, ListChecks, MessageSquare, Download } from "@lucide/svelte";
@@ -117,6 +118,8 @@
 			</div>
 		{/if}
 	</div>
+
+	<div class="ex-tri" aria-hidden="true"><i></i><i></i><i></i></div>
 
 	<!-- 头部 -->
 	<header class="flex flex-col gap-4">

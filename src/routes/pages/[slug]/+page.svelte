@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Badge } from "$lib/components/ui/badge/index.js";
+	import "../../endfield-kit.css";
 	import { Pencil, ListTree, ArrowUp } from "@lucide/svelte";
 	import Comments from "$lib/components/comments.svelte";
 	import ViewTracker from "$lib/components/view-tracker.svelte";
@@ -87,16 +87,15 @@
 		<div class={showAside ? "lg:grid lg:grid-cols-[minmax(0,1fr)_13rem] lg:gap-10" : ""}>
 			<div class="min-w-0">
 				{#if data.page.hero !== "none" && !data.page.hideTitle}
-					<header class="mb-6 flex flex-col gap-3">
-						<div use:reveal class="reveal flex flex-wrap items-center gap-2 text-xs text-muted-foreground" style="--reveal-delay:0">
-							{#if data.page.category}<Badge variant="outline">{data.page.category}</Badge>{/if}
-							<span>{data.page.date} · {data.words.toLocaleString()} 字</span>
+					<header class="ex-sheet-head page-head">
+						<div>
+							<p class="ex-eyebrow slash">{data.page.category || "Page"}</p>
+							<h1 class="ex-bar-title">{data.page.title}</h1>
 						</div>
-						<h1 use:reveal class="reveal reveal-mask font-heading text-3xl font-semibold tracking-tight md:text-4xl" style="--reveal-delay:1">{data.page.title}</h1>
-						{#if data.page.excerpt}
-							<p use:reveal class="reveal text-sm leading-relaxed text-muted-foreground" style="--reveal-delay:2">{data.page.excerpt}</p>
-						{/if}
+						<p class="ex-field">{data.page.date}{data.words ? " · " + data.words.toLocaleString() + " 字" : ""}</p>
 					</header>
+					<div class="ex-tri" aria-hidden="true"><i></i><i></i><i></i></div>
+					{#if data.page.excerpt}<p class="ex-lede ex-read">{data.page.excerpt}</p>{/if}
 				{/if}
 
 				{#if data.page.toc && toc.length > 0}
@@ -119,7 +118,7 @@
 				{/if}
 
 				<!-- 双主题下不能再写 prose-invert（那会让亮色模式的正文变成浅字浅底） -->
-				<div class="prose ef-drop-cap max-w-none">
+				<div class="prose ex-sections ef-drop-cap max-w-none">
 					{@html data.html}
 				</div>
 

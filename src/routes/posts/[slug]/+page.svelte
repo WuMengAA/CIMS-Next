@@ -88,6 +88,8 @@
 
 		<h1 class="ex-read title">{post.title}</h1>
 
+		<div class="ex-tri" aria-hidden="true"><i></i><i></i><i></i></div>
+
 		<ul class="ex-facts ex-field">
 			{#if post.date}<li><time datetime={post.date}>{post.date}</time></li>{/if}
 			<li>{data.words ? data.words.toLocaleString() + " 字" : ""}</li>
@@ -211,7 +213,7 @@
 	.toc a:hover { color: var(--ex-ink); }
 	.toc a.active {
 		color: var(--ex-ink);
-		border-left-color: var(--ex-signal);
+		border-left-color: var(--ex-trace);
 		font-weight: 600;
 	}
 	/* 上/下一篇：两条记录行，宽屏双列 */
