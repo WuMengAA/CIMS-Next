@@ -117,6 +117,14 @@
 	--bg-mode-scale: 1;
 }
 
+/* 终末地等高线（layout 全站空 div 专用变体，2026-10-24）：
+   原 kit .ex-contours::before 用 z-index:-1，在不透明内容层后面永远看不见；
+   这里提到 z-index:1 + 继承 pointer-events:none——9% 淡墨纹浮在正文/侧栏之上，
+   但不遮 sticky 顶栏与模态层（它们 z-50+）。经典皮肤 --ex-* 变量缺失，自动失效。 */
+.ex-contours-fixed::before {
+  z-index: 1;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    终末地 beta 皮肤（opt-in，2026-10-23）：<html> 加 .theme-endfield 时覆盖经典令牌。
    与经典皮肤共用亮/暗（.dark）维度：.theme-endfield=亮(standard)，.theme-endfield.dark=暗(nightshift 黄)。

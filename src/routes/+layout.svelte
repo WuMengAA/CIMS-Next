@@ -213,10 +213,12 @@
 <!-- 客户端导航后播报新页面标题（仅读屏可闻） -->
 <div class="sr-only" role="status" aria-live="polite">{announced}</div>
 
-<!-- 终末地等高线背景：全站一层（kit 设计意图即挂 body；::before fixed + z-index:-1）。
-     必须挂在 isImmersive 两条分支之外的顶层，否则只有沉浸页有、正常页没有。
-     经典皮肤无 --ex-* 变量，color-mix 声明自然失效，不显示——符合预期。 -->
-<div class="ex ex-contours" aria-hidden="true"></div>
+<!-- 终末地等高线背景：全站一层（kit 设计意图即挂 body 级）。
+     ⚠️ 只挂 ex-contours，绝不带 ex——.ex 带 min-height:100dvh + 不透明纸色背景，
+     空 div 会撑出一屏白块且把 ::before（z-index:-1）遮死（2026-10-24 事故）。
+     ex-contours-fixed 把淡纹层提到 z-index:1：盖正文、不挡 sticky 顶栏。
+     经典皮肤无 --ex-* 变量，声明自然失效不显示——符合预期。 -->
+<div class="ex-contours ex-contours-fixed" aria-hidden="true"></div>
 
 {#if isImmersive}
 	<!-- 沉浸式全屏：档案库等脱离站点外壳，children 裸渲染占满视口 -->
