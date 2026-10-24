@@ -15,6 +15,7 @@
 		chore: "其它"
 	};
 	import { History, Rocket, Search, ChevronDown, Target, ArrowRight } from "@lucide/svelte";
+	import { onMount } from "svelte";
 
 	let { data }: { data: import("./$types").PageData } = $props();
 
@@ -41,6 +42,24 @@
 		}))
 	);
 	const shown = $derived(filtered.filter((e) => e.items.length > 0));
+
+	// 右侧版本导航 scrollspy：侧栏列全部版本（不受筛选影响），滚动时高亮当前版本
+	let activeVersion = $state("");
+	onMount(() => {
+		const arts = Array.from(document.querySelectorAll<HTMLElement>("article[id^='v-']"));
+		if (!arts.length) return;
+		const obs = new IntersectionObserver(
+			(entries) => {
+				const vis = entries
+					.filter((e) => e.isIntersecting)
+					.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+				if (vis.length) activeVersion = (vis[0].target as HTMLElement).id.slice(2);
+			},
+			{ rootMargin: "-90px 0px -65% 0px", threshold: 0 }
+		);
+		arts.forEach((a) => obs.observe(a));
+		return () => obs.disconnect();
+	});
 </script>
 
 <Seo
@@ -50,6 +69,7 @@
 />
 
 <Container class="py-10">
+	<div class="grid grid-cols-[minmax(0,1fr)_11rem] items-start gap-8">
 	<PageHeader title="更新日志" description="每一次改动都记下来：新增了什么、修了什么、调整了什么。" />
 
 	<!-- 概览 -->
@@ -116,7 +136,7 @@
 	<!-- 版本列表 -->
 	<div class="mt-8 flex flex-col gap-6">
 		{#each shown as e (e.version)}
-			<article class="rounded-xl border border-border/60 bg-card p-5">
+			<article id={"v-" + e.version} class="rounded-xl border border-border/60 bg-card p-5">
 				<header class="flex flex-wrap items-center gap-2">
 					<Badge variant="default" class="font-mono text-xs">{e.version}</Badge>
 					<span class="text-xs text-muted-foreground">{e.date}</span>
@@ -169,5 +189,27 @@
 				没有匹配的改动记录。
 			</p>
 		{/each}
+	</div>
+
+	<!-- 右侧版本导航：全部版本 + scrollspy 高亮，xl 以下隐藏 -->
+	<aside class="sticky top-20 self-start hidden xl:block" aria-label="版本导航">
+		<p class="mb-2 text-xs font-medium text-muted-foreground">版本</p>
+		<ol class="space-y-0.5 border-l border-border/60">
+			{#each data.entries as e (e.version)}
+				<li>
+					<a
+						href={"#v-" + e.version}
+						class="block border-l-2 border-transparent py-1 pl-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+						class:text-foreground={activeVersion === e.version}
+						class:font-medium={activeVersion === e.version}
+						class:border-primary={activeVersion === e.version}
+					>
+						<span class="font-mono">{e.version}</span>
+						<span class="ml-1 opacity-70">{e.date}</span>
+					</a>
+				</li>
+			{/each}
+		</ol>
+	</aside>
 	</div>
 </Container>

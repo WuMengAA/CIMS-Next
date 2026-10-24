@@ -11,7 +11,9 @@ export function load() {
 	const boards = getBoards();
 	const bySlug = new Map(boards.map((b) => [b.slug, b]));
 
-	const summaries = projects.map(async (p) => await summarizeBoard(p as any, bySlug.get(String(p.slug)) ?? null));
+	const summaries = await Promise.all(
+		projects.map(async (p) => await summarizeBoard(p as any, bySlug.get(String(p.slug)) ?? null))
+	);
 	const contrib = mergedContrib(boards);
 
 	const perProject: Record<string, Record<string, number>> = {};
@@ -22,7 +24,7 @@ export function load() {
 		summaries,
 		contrib,
 		perProject,
-		hasBoardData: summaries.some(async (s) => (await s).hasBoard),
+		hasBoardData: summaries.some((s) => s.hasBoard),
 		hasGithubToken: hasGithubToken()
 	};
 }
